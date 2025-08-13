@@ -1,11 +1,13 @@
 # app.py
 import time
+import json
 import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from openai import AzureOpenAI
 
 # =============================
@@ -21,15 +23,55 @@ st.markdown(
       .typing-indicator {display:inline-block;width:18px;height:18px;border:3px solid #eee;border-top:3px solid #8b5cf6;border-radius:50%;animation:spin 1s linear infinite}
       @keyframes spin {0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
       .footer {text-align:center;color:#777;margin-top:2rem}
+      .copy-wrap {background:#fff;color:#333;padding:16px;border-radius:16px 16px 16px 0;
+                  box-shadow:0 2px 8px rgba(0,0,0,.08);margin:12px 0;max-width:900px;}
+      .copy-head {display:flex;justify-content:space-between;align-items:center;gap:12px}
+      .copy-btn {display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid #ddd;border-radius:8px;
+                 background:#f8f9fa;cursor:pointer;font-size:12px}
+      .copy-body {margin-top:10px;line-height:1.6;white-space:pre-wrap}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 st.markdown(
-    '<div class="header"><h2>⚖️ 법제처 AI 챗봇</h2><div>법제처 Open API와 Azure OpenAI를 활용한 지능형 법령 상담 서비스</div></div>',
+    '<div class="header"><h2>⚖️ 법제처 인공지능 법률 상담 플랫폼</h2><div>법제처 공식 데이터와 인공지능 기술을 결합한 전문 법률 정보 제공 서비스</div></div>',
     unsafe_allow_html=True,
 )
+
+# =============================
+# (NEW) ChatGPT 스타일 복사 버튼 렌더러
+# =============================
+def render_ai_with_copy(message: str, key: str = "ai"):
+    """AI 답변을 예쁘게 렌더링하고 '복사' 버튼을 제공합니다."""
+    safe_for_js = json.dumps(message)  # XSS/따옴표 이슈 방지
+    components.html(
+        f"""
+        <div class="copy-wrap">
+          <div class="copy-head">
+            <strong>AI 어시스턴트</strong>
+            <button id="copy-{key}" class="copy-btn" title="클립보드로 복사">복사</button>
+          </div>
+          <div class="copy-body">{message}</div>
+        </div>
+        <script>
+          const btn = document.getElementById("copy-{key}");
+          if (btn) {{
+            btn.addEventListener("click", async () => {{
+              try {{
+                await navigator.clipboard.writeText({safe_for_js});
+                const old = btn.textContent;
+                btn.textContent = "복사됨!";
+                setTimeout(()=>btn.textContent = old, 1200);
+              }} catch (e) {{
+                alert("복사에 실패했습니다: " + e);
+              }}
+            }});
+          }}
+        </script>
+        """,
+        height=0,
+    )
 
 # =============================
 # Secrets 로딩
@@ -50,13 +92,10 @@ def load_secrets():
         _ = azure["deployment"]
         _ = azure["api_version"]
     except Exception:
-        st.error(
-            "[azure_openai] 섹션(api_key, endpoint, deployment, api_version)이 없거나 누락되었습니다."
-        )
+        st.error("[azure_openai] 섹션(api_key, endpoint, deployment, api_version)이 없거나 누락되었습니다.")
         azure = None
 
     return law_key, azure
-
 
 LAW_API_KEY, AZURE = load_secrets()
 
@@ -174,21 +213,16 @@ def stream_chat_completion(messages, temperature=0.7, max_tokens=1000):
 
     for chunk in stream:
         try:
-            # 간헐적으로 메타 청크가 들어올 수 있음 -> 방어
             if not hasattr(chunk, "choices") or not chunk.choices:
                 continue
-
             choice = chunk.choices[0]
-            # 종료 신호 처리
             if getattr(choice, "finish_reason", None):
                 break
-
             delta = getattr(choice, "delta", None)
             text = getattr(delta, "content", None) if delta else None
             if text:
                 yield text
         except Exception:
-            # 스트림 도중 예외는 무시하고 계속
             continue
 
 # =============================
@@ -211,7 +245,8 @@ with st.sidebar:
 # =============================
 for m in st.session_state.messages:
     st.markdown(f'<div class="user-message"><strong>사용자:</strong><br>{m["user_question"]}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="ai-message"><strong>AI 어시스턴트:</strong><br>{m["ai_response"]}</div>', unsafe_allow_html=True)
+    # 과거 대화는 복사 버튼 버전으로 출력
+    render_ai_with_copy(m["ai_response"], key=f"hist-{m['timestamp']}")
     if m.get("law_data"):
         with st.expander("📋 관련 법령 정보 보기"):
             for i, law in enumerate(m["law_data"], 1):
@@ -256,9 +291,43 @@ if send and user_q.strip():
 {law_ctx}
 
 위의 정보를 바탕으로 아래 형식으로 답변하세요.
-1) 질문에 대한 직접적인 답변
-2) 관련 법령의 구체적인 내용 설명
-3) 참고/주의사항
+### 법률자문서(전문형 예시)
+
+제목: 납품 지연에 따른 계약 해제 가능 여부에 관한 법률 검토
+수신: ○○ 주식회사 대표이사 귀하
+작성: 법무법인 ○○ / 변호사 홍길동
+작성일: 2025. 8. 14.
+
+Ⅰ. 자문 의뢰의 범위
+본 자문은 귀사가 체결한 납품계약에 관한 채무불이행 사유 발생 시 계약 해제 가능 여부 및 그에 따른 법적 효과를 검토하는 것을 목적으로 합니다.
+
+Ⅱ. 사실관계
+(사실관계 요약은 동일하되, 문장을 완전하게 작성하고 시간 순서 및 법률적 평가 가능하도록 기술)
+
+Ⅲ. 관련 법령 및 판례
+
+1. 민법 제544조(채무불이행에 의한 해제)
+   > 당사자 일방이 채무를 이행하지 아니한 때에는 상대방은 상당한 기간을 정하여 이행을 최고하고, 그 기간 내에 이행이 없는 때에는 계약을 해제할 수 있다.
+2. 대법원 2005다14285 판결
+   > 매매계약에 따른 목적물 인도 또는 납품이 기한 내 이루어지지 않은 경우, 상당한 기간을 정하여 최고하였음에도 불구하고 이행이 없는 때에는 계약 해제가 가능함을 판시.
+
+Ⅳ. 법률적 분석
+
+1. 채무불이행 여부
+   계약상 납품 기일(2025. 7. 15.)을 도과한 이후 30일 이상 지연된 사실은 채무불이행에 해당함.
+   지연 사유인 ‘원자재 수급 불가’가 불가항력에 해당하는지 여부가 쟁점이나, 일반적인 원자재 수급 곤란은 불가항력으로 인정되지 않는 판례 경향 존재.
+
+2. 계약 해제 요건 충족 여부
+   상당한 기간(예: 7일)을 정한 최고 후에도 이행이 없을 경우, 민법 제544조에 따라 계약 해제가 가능함.
+   해제 시 계약금 반환 및 손해배상 청구 가능성이 있음.
+
+3. 손해배상 범위
+   계약 해제와 별도로, 귀사가 입은 손해(대체 구매 비용, 지연으로 인한 생산 차질 등)가 입증되면 채무불이행에 따른 손해배상 청구 가능.
+
+Ⅴ. 결론
+귀사는 서면 최고를 거친 후 계약 해제 권리를 행사할 수 있으며, 계약금 반환과 별도로 손해배상을 청구할 수 있습니다.
+다만, 손해액 산정 및 입증을 위해 납품 지연으로 인한 비용 자료를 사전에 확보하는 것이 필요합니다.
+
 답변은 한국어로 쉽게 설명하세요.
 """
 
@@ -266,12 +335,10 @@ if send and user_q.strip():
         if client is None:
             # Azure 미설정 → 기본 답변
             full_text = fallback_answer(user_q, law_data)
-            ai_placeholder.markdown(
-                f'<div class="ai-message"><strong>AI 어시스턴트:</strong><br>{full_text}</div>',
-                unsafe_allow_html=True,
-            )
+            # 복사 버튼 버전으로 출력
+            render_ai_with_copy(full_text, key=str(int(time.time())))
         else:
-            # 스트리밍 출력
+            # 스트리밍 출력 (타자 효과)
             ai_placeholder.markdown(
                 """
                 <div class="ai-message">
@@ -294,6 +361,9 @@ if send and user_q.strip():
                         unsafe_allow_html=True,
                     )
                     time.sleep(0.02)
+                # 스트리밍 끝: 복사 버튼 UI로 교체
+                ai_placeholder.empty()
+                render_ai_with_copy(full_text, key=str(int(time.time())))
             except Exception as e:
                 # 스트리밍 중 에러가 나면 비-스트리밍 폴백
                 try:
@@ -305,16 +375,10 @@ if send and user_q.strip():
                         stream=False,
                     )
                     full_text = resp.choices[0].message.content
-                    ai_placeholder.markdown(
-                        f'<div class="ai-message"><strong>AI 어시스턴트:</strong><br>{full_text}</div>',
-                        unsafe_allow_html=True,
-                    )
+                    render_ai_with_copy(full_text, key=str(int(time.time())))
                 except Exception as e2:
                     full_text = fallback_answer(user_q, law_data) + f"\n\n(추가 정보: {e2})"
-                    ai_placeholder.markdown(
-                        f'<div class="ai-message"><strong>AI 어시스턴트:</strong><br>{full_text}</div>',
-                        unsafe_allow_html=True,
-                    )
+                    render_ai_with_copy(full_text, key=str(int(time.time())))
 
     # 3) 대화 저장 & 리렌더
     st.session_state.messages.append(
