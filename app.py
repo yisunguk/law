@@ -40,13 +40,12 @@ st.markdown(
 )
 
 # =============================
-# (NEW) ChatGPT 스타일 복사 버튼 렌더러
+# ChatGPT 스타일 복사 버튼 렌더러
 # =============================
 def render_ai_with_copy(message: str, key: str = "ai"):
     """AI 답변을 예쁘게 렌더링하고 '복사' 버튼을 제공합니다."""
     safe_for_js = json.dumps(message)  # XSS/따옴표 이슈 방지
-    components.html(
-        f"""
+    html_string = f"""
         <div class="copy-wrap">
           <div class="copy-head">
             <strong>AI 어시스턴트</strong>
@@ -69,9 +68,9 @@ def render_ai_with_copy(message: str, key: str = "ai"):
             }});
           }}
         </script>
-        """,
-        height=0,
-    )
+    """
+    # ⚠️ height=0 대신 고정 높이로 레이아웃 안정화
+    components.html(html_string, height=220)
 
 # =============================
 # Secrets 로딩
@@ -86,15 +85,10 @@ def load_secrets():
 
     try:
         azure = st.secrets["azure_openai"]
-        # 필수 키 검증
-        _ = azure["api_key"]
-        _ = azure["endpoint"]
-        _ = azure["deployment"]
-        _ = azure["api_version"]
+        _ = azure["api_key"]; _ = azure["endpoint"]; _ = azure["deployment"]; _ = azure["api_version"]
     except Exception:
         st.error("[azure_openai] 섹션(api_key, endpoint, deployment, api_version)이 없거나 누락되었습니다.")
         azure = None
-
     return law_key, azure
 
 LAW_API_KEY, AZURE = load_secrets()
@@ -117,7 +111,7 @@ if AZURE:
 # 세션 상태
 # =============================
 if "messages" not in st.session_state:
-    st.session_state.messages = []  # [{timestamp, user_question, ai_response, law_data}]
+    st.session_state.messages = []
 if "is_processing" not in st.session_state:
     st.session_state.is_processing = False
 
@@ -131,7 +125,7 @@ def search_law_data(query: str, num_rows: int = 5):
         return [], None, "LAW_API_KEY 미설정"
 
     params = {
-        "serviceKey": urllib.parse.quote_plus(LAW_API_KEY),  # 요청 시점 인코딩
+        "serviceKey": urllib.parse.quote_plus(LAW_API_KEY),
         "target": "law",
         "query": query,
         "numOfRows": max(1, int(num_rows)),
@@ -171,7 +165,7 @@ def search_law_data(query: str, num_rows: int = 5):
     return [], None, f"법제처 API 연결 실패: {last_err}"
 
 # =============================
-# 프롬프트 구성 유틸
+# 프롬프트/폴백 유틸
 # =============================
 def format_law_context(law_data):
     if not law_data:
@@ -187,7 +181,6 @@ def format_law_context(law_data):
     return "\n\n".join(ctx)
 
 def fallback_answer(user_question, law_data):
-    """Azure 미설정/오류 시 기본 답변"""
     return (
         f"**질문 요약:** {user_question}\n\n"
         f"**관련 법령(요약):**\n{format_law_context(law_data)}\n\n"
@@ -198,19 +191,13 @@ def fallback_answer(user_question, law_data):
 # Azure OpenAI 스트리밍 (안전 처리)
 # =============================
 def stream_chat_completion(messages, temperature=0.7, max_tokens=1000):
-    """
-    Azure OpenAI 스트리밍을 안전하게 순회하며 텍스트 덩어리를 yield 합니다.
-    - choices가 없거나 빈 청크는 건너뜀
-    - finish_reason 도착 시 종료
-    """
     stream = client.chat.completions.create(
-        model=AZURE["deployment"],  # deployment 이름 사용
+        model=AZURE["deployment"],
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
         stream=True,
     )
-
     for chunk in stream:
         try:
             if not hasattr(chunk, "choices") or not chunk.choices:
@@ -241,11 +228,10 @@ with st.sidebar:
         st.rerun()
 
 # =============================
-# 과거 대화 렌더
+# 과거 대화 렌더 (복사 버튼 포함)
 # =============================
 for m in st.session_state.messages:
     st.markdown(f'<div class="user-message"><strong>사용자:</strong><br>{m["user_question"]}</div>', unsafe_allow_html=True)
-    # 과거 대화는 복사 버튼 버전으로 출력
     render_ai_with_copy(m["ai_response"], key=f"hist-{m['timestamp']}")
     if m.get("law_data"):
         with st.expander("📋 관련 법령 정보 보기"):
@@ -278,9 +264,9 @@ if send and user_q.strip():
 
     # 2) AI 응답
     ai_placeholder = st.empty()
-    full_text = ""
+    full_text, buffer = "", ""
 
-    # 프롬프트 구성
+    # 프롬프트
     law_ctx = format_law_context(law_data)
     prompt = f"""
 당신은 대한민국의 법령 정보를 전문적으로 안내하는 AI 어시스턴트입니다.
@@ -291,54 +277,18 @@ if send and user_q.strip():
 {law_ctx}
 
 위의 정보를 바탕으로 아래 형식으로 답변하세요.
-### 법률자문서(전문형 예시)
-
-제목: 납품 지연에 따른 계약 해제 가능 여부에 관한 법률 검토
-수신: ○○ 주식회사 대표이사 귀하
-작성: 법무법인 ○○ / 변호사 홍길동
-작성일: 2025. 8. 14.
-
-Ⅰ. 자문 의뢰의 범위
-본 자문은 귀사가 체결한 납품계약에 관한 채무불이행 사유 발생 시 계약 해제 가능 여부 및 그에 따른 법적 효과를 검토하는 것을 목적으로 합니다.
-
-Ⅱ. 사실관계
-(사실관계 요약은 동일하되, 문장을 완전하게 작성하고 시간 순서 및 법률적 평가 가능하도록 기술)
-
-Ⅲ. 관련 법령 및 판례
-
-1. 민법 제544조(채무불이행에 의한 해제)
-   > 당사자 일방이 채무를 이행하지 아니한 때에는 상대방은 상당한 기간을 정하여 이행을 최고하고, 그 기간 내에 이행이 없는 때에는 계약을 해제할 수 있다.
-2. 대법원 2005다14285 판결
-   > 매매계약에 따른 목적물 인도 또는 납품이 기한 내 이루어지지 않은 경우, 상당한 기간을 정하여 최고하였음에도 불구하고 이행이 없는 때에는 계약 해제가 가능함을 판시.
-
-Ⅳ. 법률적 분석
-
-1. 채무불이행 여부
-   계약상 납품 기일(2025. 7. 15.)을 도과한 이후 30일 이상 지연된 사실은 채무불이행에 해당함.
-   지연 사유인 ‘원자재 수급 불가’가 불가항력에 해당하는지 여부가 쟁점이나, 일반적인 원자재 수급 곤란은 불가항력으로 인정되지 않는 판례 경향 존재.
-
-2. 계약 해제 요건 충족 여부
-   상당한 기간(예: 7일)을 정한 최고 후에도 이행이 없을 경우, 민법 제544조에 따라 계약 해제가 가능함.
-   해제 시 계약금 반환 및 손해배상 청구 가능성이 있음.
-
-3. 손해배상 범위
-   계약 해제와 별도로, 귀사가 입은 손해(대체 구매 비용, 지연으로 인한 생산 차질 등)가 입증되면 채무불이행에 따른 손해배상 청구 가능.
-
-Ⅴ. 결론
-귀사는 서면 최고를 거친 후 계약 해제 권리를 행사할 수 있으며, 계약금 반환과 별도로 손해배상을 청구할 수 있습니다.
-다만, 손해액 산정 및 입증을 위해 납품 지연으로 인한 비용 자료를 사전에 확보하는 것이 필요합니다.
-
+1) 질문에 대한 직접적인 답변
+2) 관련 법령의 구체적인 내용 설명
+3) 참고/주의사항
 답변은 한국어로 쉽게 설명하세요.
 """
 
     with st.spinner("🤖 AI가 답변을 생성하는 중..."):
         if client is None:
-            # Azure 미설정 → 기본 답변
             full_text = fallback_answer(user_q, law_data)
-            # 복사 버튼 버전으로 출력
             render_ai_with_copy(full_text, key=str(int(time.time())))
         else:
-            # 스트리밍 출력 (타자 효과)
+            # 타자 효과 진행
             ai_placeholder.markdown(
                 """
                 <div class="ai-message">
@@ -348,24 +298,32 @@ if send and user_q.strip():
                 """,
                 unsafe_allow_html=True,
             )
-
             try:
                 messages = [
                     {"role": "system", "content": "당신은 대한민국의 법령 정보를 전문적으로 안내하는 AI 어시스턴트입니다."},
                     {"role": "user", "content": prompt},
                 ]
                 for piece in stream_chat_completion(messages, temperature=0.7, max_tokens=1000):
-                    full_text += piece
+                    buffer += piece
+                    # 🔧 너무 잦은 리렌더링 방지: 80자마다 갱신
+                    if len(buffer) >= 80:
+                        full_text += buffer
+                        buffer = ""
+                        ai_placeholder.markdown(
+                            f'<div class="ai-message"><strong>AI 어시스턴트:</strong><br>{full_text}</div>',
+                            unsafe_allow_html=True,
+                        )
+                        time.sleep(0.02)
+                # 남은 버퍼 반영
+                if buffer:
+                    full_text += buffer
                     ai_placeholder.markdown(
                         f'<div class="ai-message"><strong>AI 어시스턴트:</strong><br>{full_text}</div>',
                         unsafe_allow_html=True,
                     )
-                    time.sleep(0.02)
-                # 스트리밍 끝: 복사 버튼 UI로 교체
-                ai_placeholder.empty()
+                # ✅ 더 이상 placeholder를 비우지 않고, 아래에 복사 카드 "추가" 렌더
                 render_ai_with_copy(full_text, key=str(int(time.time())))
-            except Exception as e:
-                # 스트리밍 중 에러가 나면 비-스트리밍 폴백
+            except Exception:
                 try:
                     resp = client.chat.completions.create(
                         model=AZURE["deployment"],
@@ -380,7 +338,7 @@ if send and user_q.strip():
                     full_text = fallback_answer(user_q, law_data) + f"\n\n(추가 정보: {e2})"
                     render_ai_with_copy(full_text, key=str(int(time.time())))
 
-    # 3) 대화 저장 & 리렌더
+    # 3) 대화 저장 (페이지 재실행 없이 유지)
     st.session_state.messages.append(
         {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -391,7 +349,7 @@ if send and user_q.strip():
     )
     st.session_state.is_processing = False
     st.success("✅ 답변이 완성되었습니다!")
-    st.rerun()
+    # ❌ st.rerun() 제거 — 답변창이 갑자기 사라지는 현상 방지
 
 # =============================
 # 푸터
