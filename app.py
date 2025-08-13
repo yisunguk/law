@@ -1,258 +1,338 @@
 # app.py
-# -*- coding: utf-8 -*-
-
-import os
 import time
-import json
-import traceback
-from typing import Optional, Dict, Any, List
+import urllib.parse
+import xml.etree.ElementTree as ET
+from datetime import datetime
 
+import requests
 import streamlit as st
+from openai import AzureOpenAI
 
-# =========================
-# 페이지 기본 설정
-# =========================
-st.set_page_config(
-    page_title="법제처 AI 챗봇",
-    page_icon="⚖️",
-    layout="wide",
-)
-
-# =========================
-# UI 헤더
-# =========================
+# =============================
+# 스트림릿 페이지 설정 & 간단 스타일
+# =============================
+st.set_page_config(page_title="법제처 AI 챗봇", page_icon="⚖️", layout="wide")
 st.markdown(
     """
     <style>
-    .banner {
-        background: linear-gradient(90deg, #6a85f1, #b98df5);
-        color: white;
-        padding: 28px 28px;
-        border-radius: 18px;
-        text-align: center;
-        font-size: 28px;
-        font-weight: 800;
-        letter-spacing: -0.5px;
-        margin-bottom: 18px;
-    }
+      .header {text-align:center;padding:1.2rem;border-radius:12px;background:linear-gradient(135deg,#8b5cf6,#a78bfa);color:#fff;margin-bottom:1.2rem}
+      .user-message {background:#2563eb;color:#fff;padding:1rem;border-radius:16px 16px 0 16px;margin:0.6rem 0;max-width:80%;margin-left:auto}
+      .ai-message {background:#fff;color:#111;padding:1rem;border-radius:16px 16px 16px 0;margin:0.6rem 0;max-width:80%;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+      .typing-indicator {display:inline-block;width:18px;height:18px;border:3px solid #eee;border-top:3px solid #8b5cf6;border-radius:50%;animation:spin 1s linear infinite}
+      @keyframes spin {0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
+      .footer {text-align:center;color:#777;margin-top:2rem}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.markdown('<div class="banner">⚖️ 법제처 AI 챗봇</div>', unsafe_allow_html=True)
-st.caption("이 챗봇은 법제처 Open API와 OpenAI(Azure 포함)를 활용하여 지능형 법령 상담을 제공합니다. 제공되는 정보는 참고용이며, 정확한 법률 상담은 전문가에게 문의하세요.")
+st.markdown(
+    '<div class="header"><h2>⚖️ 법제처 AI 챗봇</h2><div>법제처 Open API와 Azure OpenAI를 활용한 지능형 법령 상담 서비스</div></div>',
+    unsafe_allow_html=True,
+)
 
-# =========================
-# 시크릿 로딩
-# =========================
+# =============================
+# Secrets 로딩
+# =============================
 def load_secrets():
-    """
-    Streamlit Secrets에서 키와 Azure 설정을 읽고 기본 검증 메시지를 표출합니다.
-    - LAW_API_KEY: 법제처 Open API용 (선택)
-    - OPENAI_API_KEY: 일반 OpenAI 키 (선택)
-    - [azure_openai] 섹션: Azure OpenAI 설정 (선택)
-    두 중 하나(OpenAI or Azure)가 존재하면 AI 응답이 활성화됩니다.
-    """
-    law_key = st.secrets.get("LAW_API_KEY")
-    openai_key = st.secrets.get("OPENAI_API_KEY")
-    azure_conf = st.secrets.get("azure_openai")
-
-    if not law_key:
-        st.info("ℹ️ `LAW_API_KEY`가 없습니다. 법제처 Open API 연동 기능은 제한될 수 있습니다.")
-
-    if not openai_key and not azure_conf:
-        st.warning("⚠️ OpenAI/Azure OpenAI 키가 없어 AI 답변 기능이 제한됩니다. `.streamlit/secrets.toml`을 확인하세요.")
-
-    return law_key, openai_key, azure_conf
-
-LAW_API_KEY, OPENAI_API_KEY, AZURE_CONF = load_secrets()
-
-# =========================
-# OpenAI / Azure OpenAI 클라이언트 초기화
-# =========================
-client = None
-MODEL_NAME = None
-is_azure = False
-
-def init_client():
-    global client, MODEL_NAME, is_azure
+    law_key = None
+    azure = None
     try:
-        if OPENAI_API_KEY:
-            # 일반 OpenAI
-            from openai import OpenAI
-            client = OpenAI(api_key=OPENAI_API_KEY)
-            # 필요시 다른 공개 모델로 교체 가능
-            MODEL_NAME = "gpt-4o-mini"
-            is_azure = False
-        elif AZURE_CONF:
-            # Azure OpenAI
-            from openai import AzureOpenAI
-            client = AzureOpenAI(
-                api_key=AZURE_CONF.get("api_key"),
-                azure_endpoint=AZURE_CONF.get("endpoint"),
-                api_version=AZURE_CONF.get("api_version"),
-            )
-            # Azure에서는 model 인자에 "배포 이름(deployment name)"을 넣는다.
-            MODEL_NAME = AZURE_CONF.get("deployment")
-            is_azure = True
-        else:
-            client = None
-            MODEL_NAME = None
-            is_azure = False
-    except Exception as e:
-        client = None
-        MODEL_NAME = None
-        is_azure = False
-        st.error(f"OpenAI 클라이언트 초기화 오류: {e}")
-        st.exception(e)
-
-init_client()
-
-# =========================
-# 법제처 Open API 헬퍼 (선택)
-# =========================
-def search_law_articles(query: str, limit: int = 3) -> List[Dict[str, Any]]:
-    """
-    예시용: 실제 법제처 Open API 스펙에 맞춰 수정해서 사용하세요.
-    여기선 데모 목적으로, 키가 없거나 호출 실패 시 빈 리스트를 반환합니다.
-    """
-    if not LAW_API_KEY:
-        return []
-
-    try:
-        # 실제 연동 시 아래에 requests 사용 예시를 참고해 구현하세요.
-        # import requests
-        # url = "https://api.law.go.kr/xxx"  # 실제 엔드포인트
-        # params = {"query": query, "serviceKey": LAW_API_KEY, ...}
-        # r = requests.get(url, params=params, timeout=10)
-        # r.raise_for_status()
-        # data = r.json()
-        # return parse_to_briefs(data)  # 적절히 파싱
-
-        # 데모 응답(가짜)
-        return [
-            {"title": "근로기준법 제50조(근로시간)", "snippet": "1주간의 근로시간은 휴게시간을 제외하고 40시간을 초과할 수 없다.", "ref": "법제처-데모"},
-            {"title": "근로기준법 제55조(휴일)", "snippet": "사용자는 근로자에게 1주에 평균 1회 이상의 유급휴일을 주어야 한다.", "ref": "법제처-데모"},
-        ][:limit]
+        law_key = st.secrets["LAW_API_KEY"]
     except Exception:
-        return []
+        st.error("`LAW_API_KEY`가 없습니다. Streamlit Cloud → App settings → Secrets 에 추가하세요.")
 
-# =========================
-# AI 응답 함수
-# =========================
-def generate_ai_answer(user_query: str, context_snippets: Optional[List[Dict[str, str]]] = None) -> str:
-    """
-    OpenAI/Azure OpenAI를 사용해 답변을 생성합니다.
-    스트리밍 UI를 위해 토큰 단위로 출력합니다.
-    """
-    if client is None or MODEL_NAME is None:
-        return "AI 엔진이 설정되어 있지 않아 답변을 생성할 수 없습니다. 관리자에게 키 설정을 요청하세요."
+    try:
+        azure = st.secrets["azure_openai"]
+        # 필수 키 검증
+        _ = azure["api_key"]
+        _ = azure["endpoint"]
+        _ = azure["deployment"]
+        _ = azure["api_version"]
+    except Exception:
+        st.error(
+            "[azure_openai] 섹션(api_key, endpoint, deployment, api_version)이 없거나 누락되었습니다."
+        )
+        azure = None
 
-    system_prompt = (
-        "너는 한국어 법률 비서야. 질문이 오면, 관련 법령 조항과 맥락을 근거로 명확하고 신중하게 답해."
-        " 확실치 않은 내용은 추측하지 말고, 최신성/정확성 한계를 알려줘."
-        " 마지막에 2~3줄로 핵심 요약을 덧붙여줘."
-    )
+    return law_key, azure
 
-    ctx_text = ""
-    if context_snippets:
-        bulleted = [f"- {c.get('title','')}: {c.get('snippet','')}" for c in context_snippets if c]
-        ctx_text = "다음은 참고 맥락 자료야:\n" + "\n".join(bulleted)
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"{ctx_text}\n\n사용자 질문: {user_query}".strip()},
+LAW_API_KEY, AZURE = load_secrets()
+
+# =============================
+# Azure OpenAI 클라이언트
+# =============================
+client = None
+if AZURE:
+    try:
+        client = AzureOpenAI(
+            api_key=AZURE["api_key"],
+            api_version=AZURE["api_version"],
+            azure_endpoint=AZURE["endpoint"],
+        )
+    except Exception as e:
+        st.error(f"Azure OpenAI 클라이언트 초기화 실패: {e}")
+
+# =============================
+# 세션 상태
+# =============================
+if "messages" not in st.session_state:
+    st.session_state.messages = []  # [{timestamp, user_question, ai_response, law_data}]
+if "is_processing" not in st.session_state:
+    st.session_state.is_processing = False
+
+# =============================
+# 법제처 API 호출 (HTTPS 우선, HTTP 폴백)
+# =============================
+@st.cache_data(show_spinner=False, ttl=300)
+def search_law_data(query: str, num_rows: int = 5):
+    """법제처 API에서 법령 목록을 조회합니다."""
+    if not LAW_API_KEY:
+        return [], None, "LAW_API_KEY 미설정"
+
+    params = {
+        "serviceKey": urllib.parse.quote_plus(LAW_API_KEY),  # 요청 시점 인코딩
+        "target": "law",
+        "query": query,
+        "numOfRows": max(1, int(num_rows)),
+        "pageNo": 1,
+    }
+
+    endpoints = [
+        "https://apis.data.go.kr/1170000/law/lawSearchList.do",
+        "http://apis.data.go.kr/1170000/law/lawSearchList.do",
     ]
 
-    # 스트리밍 생성
-    answer_holder = st.empty()
-    full_text = ""
+    last_err = None
+    for url in endpoints:
+        try:
+            res = requests.get(url, params=params, timeout=15)
+            res.raise_for_status()
+            root = ET.fromstring(res.text)
 
-    try:
-        stream = client.chat.completions.create(
-            model=MODEL_NAME,                 # ⚠️ Azure는 배포 이름, OpenAI는 모델명
-            messages=messages,
-            temperature=0.3,
-            max_tokens=1200,
-            stream=True,
+            laws = []
+            for law in root.findall(".//law"):
+                laws.append(
+                    {
+                        "법령명": law.findtext("법령명한글", default=""),
+                        "법령약칭명": law.findtext("법령약칭명", default=""),
+                        "소관부처명": law.findtext("소관부처명", default=""),
+                        "법령구분명": law.findtext("법령구분명", default=""),
+                        "시행일자": law.findtext("시행일자", default=""),
+                        "공포일자": law.findtext("공포일자", default=""),
+                        "법령상세링크": law.findtext("법령상세링크", default=""),
+                    }
+                )
+            return laws, url, None
+        except Exception as e:
+            last_err = e
+            continue
+
+    return [], None, f"법제처 API 연결 실패: {last_err}"
+
+# =============================
+# 프롬프트 구성 유틸
+# =============================
+def format_law_context(law_data):
+    if not law_data:
+        return "관련 법령 검색 결과가 없습니다."
+    ctx = []
+    for i, law in enumerate(law_data, 1):
+        ctx.append(
+            f"{i}. {law['법령명']} ({law['법령구분명']})\n"
+            f"   - 소관부처: {law['소관부처명']}\n"
+            f"   - 시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}\n"
+            f"   - 링크: {law['법령상세링크'] or '없음'}"
         )
+    return "\n\n".join(ctx)
 
-        for chunk in stream:
-            delta = getattr(chunk.choices[0], "delta", None)
-            if delta and getattr(delta, "content", None):
-                piece = delta.content
-                full_text += piece
-                answer_holder.markdown(full_text)
-        return full_text or "응답이 비어 있습니다."
-    except Exception as e:
-        st.error("모델 호출 중 오류가 발생했습니다.")
-        st.code(traceback.format_exc())
-        return f"오류: {e}"
-
-# =========================
-# 사이드바: 상태 및 설정 표시
-# =========================
-with st.sidebar:
-    st.subheader("상태")
-    st.write("엔진:", "Azure OpenAI(배포명)" if is_azure else ("OpenAI(공용 모델)" if client else "미설정"))
-    st.write("모델/배포:", MODEL_NAME or "—")
-
-    st.divider()
-    st.subheader("도움말")
-    st.markdown(
-        """
-        - `.streamlit/secrets.toml` 예시:
-        ```toml
-        LAW_API_KEY = "YOUR_LAW_KEY"
-
-        [azure_openai]
-        api_key = "YOUR_AZURE_KEY"
-        endpoint = "https://YOUR-RESOURCE.openai.azure.com/"
-        deployment = "YOUR_DEPLOYMENT_NAME"
-        api_version = "2025-01-01-preview"
-        ```
-        - 일반 OpenAI 키가 있다면 `OPENAI_API_KEY="..."`를 추가하면 됩니다.
-        """
+def fallback_answer(user_question, law_data):
+    """Azure 미설정/오류 시 기본 답변"""
+    return (
+        f"**질문 요약:** {user_question}\n\n"
+        f"**관련 법령(요약):**\n{format_law_context(law_data)}\n\n"
+        f"*Azure OpenAI 설정이 없거나 호출 중 오류가 발생해 기본 답변을 제공합니다.*"
     )
 
-# =========================
-# 메인 입력 영역
-# =========================
-st.markdown("#### 법령에 대한 질문을 입력하세요")
-default_placeholder = "예: 근로기준법에서 정하는 최대 근로시간은 얼마인가요?"
-user_text = st.text_input(" ", placeholder=default_placeholder, label_visibility="collapsed")
+# =============================
+# Azure OpenAI 스트리밍 (안전 처리)
+# =============================
+def stream_chat_completion(messages, temperature=0.7, max_tokens=1000):
+    """
+    Azure OpenAI 스트리밍을 안전하게 순회하며 텍스트 덩어리를 yield 합니다.
+    - choices가 없거나 빈 청크는 건너뜀
+    - finish_reason 도착 시 종료
+    """
+    stream = client.chat.completions.create(
+        model=AZURE["deployment"],  # deployment 이름 사용
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=True,
+    )
 
-col1, col2 = st.columns([1, 4])
-with col1:
-    topk = st.number_input("참고 검색 개수(법제처)", min_value=0, max_value=10, value=2, step=1)
-with col2:
-    add_context = st.checkbox("법제처 Open API(예시)로 관련 조항 검색해 맥락에 포함", value=True, help="실제 연동 시 search_law_articles() 구현을 교체하세요.")
+    for chunk in stream:
+        try:
+            # 간헐적으로 메타 청크가 들어올 수 있음 -> 방어
+            if not hasattr(chunk, "choices") or not chunk.choices:
+                continue
 
-btn = st.button("전송", use_container_width=True, type="primary")
+            choice = chunk.choices[0]
+            # 종료 신호 처리
+            if getattr(choice, "finish_reason", None):
+                break
 
-# =========================
-# 동작
-# =========================
-if btn:
-    if not user_text.strip():
-        st.warning("질문을 입력하세요.")
-        st.stop()
+            delta = getattr(choice, "delta", None)
+            text = getattr(delta, "content", None) if delta else None
+            if text:
+                yield text
+        except Exception:
+            # 스트림 도중 예외는 무시하고 계속
+            continue
 
-    # (선택) 법제처 맥락 수집
-    snippets = search_law_articles(user_text, limit=int(topk)) if add_context else []
+# =============================
+# 사이드바
+# =============================
+with st.sidebar:
+    st.markdown("### ⚙️ 옵션")
+    num_rows = st.number_input("참고 검색 개수(법제처)", min_value=1, max_value=10, value=2, step=1)
+    include_search = st.checkbox("법제처 Open API로 관련 조항 검색해 맥락에 포함", value=True)
+    st.divider()
+    st.metric("총 질문 수", len(st.session_state.messages))
+    if st.session_state.messages:
+        st.metric("마지막 질문", st.session_state.messages[-1]["timestamp"])
+    if st.button("🗑️ 대화 기록 초기화"):
+        st.session_state.messages.clear()
+        st.rerun()
 
-    with st.spinner("생성 중..."):
-        answer = generate_ai_answer(user_text, context_snippets=snippets)
+# =============================
+# 과거 대화 렌더
+# =============================
+for m in st.session_state.messages:
+    st.markdown(f'<div class="user-message"><strong>사용자:</strong><br>{m["user_question"]}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="ai-message"><strong>AI 어시스턴트:</strong><br>{m["ai_response"]}</div>', unsafe_allow_html=True)
+    if m.get("law_data"):
+        with st.expander("📋 관련 법령 정보 보기"):
+            for i, law in enumerate(m["law_data"], 1):
+                st.write(f"**{i}. {law['법령명']}** ({law['법령구분명']})")
+                st.write(f"- 소관부처: {law['소관부처명']}")
+                st.write(f"- 시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}")
+                if law["법령상세링크"]:
+                    st.write(f"- 링크: {law['법령상세링크']}")
+    st.divider()
 
-    if snippets:
-        with st.expander("참고한 법제처 검색 요약(예시)"):
-            for i, snip in enumerate(snippets, 1):
-                st.markdown(f"**{i}. {snip.get('title','제목 없음')}**")
-                st.write(snip.get("snippet", ""))
-                if snip.get("ref"):
-                    st.caption(f"출처: {snip['ref']}")
+# =============================
+# 입력 & 처리
+# =============================
+user_q = st.text_input("법령에 대한 질문을 입력하세요", placeholder="예) 근로기준법에서 정하는 최대 근로시간은 얼마인가요?")
+send = st.button("전송", type="primary", use_container_width=True)
 
+if send and user_q.strip():
+    st.session_state.is_processing = True
+
+    # 1) 법제처 검색
+    law_data, used_endpoint, err = ([], None, None)
+    if include_search:
+        with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
+            law_data, used_endpoint, err = search_law_data(user_q, num_rows=num_rows)
+        if used_endpoint:
+            st.caption(f"법제처 API endpoint: `{used_endpoint}`")
+        if err:
+            st.warning(err)
+
+    # 2) AI 응답
+    ai_placeholder = st.empty()
+    full_text = ""
+
+    # 프롬프트 구성
+    law_ctx = format_law_context(law_data)
+    prompt = f"""
+당신은 대한민국의 법령 정보를 전문적으로 안내하는 AI 어시스턴트입니다.
+
+사용자 질문: {user_q}
+
+관련 법령 정보(요약):
+{law_ctx}
+
+위의 정보를 바탕으로 아래 형식으로 답변하세요.
+1) 질문에 대한 직접적인 답변
+2) 관련 법령의 구체적인 내용 설명
+3) 참고/주의사항
+답변은 한국어로 쉽게 설명하세요.
+"""
+
+    with st.spinner("🤖 AI가 답변을 생성하는 중..."):
+        if client is None:
+            # Azure 미설정 → 기본 답변
+            full_text = fallback_answer(user_q, law_data)
+            ai_placeholder.markdown(
+                f'<div class="ai-message"><strong>AI 어시스턴트:</strong><br>{full_text}</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            # 스트리밍 출력
+            ai_placeholder.markdown(
+                """
+                <div class="ai-message">
+                  <strong>AI 어시스턴트:</strong><br>
+                  <div class="typing-indicator"></div> 답변을 생성하고 있습니다...
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            try:
+                messages = [
+                    {"role": "system", "content": "당신은 대한민국의 법령 정보를 전문적으로 안내하는 AI 어시스턴트입니다."},
+                    {"role": "user", "content": prompt},
+                ]
+                for piece in stream_chat_completion(messages, temperature=0.7, max_tokens=1000):
+                    full_text += piece
+                    ai_placeholder.markdown(
+                        f'<div class="ai-message"><strong>AI 어시스턴트:</strong><br>{full_text}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    time.sleep(0.02)
+            except Exception as e:
+                # 스트리밍 중 에러가 나면 비-스트리밍 폴백
+                try:
+                    resp = client.chat.completions.create(
+                        model=AZURE["deployment"],
+                        messages=messages,
+                        max_tokens=1000,
+                        temperature=0.7,
+                        stream=False,
+                    )
+                    full_text = resp.choices[0].message.content
+                    ai_placeholder.markdown(
+                        f'<div class="ai-message"><strong>AI 어시스턴트:</strong><br>{full_text}</div>',
+                        unsafe_allow_html=True,
+                    )
+                except Exception as e2:
+                    full_text = fallback_answer(user_q, law_data) + f"\n\n(추가 정보: {e2})"
+                    ai_placeholder.markdown(
+                        f'<div class="ai-message"><strong>AI 어시스턴트:</strong><br>{full_text}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+    # 3) 대화 저장 & 리렌더
+    st.session_state.messages.append(
+        {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "user_question": user_q,
+            "ai_response": full_text,
+            "law_data": law_data,
+        }
+    )
+    st.session_state.is_processing = False
+    st.success("✅ 답변이 완성되었습니다!")
+    st.rerun()
+
+# =============================
 # 푸터
-st.markdown("---")
-st.caption("© 2025 POSCO E&C • 데모 앱")
+# =============================
+st.markdown(
+    '<div class="footer">제공되는 정보는 참고용이며, 정확한 법률 상담은 전문가에게 문의하시기 바랍니다.</div>',
+    unsafe_allow_html=True,
+)
