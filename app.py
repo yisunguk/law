@@ -192,17 +192,78 @@ def law_search(keyword: str) -> List[str]:
         url = "http://www.law.go.kr/DRF/lawSearch.do"
         params = {"OC": LAW_API_KEY, "target": "law", "query": keyword, "type": "XML"}
         res = requests.get(url, params=params, timeout=15)  # 타임아웃 증가
+        
         if res.status_code != 200 or not res.text.strip():
             return []
-        import xml.etree.ElementTree as ET
-        root = ET.fromstring(res.text)
-        hits = []
-        for item in root.findall(".//law"):
-            title = item.findtext("법령명한글") or ""
-            date = item.findtext("시행일자") or ""
-            if title:
-                hits.append(f"- {title} (시행일자: {date})")
-        return hits[:5]
+        
+        # XML 응답 디버깅을 위한 로그
+        response_text = res.text.strip()
+        if not response_text.startswith('<?xml') and not response_text.startswith('<'):
+            st.warning(f"법제처 API가 XML이 아닌 응답을 반환했습니다: {response_text[:100]}...")
+            return []
+        
+        try:
+            import xml.etree.ElementTree as ET
+            # XML 파싱 시도
+            root = ET.fromstring(response_text)
+            
+            # 다양한 XML 구조 시도
+            hits = []
+            
+            # 방법 1: 기본 law 태그 검색
+            law_items = root.findall(".//law")
+            if law_items:
+                for item in law_items:
+                    title = item.findtext("법령명한글") or item.findtext("법령명") or ""
+                    date = item.findtext("시행일자") or item.findtext("시행일") or ""
+                    if title:
+                        hits.append(f"- {title} (시행일자: {date})")
+            
+            # 방법 2: 다른 가능한 태그들 검색
+            if not hits:
+                for tag_name in ["법령", "law", "item", "result"]:
+                    items = root.findall(f".//{tag_name}")
+                    if items:
+                        for item in items:
+                            # 모든 하위 태그에서 제목과 날짜 찾기
+                            title = ""
+                            date = ""
+                            for child in item:
+                                if "명" in child.tag or "title" in child.tag.lower():
+                                    title = child.text or ""
+                                elif "일" in child.tag or "date" in child.tag.lower():
+                                    date = child.text or ""
+                            
+                            if title:
+                                hits.append(f"- {title} (시행일자: {date})")
+                        break
+            
+            # 방법 3: 텍스트 기반 검색 (XML 파싱이 실패한 경우)
+            if not hits:
+                # XML 태그를 제거하고 텍스트만 추출
+                import re
+                clean_text = re.sub(r'<[^>]+>', '', response_text)
+                lines = clean_text.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if line and len(line) > 5 and ('법' in line or '규정' in line or '조례' in line):
+                        hits.append(f"- {line}")
+            
+            return hits[:5]
+            
+        except ET.ParseError as xml_error:
+            st.warning(f"XML 파싱 오류: {str(xml_error)}")
+            # XML 파싱 실패 시 텍스트 기반 검색 시도
+            import re
+            clean_text = re.sub(r'<[^>]+>', '', response_text)
+            lines = clean_text.split('\n')
+            hits = []
+            for line in lines:
+                line = line.strip()
+                if line and len(line) > 5 and ('법' in line or '규정' in line or '조례' in line):
+                    hits.append(f"- {line}")
+            return hits[:5]
+            
     except Exception as e:
         st.warning(f"법제처 API 검색 중 오류: {str(e)}")
         return []
