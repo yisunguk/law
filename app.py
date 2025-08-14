@@ -154,40 +154,6 @@ st.markdown(
   background: #10a37f; color: white;
 }
 
-/* 입력창 */
-.chat-input-container {
-  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-  width: 90%; max-width: 800px; background: white;
-  border: 1px solid #e5e7eb; border-radius: 24px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 1000;
-}
-
-.chat-input-wrapper {
-  display: flex; align-items: flex-end; padding: 8px;
-}
-
-.chat-textarea {
-  flex: 1; border: none; outline: none; resize: none;
-  padding: 12px 16px; font-size: 16px; line-height: 1.5;
-  min-height: 24px; max-height: 200px; border-radius: 20px;
-  background: transparent;
-}
-
-.chat-send-button {
-  background: #10a37f; color: white; border: none; border-radius: 50%;
-  width: 40px; height: 40px; margin-left: 8px; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: background-color 0.2s;
-}
-
-.chat-send-button:hover {
-  background: #0d8f6f;
-}
-
-.chat-send-button:disabled {
-  background: #d1d5db; cursor: not-allowed;
-}
-
 /* 본문이 입력창에 가리지 않게 하단 여백 확보 */
 .block-container { padding-bottom: 120px; }
 
@@ -293,6 +259,15 @@ def law_search(keyword: str, rows: int = 5) -> List[str]:
         return []
     
     try:
+        # SSL 오류 방지를 위한 세션 설정
+        session = requests.Session()
+        session.verify = False  # SSL 인증서 검증 비활성화 (개발용)
+        
+        # User-Agent 추가로 호환성 향상
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
         base = 'https://apis.data.go.kr/1170000/law/lawSearchList.do'
         params = {
             'serviceKey': DATA_PORTAL_SERVICE_KEY,
@@ -301,7 +276,12 @@ def law_search(keyword: str, rows: int = 5) -> List[str]:
             'numOfRows': rows,
             'pageNo': 1,
         }
-        res = requests.get(base, params=params, timeout=15)
+        
+        # SSL 경고 무시
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
+        res = session.get(base, params=params, headers=headers, timeout=30)
         ctype = (res.headers.get('Content-Type') or '').lower()
         txt = res.text or ''
         
@@ -398,84 +378,8 @@ if not client:
 st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================
-# Custom chat input (ChatGPT 스타일)
+# Chat Input Form
 # =========================
-chat_input = st.empty()
-with chat_input.container():
-    st.markdown(
-        """
-        <div class="chat-input-container">
-          <div class="chat-input-wrapper">
-            <textarea 
-              id="chat-textarea" 
-              class="chat-textarea" 
-              placeholder="법령에 대한 질문을 입력하세요... (Shift+Enter: 줄바꿈, Enter: 전송)"
-              rows="1"
-            ></textarea>
-            <button id="chat-send-btn" class="chat-send-button" onclick="sendMessage()">
-              ➤
-            </button>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-# =========================
-# JavaScript for ChatGPT-style input
-# =========================
-st.markdown(
-    """
-    <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const textarea = document.getElementById('chat-textarea');
-        const sendBtn = document.getElementById('chat-send-btn');
-        
-        if (textarea && sendBtn) {
-            // 자동 높이 조절
-            textarea.addEventListener('input', function() {
-                this.style.height = 'auto';
-                this.style.height = Math.min(this.scrollHeight, 200) + 'px';
-            });
-            
-            // Enter로 전송, Shift+Enter로 줄바꿈
-            textarea.addEventListener('keydown', function(e) {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
-                }
-            });
-            
-            // 전송 버튼 클릭
-            window.sendMessage = function() {
-                const message = textarea.value.trim();
-                if (message) {
-                    // Streamlit 세션에 메시지 전달
-                    const event = new CustomEvent('streamlit:sendMessage', {
-                        detail: { message: message }
-                    });
-                    window.dispatchEvent(event);
-                    
-                    // 입력창 초기화
-                    textarea.value = '';
-                    textarea.style.height = '24px';
-                }
-            };
-        }
-    });
-    </script>
-    """,
-    unsafe_allow_html=True
-)
-
-# =========================
-# Handle message submission
-# =========================
-# JavaScript 이벤트를 감지하여 메시지 처리
-if st.button("테스트 전송", key="test_send", help="JavaScript 이벤트 테스트용"):
-    st.info("JavaScript 이벤트가 정상 작동하는지 확인하세요.")
-
-# 사용자 입력을 받는 Streamlit 폼 (임시)
 with st.form("chat_form", clear_on_submit=True):
     user_text = st.text_area(
         label="",
@@ -485,6 +389,9 @@ with st.form("chat_form", clear_on_submit=True):
     )
     submitted = st.form_submit_button("보내기")
 
+# =========================
+# Handle message submission
+# =========================
 if submitted:
     user_q = (user_text or "").strip()
     if user_q:
