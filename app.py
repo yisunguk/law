@@ -1,4 +1,4 @@
-# app.py — stable (custom input form, no SessionState write-after-submit)
+# app.py — POSCO E&C Law Chat (stable, secrets-based)
 
 import os
 import time
@@ -11,39 +11,34 @@ import requests
 import streamlit as st
 from openai import AzureOpenAI
 
-# ✅ secrets에서 불러오기
-LAW_API_KEY = st.secrets["LAW_API_KEY"]
-
-AZURE_OPENAI_API_KEY = st.secrets["azure_openai"]["api_key"]
-AZURE_OPENAI_API_BASE = st.secrets["azure_openai"]["endpoint"]      # ← endpoint를 API_BASE로 사용
-AZURE_OPENAI_DEPLOYMENT = st.secrets["azure_openai"]["deployment"]  # 예: gpt-4o-mini-leesunguk
-AZURE_OPENAI_API_VERSION = st.secrets["azure_openai"]["api_version"]  # 예: 2025-01-01-preview
-
-FIREBASE_CONFIG = {
-    "type": st.secrets["firebase"]["type"],
-    "project_id": st.secrets["firebase"]["project_id"],
-    "private_key_id": st.secrets["firebase"]["private_key_id"],
-    "private_key": st.secrets["firebase"]["private_key"],
-    "client_email": st.secrets["firebase"]["client_email"],
-    "client_id": st.secrets["firebase"]["client_id"],
-    "auth_uri": st.secrets["firebase"]["auth_uri"],
-    "token_uri": st.secrets["firebase"]["token_uri"],
-    "auth_provider_x509_cert_url": st.secrets["firebase"]["auth_provider_x509_cert_url"],
-    "client_x509_cert_url": st.secrets["firebase"]["client_x509_cert_url"],
-    "universe_domain": st.secrets["firebase"]["universe_domain"]
-}
 # =========================
-# Page & Env
+# Page
 # =========================
 st.set_page_config(page_title="법제처 AI 챗봇", page_icon="⚖️", layout="wide")
 
-AZURE_OPENAI_API_BASE = os.getenv("AZURE_OPENAI_API_BASE", "")
-AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", "")
-AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
-AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-06-01")
+# =========================
+# Secrets (필수 설정 읽기)
+# =========================
+def _get_secret(path: list, default=None):
+    try:
+        base = st.secrets
+        for p in path:
+            base = base[p]
+        return base
+    except Exception:
+        return default
 
-FIREBASE_CREDENTIALS = os.getenv("FIREBASE_CREDENTIALS", "")
-FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "")
+# 법제처 DRF OC
+LAW_API_KEY = _get_secret(["LAW_API_KEY"], "")
+
+# Azure OpenAI
+AZURE_OPENAI_API_KEY   = _get_secret(["azure_openai", "api_key"], "")
+AZURE_OPENAI_API_BASE  = _get_secret(["azure_openai", "endpoint"], "")
+AZURE_OPENAI_DEPLOYMENT= _get_secret(["azure_openai", "deployment"], "")
+AZURE_OPENAI_API_VERSION = _get_secret(["azure_openai", "api_version"], "2024-06-01")
+
+# Firebase
+FIREBASE_CONFIG = _get_secret(["firebase"], None)
 
 # =========================
 # Firebase (optional)
@@ -53,13 +48,14 @@ try:
     from firebase_admin import credentials, firestore
 except Exception:
     firebase_admin = None
+    firestore = None
 
 def init_firebase():
-    if firebase_admin is None:
+    if firebase_admin is None or FIREBASE_CONFIG is None:
         return None
     try:
         if not firebase_admin._apps:
-            cred = credentials.Certificate(FIREBASE_CONFIG)  # ← dict 바로 전달
+            cred = credentials.Certificate(dict(FIREBASE_CONFIG))  # secrets dict 그대로 사용
             firebase_admin.initialize_app(cred, {"projectId": FIREBASE_CONFIG["project_id"]})
         return firestore.client()
     except Exception:
@@ -188,14 +184,15 @@ if restored:
 # =========================
 # Utilities
 # =========================
-def law_search(keyword: str):
+def law_search(keyword: str) -> List[str]:
     """법제처 간단 검색 → 리스트[str]"""
-    def law_search(keyword: str):
+    if not LAW_API_KEY:
+        return []
     try:
         url = "http://www.law.go.kr/DRF/lawSearch.do"
-        params = {"OC": LAW_API_KEY, "target": "law", "query": keyword, "type": "XML"}  # ← 여기
+        params = {"OC": LAW_API_KEY, "target": "law", "query": keyword, "type": "XML"}
         res = requests.get(url, params=params, timeout=10)
-        if res.status_code != 200:
+        if res.status_code != 200 or not res.text.strip():
             return []
         import xml.etree.ElementTree as ET
         root = ET.fromstring(res.text)
@@ -213,10 +210,10 @@ def law_context_str(hits: List[str]) -> str:
     return "\n".join(hits) if hits else "관련 검색 결과가 없습니다."
 
 def get_client():
-    if not AZURE_OPENAI_API_BASE or not AZURE_OPENAI_API_KEY:
+    if not AZURE_OPENAI_API_BASE or not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_DEPLOYMENT:
         return None
     return AzureOpenAI(
-        azure_endpoint=AZURE_OPENAI_API_BASE,   # ← endpoint
+        azure_endpoint=AZURE_OPENAI_API_BASE,
         api_key=AZURE_OPENAI_API_KEY,
         api_version=AZURE_OPENAI_API_VERSION,
     )
@@ -236,7 +233,7 @@ with st.sidebar:
     if c2.button("요약 저장", use_container_width=True):
         st.success("요약 저장 완료!")
 
-    # (요청) Thread ID/URL 표시는 숨김
+    # Thread ID/URL 표시는 숨김
 
     st.markdown("---")
     st.markdown("#### 대화 히스토리(최근)")
@@ -253,6 +250,10 @@ for m in st.session_state.messages:
     with st.chat_message(role if role in ("user", "assistant") else "assistant"):
         st.markdown(m.get("content", ""))
 
+# 환경 경고 배너(선택적)
+if not client:
+    st.info("Azure OpenAI 설정이 없으면 기본 안내만 표시됩니다. (Secrets에 api_key/endpoint/deployment/api_version 확인)")
+
 # =========================
 # Custom chat bar (form)
 # =========================
@@ -268,7 +269,7 @@ with chatbar.container():
         unsafe_allow_html=True,
     )
 
-    # ★ clear_on_submit=True 로 변경 → 제출 후 자동 초기화
+    # clear_on_submit=True → 제출 후 자동 초기화
     with st.form("chat_form", clear_on_submit=True):
         user_text = st.text_area(
             label="",
@@ -306,7 +307,7 @@ if submitted:
         with st.chat_message("user"):
             st.markdown(user_q)
 
-        # 사전 초기화
+        # 컨텍스트/버퍼 초기화
         ctx: str = ""
         assistant_full: str = ""
 
@@ -343,13 +344,12 @@ if submitted:
             else:
                 try:
                     stream = client.chat.completions.create(
-                      model=AZURE_OPENAI_DEPLOYMENT,  # ← 배포 이름
-                      messages=history_for_model,
-                      temperature=0.3,
-                      top_p=1.0,
-                      stream=True,
-)
-
+                        model=AZURE_OPENAI_DEPLOYMENT,   # 배포 이름 그대로
+                        messages=history_for_model,
+                        temperature=0.3,
+                        top_p=1.0,
+                        stream=True,
+                    )
                     buf = []
                     for ch in stream:
                         piece = ""
