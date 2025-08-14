@@ -250,29 +250,7 @@ def law_search(keyword: str, rows: int = 5) -> List[str]:
         except Exception as e:
             _warn(f"공공데이터포털 호출 오류: {e}")
 
-    # 2) DRF 폴백 (OC 키 — type=XML)
-    if LAW_API_KEY:
-        try:
-            url = 'http://www.law.go.kr/DRF/lawSearch.do'
-            params = {'OC': LAW_API_KEY, 'target': 'law', 'query': keyword, 'type': 'XML'}
-            res = requests.get(url, params=params, timeout=15)
-            ctype = (res.headers.get('Content-Type') or '').lower()
-            txt = res.text or ''
-            if res.status_code != 200:
-                _warn(f"법제처 DRF 오류(code={res.status_code})", txt)
-            elif 'xml' in ctype or txt.strip().startswith('<'):
-                if _is_html(txt):
-                    _warn("법제처 DRF가 HTML(오류 페이지)을 반환했습니다. OC 키/쿼터/파라미터를 확인하세요.", txt)
-                else:
-                    hits = _parse_xml(txt)
-                    if hits:
-                        return hits
-            else:
-                _warn(f"법제처 DRF가 XML이 아닌 응답을 반환했습니다(Content-Type={ctype})", txt)
-        except Exception as e:
-            _warn(f"법제처 DRF 호출 오류: {e}")
-
-    return []
+       return []
 
 def law_context_str(hits: List[str]) -> str:
     return "\n".join(hits) if hits else "관련 검색 결과가 없습니다."
