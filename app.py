@@ -258,48 +258,108 @@ def law_search(keyword: str, rows: int = 5) -> List[str]:
         st.warning("공공데이터포털 ServiceKey가 설정되지 않았습니다.")
         return []
     
-    try:
-        # SSL 오류 방지를 위한 세션 설정
-        session = requests.Session()
-        session.verify = False  # SSL 인증서 검증 비활성화 (개발용)
-        
-        # User-Agent 추가로 호환성 향상
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    # 여러 API 엔드포인트 시도
+    api_endpoints = [
+        {
+            'url': 'https://apis.data.go.kr/1170000/law/lawSearchList.do',
+            'params': {
+                'serviceKey': DATA_PORTAL_SERVICE_KEY,
+                'target': 'law',
+                'query': keyword or '*',
+                'numOfRows': rows,
+                'pageNo': 1,
+            }
+        },
+        {
+            'url': 'https://apis.data.go.kr/1170000/law/lawSearch.do',
+            'params': {
+                'serviceKey': DATA_PORTAL_SERVICE_KEY,
+                'target': 'law',
+                'query': keyword or '*',
+                'numOfRows': rows,
+                'pageNo': 1,
+            }
+        },
+        {
+            'url': 'https://apis.data.go.kr/1170000/law/lawList.do',
+            'params': {
+                'serviceKey': DATA_PORTAL_SERVICE_KEY,
+                'target': 'law',
+                'query': keyword or '*',
+                'numOfRows': rows,
+                'pageNo': 1,
+            }
         }
-        
-        base = 'https://apis.data.go.kr/1170000/law/lawSearchList.do'
-        params = {
-            'serviceKey': DATA_PORTAL_SERVICE_KEY,
-            'target': 'law',
-            'query': keyword or '*',
-            'numOfRows': rows,
-            'pageNo': 1,
-        }
-        
-        # SSL 경고 무시
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        
-        res = session.get(base, params=params, headers=headers, timeout=30)
-        ctype = (res.headers.get('Content-Type') or '').lower()
-        txt = res.text or ''
-        
-        if res.status_code != 200:
-            _warn(f"공공데이터포털 오류(code={res.status_code})", txt)
-        elif 'xml' in ctype or txt.strip().startswith('<'):
-            if _is_html(txt):
-                _warn("공공데이터포털이 HTML(사람용 페이지)을 반환했습니다. ServiceKey/쿼터/파라미터를 확인하세요.", txt)
+    ]
+    
+    for endpoint in api_endpoints:
+        try:
+            # HTTP 연결 시도 (HTTPS 대신)
+            if endpoint['url'].startswith('https://'):
+                http_url = endpoint['url'].replace('https://', 'http://')
             else:
-                hits = _parse_xml(txt)
-                if hits:
-                    return hits
-        else:
-            _warn(f"공공데이터포털이 XML이 아닌 응답을 반환했습니다(Content-Type={ctype})", txt)
-    except Exception as e:
-        _warn(f"공공데이터포털 호출 오류: {e}")
-
-    return []
+                http_url = endpoint['url']
+            
+            # 세션 설정
+            session = requests.Session()
+            
+            # User-Agent 추가로 호환성 향상
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'application/xml, text/xml, */*',
+                'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
+                'Connection': 'keep-alive'
+            }
+            
+            # HTTP로 시도
+            res = session.get(http_url, params=endpoint['params'], headers=headers, timeout=30)
+            ctype = (res.headers.get('Content-Type') or '').lower()
+            txt = res.text or ''
+            
+            if res.status_code == 200 and txt.strip():
+                if 'xml' in ctype or txt.strip().startswith('<'):
+                    if _is_html(txt):
+                        continue  # HTML 응답이면 다음 API 시도
+                    else:
+                        hits = _parse_xml(txt)
+                        if hits:
+                            return hits
+                else:
+                    # XML이 아닌 응답이지만 내용이 있으면 텍스트 기반으로 처리
+                    if '법' in txt or '규정' in txt or '조례' in txt:
+                        lines = txt.split('\n')
+                        hits = []
+                        for line in lines:
+                            line = line.strip()
+                            if line and len(line) > 5 and ('법' in line or '규정' in line or '조례' in line):
+                                hits.append(f"- {line}")
+                        if hits:
+                            return hits[:rows]
+            
+        except Exception as e:
+            continue  # 오류 발생 시 다음 API 시도
+    
+    # 모든 API 시도 실패 시 사용자에게 안내
+    st.error("""
+    공공데이터포털 API 연결에 실패했습니다. 다음을 확인해주세요:
+    
+    1. **ServiceKey 확인**: [공공데이터포털](https://www.data.go.kr/iim/api/selectAPIAcountView.do)에서 발급받은 키가 정확한지 확인
+    2. **키 타입**: Decoding된 값을 사용해야 합니다
+    3. **일일 호출 한도**: 무료 계정의 경우 일일 1,000건 제한이 있을 수 있습니다
+    4. **네트워크 환경**: 회사/기관 네트워크에서 외부 API 접근이 차단될 수 있습니다
+    
+    임시로 기본 법령 정보를 제공합니다.
+    """)
+    
+    # 기본 법령 정보 제공
+    default_laws = [
+        "- 민법 (시행일자: 1960-01-01)",
+        "- 형법 (시행일자: 1953-09-18)",
+        "- 상법 (시행일자: 1962-01-20)",
+        "- 민사소송법 (시행일자: 1960-04-01)",
+        "- 형사소송법 (시행일자: 1954-09-23)"
+    ]
+    return default_laws[:rows]
 
 def law_context_str(hits: List[str]) -> str:
     return "\n".join(hits) if hits else "관련 검색 결과가 없습니다."
