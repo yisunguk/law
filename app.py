@@ -37,7 +37,7 @@ st.markdown("""
     border-radius:14px;
     padding:16px 48px 16px 16px;  /* 오른쪽 복사버튼 공간 */
     font-size:17px!important;
-    line-height:1.8!important;
+    line-height:1.5!important;
     white-space:pre-wrap;
     word-break:break-word;
     box-shadow:0 1px 8px rgba(0,0,0,.12);
@@ -89,18 +89,32 @@ def _normalize_text(s: str) -> str:
     return "\n".join(out)
 
 def render_bubble_with_copy(message: str, key: str):
-    """본문은 escape해서 안전하게 렌더, 복사 버튼은 경량 components로 오버레이."""
     message = _normalize_text(message)
-    safe_html = html.escape(message)     # 화면용
-    safe_raw_json = json.dumps(message)  # 클립보드용
+    safe_html = html.escape(message)
+    safe_raw_json = json.dumps(message)
 
+    # 본문 말풍선
     st.markdown(f'<div class="chat-bubble" id="bubble-{key}">{safe_html}</div>',
                 unsafe_allow_html=True)
 
+    # ✅ 버튼 아이프레임: 높이 36px + 오른쪽 정렬 + z-index 보장
     components.html(f"""
-    <div style="position:relative;height:0">
-      <button class="copy-fab" id="copy-{key}"
-              style="position:absolute; top:-58px; right:18px;">
+    <div style="
+        position: relative;
+        height: 36px;                 /* 0 → 36px 로 변경 (보이게) */
+        margin-top: -44px;            /* 말풍선 상단에 겹치게 끌어올림 */
+        display: flex; justify-content: flex-end;
+        pointer-events: none;         /* 배경 클릭 안 잡히게 */
+        z-index: 2147483647;          /* 항상 위로 */
+    ">
+      <button id="copy-{key}" style="
+          pointer-events: all;        /* 버튼만 클릭 가능 */
+          display: inline-flex; align-items: center; gap: 6px;
+          padding: 6px 10px; border: 1px solid rgba(255,255,255,.15);
+          border-radius: 10px; background: rgba(0,0,0,.25);
+          backdrop-filter: blur(4px); cursor: pointer; font-size: 12px;
+          color: inherit;
+      " class="copy-fab-btn">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
           <path d="M9 9h9v12H9z" stroke="currentColor"/>
           <path d="M6 3h9v3" stroke="currentColor"/>
@@ -112,7 +126,7 @@ def render_bubble_with_copy(message: str, key: str):
     <script>
       (function(){{
         const btn = document.getElementById("copy-{key}");
-        if(!btn) return;
+        if (!btn) return;
         btn.addEventListener("click", async () => {{
           try {{
             await navigator.clipboard.writeText({safe_raw_json});
@@ -125,7 +139,8 @@ def render_bubble_with_copy(message: str, key: str):
         }});
       }})();
     </script>
-    """, height=0)
+    """, height=36)  # ← height=0 → 36 로 변경
+
 
 # =============================
 # Secrets
