@@ -5,7 +5,7 @@ import time
 import json
 import uuid
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import requests
 import streamlit as st
@@ -191,7 +191,7 @@ def law_search(keyword: str) -> List[str]:
     try:
         url = "http://www.law.go.kr/DRF/lawSearch.do"
         params = {"OC": LAW_API_KEY, "target": "law", "query": keyword, "type": "XML"}
-        res = requests.get(url, params=params, timeout=10)
+        res = requests.get(url, params=params, timeout=15)  # 타임아웃 증가
         if res.status_code != 200 or not res.text.strip():
             return []
         import xml.etree.ElementTree as ET
@@ -203,20 +203,34 @@ def law_search(keyword: str) -> List[str]:
             if title:
                 hits.append(f"- {title} (시행일자: {date})")
         return hits[:5]
-    except Exception:
+    except Exception as e:
+        st.warning(f"법제처 API 검색 중 오류: {str(e)}")
         return []
 
 def law_context_str(hits: List[str]) -> str:
     return "\n".join(hits) if hits else "관련 검색 결과가 없습니다."
 
-def get_client():
-    if not AZURE_OPENAI_API_BASE or not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_DEPLOYMENT:
+def get_client() -> Optional[AzureOpenAI]:
+    """Azure OpenAI 클라이언트 생성 및 검증"""
+    if not all([AZURE_OPENAI_API_BASE, AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT]):
+        missing = []
+        if not AZURE_OPENAI_API_BASE: missing.append("endpoint")
+        if not AZURE_OPENAI_API_KEY: missing.append("api_key")
+        if not AZURE_OPENAI_DEPLOYMENT: missing.append("deployment")
+        st.error(f"Azure OpenAI 설정 누락: {', '.join(missing)}")
         return None
-    return AzureOpenAI(
-        azure_endpoint=AZURE_OPENAI_API_BASE,
-        api_key=AZURE_OPENAI_API_KEY,
-        api_version=AZURE_OPENAI_API_VERSION,
-    )
+    
+    try:
+        client = AzureOpenAI(
+            azure_endpoint=AZURE_OPENAI_API_BASE,
+            api_key=AZURE_OPENAI_API_KEY,
+            api_version=AZURE_OPENAI_API_VERSION,
+        )
+        # 간단한 연결 테스트
+        return client
+    except Exception as e:
+        st.error(f"Azure OpenAI 연결 실패: {str(e)}")
+        return None
 
 client = get_client()
 
@@ -274,14 +288,14 @@ with chatbar.container():
         user_text = st.text_area(
             label="",
             key="draft_input",
-            placeholder="법령에 대한 질문을 입력하세요...",
+            placeholder="법령에 대한 질문을 입력하세요... (Shift+Enter: 줄바꿈, Enter: 전송)",
             height=110,
         )
         cols = st.columns([1, 6])
         with cols[0]:
             submitted = st.form_submit_button("보내기")
         with cols[1]:
-            st.caption("Enter로 줄바꿈, '보내기' 버튼으로 전송")
+            st.caption("Shift+Enter로 줄바꿈, Enter로 전송")
 
     st.markdown(
         """
@@ -312,8 +326,9 @@ if submitted:
         assistant_full: str = ""
 
         # 보조 컨텍스트
-        hits = law_search(user_q)
-        ctx = law_context_str(hits)
+        with st.spinner("법령 검색 중..."):
+            hits = law_search(user_q)
+            ctx = law_context_str(hits)
 
         # 모델 히스토리
         history_for_model = [
@@ -343,29 +358,68 @@ if submitted:
                 placeholder.markdown(assistant_full)
             else:
                 try:
-                    stream = client.chat.completions.create(
-                        model=AZURE_OPENAI_DEPLOYMENT,   # 배포 이름 그대로
-                        messages=history_for_model,
-                        temperature=0.3,
-                        top_p=1.0,
-                        stream=True,
-                    )
-                    buf = []
-                    for ch in stream:
-                        piece = ""
-                        try:
-                            piece = ch.choices[0].delta.get("content", "")
-                        except Exception:
-                            pass
-                        if piece:
-                            buf.append(piece)
-                            assistant_full = "".join(buf)
-                            placeholder.markdown(assistant_full)
-                    assistant_full = "".join(buf)
+                    with st.spinner("AI 답변 생성 중..."):
+                        stream = client.chat.completions.create(
+                            model=AZURE_OPENAI_DEPLOYMENT,   # 배포 이름 그대로
+                            messages=history_for_model,
+                            temperature=0.3,
+                            top_p=1.0,
+                            stream=True,
+                            timeout=60,  # 타임아웃 설정
+                        )
+                        buf = []
+                        for ch in stream:
+                            piece = ""
+                            try:
+                                piece = ch.choices[0].delta.get("content", "")
+                            except Exception:
+                                pass
+                            if piece:
+                                buf.append(piece)
+                                assistant_full = "".join(buf)
+                                placeholder.markdown(assistant_full)
+                        assistant_full = "".join(buf)
                 except Exception as e:
-                    assistant_full = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{ctx}"
+                    error_msg = f"답변 생성 중 오류가 발생했습니다: {str(e)}"
+                    if "timeout" in str(e).lower():
+                        error_msg = "응답 시간이 초과되었습니다. 다시 시도해주세요."
+                    elif "rate limit" in str(e).lower():
+                        error_msg = "API 호출 한도를 초과했습니다. 잠시 후 다시 시도해주세요."
+                    elif "authentication" in str(e).lower():
+                        error_msg = "인증 오류가 발생했습니다. API 키를 확인해주세요."
+                    
+                    assistant_full = f"{error_msg}\n\n{ctx}"
                     placeholder.markdown(assistant_full)
+                    st.error(f"상세 오류: {str(e)}")
 
         # 저장
         st.session_state.messages.append({"role": "assistant", "content": assistant_full, "ts": time.time()})
         save_message(st.session_state.thread_id, {"role": "assistant", "content": assistant_full, "ts": time.time()})
+
+# =========================
+# JavaScript for keyboard shortcuts
+# =========================
+st.markdown(
+    """
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const textarea = document.querySelector('textarea[data-testid="stTextArea"]');
+        if (textarea) {
+            textarea.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    const form = textarea.closest('form');
+                    if (form) {
+                        const submitButton = form.querySelector('button[type="submit"]');
+                        if (submitButton) {
+                            submitButton.click();
+                        }
+                    }
+                }
+            });
+        }
+    });
+    </script>
+    """,
+    unsafe_allow_html=True
+)
