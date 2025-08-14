@@ -1,4 +1,4 @@
-# app.py (Hardening v2)
+# app.py (Hardening v2.1)
 import time
 import json
 import math
@@ -56,7 +56,7 @@ st.markdown(
 # 복사 카드 (동적 높이 + 내부 스크롤)
 # =============================
 def _estimate_height(text: str, min_h=160, max_h=700, per_line=18):
-    lines = text.count("\\n") + max(1, math.ceil(len(text) / 60))
+    lines = text.count("\n") + max(1, math.ceil(len(text) / 60))
     h = min_h + lines * per_line
     return max(min_h, min(h, max_h))
 
@@ -131,12 +131,20 @@ if AZURE:
         st.error(f"Azure OpenAI 초기화 실패: {e}")
 
 # =============================
-# 세션 상태
+# 세션 상태 (기본값 안전 주입)
 # =============================
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "settings" not in st.session_state:
     st.session_state.settings = {"num_rows": 5, "include_search": True, "safe_mode": True}
+else:
+    # 기존 세션에 safe_mode 키가 없으면 기본값 True 추가
+    if "safe_mode" not in st.session_state.settings:
+        st.session_state.settings["safe_mode"] = True
+    if "num_rows" not in st.session_state.settings:
+        st.session_state.settings["num_rows"] = 5
+    if "include_search" not in st.session_state.settings:
+        st.session_state.settings["include_search"] = True
 
 # =============================
 # 법제처 API
@@ -184,12 +192,12 @@ def format_law_context(law_data):
     rows = []
     for i, law in enumerate(law_data, 1):
         rows.append(
-            f"{i}. {law['법령명']} ({law['법령구분명']})\\n"
-            f"   - 소관부처: {law['소관부처명']}\\n"
-            f"   - 시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}\\n"
+            f"{i}. {law['법령명']} ({law['법령구분명']})\n"
+            f"   - 소관부처: {law['소관부처명']}\n"
+            f"   - 시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}\n"
             f"   - 링크: {law['법령상세링크'] or '없음'}"
         )
-    return "\\n\\n".join(rows)
+    return "\n\n".join(rows)
 
 # =============================
 # 모델 호출 (스트리밍/비스트리밍)
@@ -342,8 +350,7 @@ if user_q:
     safe_mode = st.session_state.settings.get("safe_mode", True)
 
     if client is None:
-        # 클라이언트 없으면 간단 안내
-        final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\\n\\n" + law_ctx
+        final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
         with st.chat_message("assistant"):
             st.markdown("✅ 결과가 아래 카드로 표시되었습니다.")
     else:
@@ -355,7 +362,7 @@ if user_q:
             with st.chat_message("assistant"):
                 st.markdown("✅ 결과가 아래 카드로 표시되었습니다.")
         else:
-            # ===== 스트리밍 모드: 미리보기는 최소화 =====
+            # ===== 스트리밍 모드: 미리보기 최소화 =====
             with st.chat_message("assistant"):
                 placeholder = st.empty()
                 full_text, buffer = "", ""
@@ -365,7 +372,6 @@ if user_q:
                         buffer += piece
                         if len(buffer) >= 200:
                             full_text += buffer; buffer = ""
-                            # 미리보기는 길어지지 않게 마지막 800자만
                             preview = (full_text[-800:] if len(full_text) > 800 else full_text)
                             placeholder.markdown(preview)
                             time.sleep(0.05)
@@ -374,14 +380,13 @@ if user_q:
                         preview = (full_text[-800:] if len(full_text) > 800 else full_text)
                         placeholder.markdown(preview)
                 except Exception as e:
-                    full_text = f"답변 생성 중 오류가 발생했습니다: {e}\\n\\n{law_ctx}"
+                    full_text = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{law_ctx}"
                     placeholder.markdown(full_text)
             final_text = full_text
-            # 스트리밍 미리보기는 남기지 않고 단문으로 치환
             with st.chat_message("assistant"):
                 st.markdown("✅ 결과가 아래 카드로 표시되었습니다.")
 
-    # --- 말풍선 바깥 별도 컨테이너에 카드(iframe) 렌더 ---
+    # --- 말풍선 바깥 별도 컨테이너에 카드 렌더 ---
     st.container().markdown("")  # spacer
     render_ai_with_copy(final_text, key=f"now-{ts}")
 
