@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 import requests
+import xml.etree.ElementTree as ET
 import streamlit as st
 from openai import AzureOpenAI
 
@@ -184,85 +185,99 @@ if restored:
 # =========================
 # Utilities
 # =========================
-def law_search(keyword: str) -> List[str]:
-    """법제처 간단 검색 → 리스트[str] (JSON 사용)"""
-    if not LAW_API_KEY:
-        return []
 
-    try:
-        url = "https://apis.data.go.kr/1170000/law"
-        # 핵심: type=JSON 로 변경
-        params = {"OC": LAW_API_KEY, "target": "law", "query": keyword, "type": "JSON"}
-        res = requests.get(url, params=params, timeout=15)
+def law_search(keyword: str, rows: int = 5) -> List[str]:
+    """국가법령 검색
+    우선순위 1) 공공데이터포털(apis.data.go.kr, ServiceKey/XML) → 2) DRF(law.go.kr, OC/XML) 폴백
+    반환: "- 제목 (시행일자: YYYYMMDD)" 최대 rows개
+    """
+    rows = max(1, min(int(rows or 5), 20))
 
-        if res.status_code != 200:
-            st.warning(f"법제처 API 오류(code={res.status_code}): {res.text[:120]}...")
+    def _warn(msg: str, sample: str = ""):
+        from textwrap import shorten
+        st.warning(msg + (f" : {shorten(sample.strip(), width=160)}" if sample else ""))
+
+    def _is_html(t: str) -> bool:
+        t = (t or "").lstrip().lower()
+        return t.startswith("<!doctype html") or t.startswith("<html")
+
+    def _parse_xml(xml_text: str) -> List[str]:
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError as pe:
+            _warn(f"XML 파싱 오류: {pe}")
             return []
-
-        ctype = (res.headers.get("Content-Type") or "").lower()
-        if "json" not in ctype:
-            # 종종 HTML 오류 페이지나 XML이 올 수 있음 → 안전하게 실패 처리
-            txt = res.text.strip()
-            st.warning(f"법제처 API가 JSON이 아닌 응답을 반환했습니다(Content-Type={ctype}): {txt[:150]}...")
+        rc = (root.findtext('.//resultCode') or '').strip()
+        if rc and rc != '00':
+            msg = (root.findtext('.//resultMsg') or '').strip()
+            code_map = {'01':'잘못된 요청 파라미터','02':'인증키 오류','03':'필수 파라미터 누락','09':'일시적 시스템 오류','99':'정의되지 않은 오류'}
+            _warn(f"API 오류(resultCode={rc}): {code_map.get(rc, msg or '오류')}")
             return []
-
-        data = res.json()
-
-        # 다양한 구조를 방어적으로 처리
-        # 흔한 구조: {"LawSearch": {"totalCnt":..., "row":[ {...}, ... ]}}
-        # 그 외: 최상위 dict/list일 수 있음
-        def _iter_items(obj):
-            if isinstance(obj, dict):
-                # 대표 배열 필드
-                for key in ["row", "list", "items", "laws"]:
-                    if isinstance(obj.get(key), list):
-                        for it in obj[key]:
-                            yield it
-                # 재귀 탐색
-                for v in obj.values():
-                    yield from _iter_items(v)
-            elif isinstance(obj, list):
-                for it in obj:
-                    yield from _iter_items(it)
-
         hits = []
-        for item in _iter_items(data):
-            if not isinstance(item, dict):
-                continue
-            title = (
-                item.get("법령명한글")
-                or item.get("법령명")
-                or item.get("title")
-                or item.get("lawName")
-                or ""
-            )
-            date = (
-                item.get("시행일자")
-                or item.get("시행일")
-                or item.get("enforceDate")
-                or item.get("date")
-                or ""
-            )
+        for node in root.findall('.//law'):
+            title = (node.findtext('법령명한글') or node.findtext('법령명') or '').strip()
+            date  = (node.findtext('시행일자') or node.findtext('공포일자') or '').strip()
             if title:
                 hits.append(f"- {title} (시행일자: {date})")
+        return hits[:rows]
 
-        # 결과 없으면 간단 메시지
-        if not hits:
-            st.info("관련 법령 검색 결과가 없습니다.")
-            return []
+    # 1) 공공데이터포털 (ServiceKey — 반드시 Decoding 값을 사용)
+    if DATA_PORTAL_SERVICE_KEY:
+        try:
+            base = 'https://apis.data.go.kr/1170000/law/lawSearchList.do'
+            params = {
+                'serviceKey': DATA_PORTAL_SERVICE_KEY,
+                'ServiceKey': DATA_PORTAL_SERVICE_KEY,
+                'target': 'law',
+                'query' : keyword or '*',
+                'numOfRows': rows,
+                'pageNo': 1,
+            }
+            res = requests.get(base, params=params, timeout=15)
+            ctype = (res.headers.get('Content-Type') or '').lower()
+            txt = res.text or ''
+            if res.status_code != 200:
+                _warn(f"공공데이터포털 오류(code={res.status_code})", txt)
+            elif 'xml' in ctype or txt.strip().startswith('<'):
+                if _is_html(txt):
+                    _warn("공공데이터포털이 HTML(사람용 페이지)을 반환했습니다. ServiceKey/쿼터/파라미터를 확인하세요.", txt)
+                else:
+                    hits = _parse_xml(txt)
+                    if hits:
+                        return hits
+            else:
+                _warn(f"공공데이터포털이 XML이 아닌 응답을 반환했습니다(Content-Type={ctype})", txt)
+        except Exception as e:
+            _warn(f"공공데이터포털 호출 오류: {e}")
 
-        return hits[:5]
+    # 2) DRF 폴백 (OC 키 — type=XML)
+    if LAW_API_KEY:
+        try:
+            url = 'http://www.law.go.kr/DRF/lawSearch.do'
+            params = {'OC': LAW_API_KEY, 'target': 'law', 'query': keyword, 'type': 'XML'}
+            res = requests.get(url, params=params, timeout=15)
+            ctype = (res.headers.get('Content-Type') or '').lower()
+            txt = res.text or ''
+            if res.status_code != 200:
+                _warn(f"법제처 DRF 오류(code={res.status_code})", txt)
+            elif 'xml' in ctype or txt.strip().startswith('<'):
+                if _is_html(txt):
+                    _warn("법제처 DRF가 HTML(오류 페이지)을 반환했습니다. OC 키/쿼터/파라미터를 확인하세요.", txt)
+                else:
+                    hits = _parse_xml(txt)
+                    if hits:
+                        return hits
+            else:
+                _warn(f"법제처 DRF가 XML이 아닌 응답을 반환했습니다(Content-Type={ctype})", txt)
+        except Exception as e:
+            _warn(f"법제처 DRF 호출 오류: {e}")
 
-    except requests.Timeout:
-        st.warning("법제처 API 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.")
-        return []
-    except ValueError as je:  # JSON decode error
-        st.warning(f"법제처 API JSON 파싱 오류: {je}")
-        return []
-    except Exception as e:
-        st.warning(f"법제처 API 검색 중 오류: {e}")
-        return []
+    return []
 
+def law_context_str(hits: List[str]) -> str:
+    return "\n".join(hits) if hits else "관련 검색 결과가 없습니다."
+def law_context_str(hits: List[str]) -> str:
+    return "\n".join(hits) if hits else "관련 검색 결과가 없습니다."
 def law_context_str(hits: List[str]) -> str:
     return "\n".join(hits) if hits else "관련 검색 결과가 없습니다."
 
