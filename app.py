@@ -95,6 +95,18 @@ div[data-testid="stChatInput"] textarea {
   min-height:110px; font-size:18px; line-height:1.5;
 }
 .block-container { padding-bottom: 6rem; }
+
+/* Chat input가 다른 요소에 가려지지 않도록 보장 */
+div[data-testid="stChatInput"] {
+  position: sticky;  /* 기본 값 유지 + 컨텍스트에 고정 */
+  bottom: 0;
+  z-index: 9999 !important;   /* 최상위로 올림 */
+}
+/* 혹시 상위 요소가 pointer-events를 막는 경우 대비 */
+div[data-testid="stChatInput"], 
+div[data-testid="stChatInput"] * {
+  pointer-events: auto !important;
+}
 </style>
 """,
     unsafe_allow_html=True,
