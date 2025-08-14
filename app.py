@@ -2,6 +2,7 @@
 import time
 import json
 import math
+import html
 import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -45,9 +46,48 @@ st.markdown("""
 st.markdown(
     '<div class="header"><h2>⚖️ 법제처 인공지능 법률 상담 플랫폼</h2>'
     '<div>법제처 공식 데이터를 AI가 분석해 답변을 제공합니다</div>'
-    '<div>당신의 문제를 입력하면 법률 자문서를 출력해 줍니다. 당신의 문제를 입력해 보세요</div><</div>',
+    '<div>당신의 문제를 입력하면 법률 자문서를 출력해 줍니다. 당신의 문제를 입력해 보세요</div></div>',
     unsafe_allow_html=True,
 )
+
+def render_ai_with_copy(message: str, key: str):
+    safe_for_clipboard = json.dumps(message)  # 클립보드 용
+    safe_html = html.escape(message)          # 화면 렌더링 용 (XSS/레이아웃 보호)
+    est_h = _estimate_height(message)
+
+    html_card = f"""
+    <div class="copy-wrap" style="max-height:{est_h}px; overflow:auto;">
+      <div class="copy-head">
+        <strong>AI 어시스턴트</strong>
+        <button id="copy-{key}" class="copy-btn" title="클립보드로 복사">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <path d="M9 9h9v12H9z" stroke="#444"/>
+            <path d="M6 3h9v3" stroke="#444"/>
+            <path d="M6 6h3v3" stroke="#444"/>
+          </svg>복사
+        </button>
+      </div>
+      <!-- pre 태그 + escape된 텍스트 -->
+      <pre class="copy-body" style="margin-top:6px;white-space:pre-wrap">{safe_html}</pre>
+    </div>
+    <script>
+      (function(){{
+        const btn = document.getElementById("copy-{key}");
+        if (btn) {{
+          btn.addEventListener("click", async () => {{
+            try {{
+              await navigator.clipboard.writeText({safe_for_clipboard});
+              const old = btn.innerHTML;
+              btn.innerHTML = "복사됨!";
+              setTimeout(()=>btn.innerHTML = old, 1200);
+            }} catch(e) {{ alert("복사 실패: "+e); }}
+          }});
+        }}
+      }})();
+    </script>
+    """
+    components.html(html_card, height=est_h + 48)
+
 
 # =============================
 # 복사 버튼 카드 (동적 높이 + 내부 스크롤)
