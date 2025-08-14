@@ -185,87 +185,82 @@ if restored:
 # Utilities
 # =========================
 def law_search(keyword: str) -> List[str]:
-    """법제처 간단 검색 → 리스트[str]"""
+    """법제처 간단 검색 → 리스트[str] (JSON 사용)"""
     if not LAW_API_KEY:
         return []
+
     try:
         url = "http://www.law.go.kr/DRF/lawSearch.do"
-        params = {"OC": LAW_API_KEY, "target": "law", "query": keyword, "type": "XML"}
-        res = requests.get(url, params=params, timeout=15)  # 타임아웃 증가
-        
-        if res.status_code != 200 or not res.text.strip():
+        # 핵심: type=JSON 로 변경
+        params = {"OC": LAW_API_KEY, "target": "law", "query": keyword, "type": "JSON"}
+        res = requests.get(url, params=params, timeout=15)
+
+        if res.status_code != 200:
+            st.warning(f"법제처 API 오류(code={res.status_code}): {res.text[:120]}...")
             return []
-        
-        # XML 응답 디버깅을 위한 로그
-        response_text = res.text.strip()
-        if not response_text.startswith('<?xml') and not response_text.startswith('<'):
-            st.warning(f"법제처 API가 XML이 아닌 응답을 반환했습니다: {response_text[:100]}...")
+
+        ctype = (res.headers.get("Content-Type") or "").lower()
+        if "json" not in ctype:
+            # 종종 HTML 오류 페이지나 XML이 올 수 있음 → 안전하게 실패 처리
+            txt = res.text.strip()
+            st.warning(f"법제처 API가 JSON이 아닌 응답을 반환했습니다(Content-Type={ctype}): {txt[:150]}...")
             return []
-        
-        try:
-            import xml.etree.ElementTree as ET
-            # XML 파싱 시도
-            root = ET.fromstring(response_text)
-            
-            # 다양한 XML 구조 시도
-            hits = []
-            
-            # 방법 1: 기본 law 태그 검색
-            law_items = root.findall(".//law")
-            if law_items:
-                for item in law_items:
-                    title = item.findtext("법령명한글") or item.findtext("법령명") or ""
-                    date = item.findtext("시행일자") or item.findtext("시행일") or ""
-                    if title:
-                        hits.append(f"- {title} (시행일자: {date})")
-            
-            # 방법 2: 다른 가능한 태그들 검색
-            if not hits:
-                for tag_name in ["법령", "law", "item", "result"]:
-                    items = root.findall(f".//{tag_name}")
-                    if items:
-                        for item in items:
-                            # 모든 하위 태그에서 제목과 날짜 찾기
-                            title = ""
-                            date = ""
-                            for child in item:
-                                if "명" in child.tag or "title" in child.tag.lower():
-                                    title = child.text or ""
-                                elif "일" in child.tag or "date" in child.tag.lower():
-                                    date = child.text or ""
-                            
-                            if title:
-                                hits.append(f"- {title} (시행일자: {date})")
-                        break
-            
-            # 방법 3: 텍스트 기반 검색 (XML 파싱이 실패한 경우)
-            if not hits:
-                # XML 태그를 제거하고 텍스트만 추출
-                import re
-                clean_text = re.sub(r'<[^>]+>', '', response_text)
-                lines = clean_text.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    if line and len(line) > 5 and ('법' in line or '규정' in line or '조례' in line):
-                        hits.append(f"- {line}")
-            
-            return hits[:5]
-            
-        except ET.ParseError as xml_error:
-            st.warning(f"XML 파싱 오류: {str(xml_error)}")
-            # XML 파싱 실패 시 텍스트 기반 검색 시도
-            import re
-            clean_text = re.sub(r'<[^>]+>', '', response_text)
-            lines = clean_text.split('\n')
-            hits = []
-            for line in lines:
-                line = line.strip()
-                if line and len(line) > 5 and ('법' in line or '규정' in line or '조례' in line):
-                    hits.append(f"- {line}")
-            return hits[:5]
-            
+
+        data = res.json()
+
+        # 다양한 구조를 방어적으로 처리
+        # 흔한 구조: {"LawSearch": {"totalCnt":..., "row":[ {...}, ... ]}}
+        # 그 외: 최상위 dict/list일 수 있음
+        def _iter_items(obj):
+            if isinstance(obj, dict):
+                # 대표 배열 필드
+                for key in ["row", "list", "items", "laws"]:
+                    if isinstance(obj.get(key), list):
+                        for it in obj[key]:
+                            yield it
+                # 재귀 탐색
+                for v in obj.values():
+                    yield from _iter_items(v)
+            elif isinstance(obj, list):
+                for it in obj:
+                    yield from _iter_items(it)
+
+        hits = []
+        for item in _iter_items(data):
+            if not isinstance(item, dict):
+                continue
+            title = (
+                item.get("법령명한글")
+                or item.get("법령명")
+                or item.get("title")
+                or item.get("lawName")
+                or ""
+            )
+            date = (
+                item.get("시행일자")
+                or item.get("시행일")
+                or item.get("enforceDate")
+                or item.get("date")
+                or ""
+            )
+            if title:
+                hits.append(f"- {title} (시행일자: {date})")
+
+        # 결과 없으면 간단 메시지
+        if not hits:
+            st.info("관련 법령 검색 결과가 없습니다.")
+            return []
+
+        return hits[:5]
+
+    except requests.Timeout:
+        st.warning("법제처 API 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.")
+        return []
+    except ValueError as je:  # JSON decode error
+        st.warning(f"법제처 API JSON 파싱 오류: {je}")
+        return []
     except Exception as e:
-        st.warning(f"법제처 API 검색 중 오류: {str(e)}")
+        st.warning(f"법제처 API 검색 중 오류: {e}")
         return []
 
 def law_context_str(hits: List[str]) -> str:
