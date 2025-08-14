@@ -44,7 +44,7 @@ st.markdown("""
 
 st.markdown(
     '<div class="header"><h2>⚖️ 법제처 인공지능 법률 상담 플랫폼</h2>'
-    '<div>법제처 공식 데이터 + Azure OpenAI</div></div>',
+    '<div>법제처 공식 데이터룰 사용해서 정확한 상담이 가능합니다.</div></div>',
     unsafe_allow_html=True,
 )
 
@@ -253,7 +253,23 @@ for i, m in enumerate(st.session_state.messages):
 # =============================
 # 하단 입력창 (고정, 답변과 동일 폭)
 # =============================
+# ===== 입력창과 답변 사이 간격 줄이기 =====
+st.markdown(
+    """
+    <style>
+    .block-container {
+        padding-bottom: 0.5rem !important;
+    }
+    .stTextInput {
+        margin-top: 0.5rem !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 user_q = st.chat_input("법령에 대한 질문을 입력하세요… (Enter로 전송)")
+
 
 if user_q:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -284,7 +300,7 @@ if user_q:
 {law_ctx}
 
 아래 형식으로 답변하세요.
-### 법률자문서(전문형 예시)
+법률자문서
 
 제목: 납품 지연에 따른 계약 해제 가능 여부에 관한 법률 검토
 작성: 법제처 인공지능 법률 상담사
