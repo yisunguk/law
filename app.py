@@ -1,4 +1,4 @@
-# app.py (stable full version)
+# app.py — clean & stable
 
 import os
 import time
@@ -11,7 +11,9 @@ import requests
 import streamlit as st
 from openai import AzureOpenAI
 
-# ============== Page & Env ==============
+# =========================
+# Page & Env
+# =========================
 st.set_page_config(page_title="법제처 AI 챗봇", page_icon="⚖️", layout="wide")
 
 AZURE_OPENAI_API_BASE = os.getenv("AZURE_OPENAI_API_BASE", "")
@@ -22,7 +24,9 @@ AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-06-01")
 FIREBASE_CREDENTIALS = os.getenv("FIREBASE_CREDENTIALS", "")
 FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "")
 
-# ============== Firebase (optional) ==============
+# =========================
+# Firebase (optional)
+# =========================
 try:
     import firebase_admin
     from firebase_admin import credentials, firestore
@@ -75,44 +79,44 @@ def save_message(thread_id: str, msg: Dict[str, Any]):
     except Exception:
         pass
 
-# ============== Style ==============
+# =========================
+# Styles (minimal & safe)
+# =========================
 st.markdown(
     """
 <style>
 * {font-family: -apple-system, system-ui, Segoe UI, Roboto, 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif}
+
+/* 헤더 */
 .chat-header {
   text-align:center; padding:2rem 0; margin-bottom:1.25rem;
   color:white; border-radius:14px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
+
+/* 사이드바 히스토리 (다크톤) */
 .chat-history-item {
   background:#2b2d31; color:#e6e6e6;
   padding:.7rem; margin:.4rem 0; border-radius:10px;
   border-left:3px solid #667eea; font-size:.9rem;
 }
 .chat-history-item:hover { background:#3a3c42 }
+
+/* 입력창 높이만 확대 (겹침/포인터 조작 없음) */
 div[data-testid="stChatInput"] textarea {
   min-height:110px; font-size:18px; line-height:1.5;
 }
-.block-container { padding-bottom: 6rem; }
 
-/* Chat input가 다른 요소에 가려지지 않도록 보장 */
-div[data-testid="stChatInput"] {
-  position: sticky;  /* 기본 값 유지 + 컨텍스트에 고정 */
-  bottom: 0;
-  z-index: 9999 !important;   /* 최상위로 올림 */
-}
-/* 혹시 상위 요소가 pointer-events를 막는 경우 대비 */
-div[data-testid="stChatInput"], 
-div[data-testid="stChatInput"] * {
-  pointer-events: auto !important;
-}
+/* 본문이 입력창에 가리지 않게 하단 여백만 확보 */
+.block-container { padding-bottom: 6rem; }
 </style>
 """,
     unsafe_allow_html=True,
 )
 
-# ============== Header ==============
+# =========================
+# Header
+# =========================
 st.markdown(
     """
 <div class="chat-header">
@@ -123,26 +127,34 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ============== Session ==============
+# =========================
+# Session
+# =========================
 if "messages" not in st.session_state:
     st.session_state.messages: List[Dict[str, Any]] = []
-if "thread_id" not in st.session_state:
-    # querystring t 로 복원 (신/구 API 호환)
-    t = ""
+
+def _get_thread_id_from_query() -> str:
+    # Streamlit 신/구 API 모두 호환
     try:
-        t = st.query_params.get("t", "")
+        q = st.query_params or {}
+        t = q.get("t", "")
+        return t if isinstance(t, str) else (t[0] if t else "")
     except Exception:
         qp = st.experimental_get_query_params() or {}
         t = qp.get("t", [""])
-        t = t[0] if isinstance(t, list) else t
-    st.session_state.thread_id = t or uuid.uuid4().hex[:12]
+        return t[0] if isinstance(t, list) else t
 
-# 복원
+if "thread_id" not in st.session_state:
+    st.session_state.thread_id = _get_thread_id_from_query() or uuid.uuid4().hex[:12]
+
+# 과거 대화 복원
 restored = load_thread(st.session_state.thread_id)
 if restored:
     st.session_state.messages = restored
 
-# ============== Utilities ==============
+# =========================
+# Utilities
+# =========================
 def law_search(keyword: str):
     """법제처 간단 검색 → 리스트[str]"""
     try:
@@ -177,7 +189,9 @@ def get_client():
 
 client = get_client()
 
-# ============== Sidebar ==============
+# =========================
+# Sidebar
+# =========================
 with st.sidebar:
     st.subheader("대화 관리")
     c1, c2 = st.columns(2)
@@ -188,7 +202,7 @@ with st.sidebar:
     if c2.button("요약 저장", use_container_width=True):
         st.success("요약 저장 완료!")
 
-    # Thread ID/URL 표시는 요청에 따라 숨김
+    # (요청) Thread ID/URL 표시는 숨김
 
     st.markdown("---")
     st.markdown("#### 대화 히스토리(최근)")
@@ -197,17 +211,22 @@ with st.sidebar:
         preview = (m.get("content", "") or "").replace("\n", " ")[:42]
         st.markdown(f'<div class="chat-history-item">{role}: {preview}...</div>', unsafe_allow_html=True)
 
-# ============== Render history ==============
+# =========================
+# Render history
+# =========================
 for m in st.session_state.messages:
     role = m.get("role", "assistant")
     with st.chat_message(role if role in ("user", "assistant") else "assistant"):
         st.markdown(m.get("content", ""))
 
-# ============== Input & Response ==============
+# =========================
+# Input & Response
+# =========================
 user_q = st.chat_input("법령에 대한 질문을 입력하세요... (Enter로 전송)")
 
 if user_q:
     ts = time.time()
+
     # 사용자 메시지
     st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
     save_message(st.session_state.thread_id, {"role": "user", "content": user_q, "ts": ts})
@@ -215,11 +234,11 @@ if user_q:
     with st.chat_message("user"):
         st.markdown(user_q)
 
-    # 컨텍스트/버퍼 **사전 초기화** (재실행 안전)
+    # 사전 초기화 (재실행 안전)
     ctx: str = ""
     assistant_full: str = ""
 
-    # 보조 컨텍스트(법령 검색)
+    # 보조 컨텍스트
     hits = law_search(user_q)
     ctx = law_context_str(hits)
 
@@ -242,7 +261,7 @@ if user_q:
         }
     )
 
-    # 어시스턴트(스트리밍: placeholder 방식으로 통일)
+    # 어시스턴트(스트리밍: placeholder 방식)
     with st.chat_message("assistant"):
         placeholder = st.empty()
 
@@ -269,7 +288,6 @@ if user_q:
                         buf.append(piece)
                         assistant_full = "".join(buf)
                         placeholder.markdown(assistant_full)
-                # 최종 반영
                 assistant_full = "".join(buf)
             except Exception as e:
                 assistant_full = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{ctx}"
