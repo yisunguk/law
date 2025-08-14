@@ -1,3 +1,4 @@
+import os
 import time
 import json
 import math
@@ -5,7 +6,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime
 import uuid
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 
 import requests
 import streamlit as st
@@ -61,43 +62,54 @@ st.markdown(
 # =============================
 # 복사 버튼 카드 (자동 높이 / 스크롤 없음 / 말풍선 아래 추가)
 # =============================
+
 def _estimate_height(text: str, min_h=220, max_h=2000, per_line=18):
     lines = text.count("\n") + max(1, math.ceil(len(text) / 60))
     h = min_h + lines * per_line
     return max(min_h, min(h, max_h))
 
-def render_ai_with_copy(message: str, key: str):
-    safe = json.dumps(message)
-    est_h = _estimate_height(message)
+
+def build_copy_html(message: str, key: str) -> str:
+    """JS 중괄호를 f-string에서 안전하게 표현하기 위해 {{ }} 이스케이프 사용.
+    message는 json.dumps로 JS 문자열로 안전하게 삽입합니다.
+    """
+    safe = json.dumps(message)  # JS 문자열 리터럴로 안전하게 인코딩됨 (양쪽 따옴표 포함)
     html = f"""
-    <div class=\"copy-wrap\">
-      <div class=\"copy-head\">
+    <div class="copy-wrap">
+      <div class="copy-head">
         <strong>AI 어시스턴트</strong>
-        <button id=\"copy-{key}\" class=\"copy-btn\" title=\"클립보드로 복사\">복사</button>
+        <button id="copy-{key}" class="copy-btn" title="클립보드로 복사">복사</button>
       </div>
-      <div class=\"copy-body\">{message}</div>
+      <div class="copy-body">{message}</div>
     </div>
     <script>
-      (function(){
+      (function(){{
         const btn = document.getElementById("copy-{key}");
-        if (btn) {
-          btn.addEventListener("click", async () => {
-            try {
+        if (btn) {{
+          btn.addEventListener("click", async () => {{
+            try {{
               await navigator.clipboard.writeText({safe});
               const old = btn.innerHTML;
               btn.innerHTML = "복사됨!";
               setTimeout(()=>btn.innerHTML = old, 1200);
-            } catch(e) { alert("복사 실패: "+e); }
-          });
-        }
-      })();
+            }} catch(e) {{ alert("복사 실패: "+e); }}
+          }});
+        }}
+      }})();
     </script>
     """
+    return html
+
+
+def render_ai_with_copy(message: str, key: str):
+    est_h = _estimate_height(message)
+    html = build_copy_html(message, key)
     components.html(html, height=est_h)
 
 # =============================
 # Secrets 로딩
 # =============================
+
 def load_secrets():
     law_key = None; azure = None; fb = None
     try:
@@ -138,6 +150,7 @@ if AZURE:
 # =============================
 _db = None
 
+
 def init_firebase():
     global _db
     if _db is not None:
@@ -167,6 +180,7 @@ def init_firebase():
         st.error(f"Firebase 초기화 실패: {e}")
         return None
 
+
 DB = init_firebase()
 
 # =============================
@@ -186,6 +200,7 @@ if "settings" not in st.session_state:
 # =============================
 # Firestore I/O
 # =============================
+
 
 def _threads_col():
     if DB is None:
@@ -255,6 +270,8 @@ if DB and not st.session_state.messages:
 # =============================
 # 법제처 API
 # =============================
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def search_law_data(query: str, num_rows: int = 5):
     if not LAW_API_KEY:
@@ -295,7 +312,8 @@ def search_law_data(query: str, num_rows: int = 5):
 
 
 def format_law_context(law_data):
-    if not law_data: return "관련 법령 검색 결과가 없습니다."
+    if not law_data:
+        return "관련 법령 검색 결과가 없습니다."
     rows = []
     for i, law in enumerate(law_data, 1):
         rows.append(
@@ -309,6 +327,7 @@ def format_law_context(law_data):
 # =============================
 # 모델 메시지 구성/스트리밍 (+ 요약 메모리)
 # =============================
+
 
 def build_history_messages(max_turns=12):
     """최근 N턴 + Firestore 요약을 함께 모델에 전달 (ChatGPT 유사 맥락 유지)."""
@@ -508,3 +527,36 @@ if user_q:
 
     # 장기 요약 업데이트 (토큰 절약 + 맥락 지속)
     update_long_summary_if_needed()
+
+# =============================
+# 🔧 간단 자가 테스트 (옵션) — 복사 위젯의 안전성 점검용
+# =============================
+
+def _selftest_copy_html() -> None:
+    # 다양한 특수문자/개행을 포함한 메시지로 HTML 생성이 안전한지 검사
+    cases = [
+        ("simple", "Hello world"),
+        ("quotes", 'He said "Hello" & replied.'),
+        ("newline", "Line1\nLine2\nLine3"),
+        ("unicode", "한글 🥟 emojis <> & ' \" \\"),
+    ]
+    for key, msg in cases:
+        html = build_copy_html(msg, key)
+        assert f"copy-{key}" in html
+        assert "navigator.clipboard.writeText(" in html
+        # json.dumps 결과가 양쪽 따옴표를 포함해 삽입되었는지 (대략적 검사)
+        assert ")" in html and "writeText(" in html
+
+
+with st.sidebar:
+    run_tests = st.checkbox("🔧 복사 위젯 자가 테스트 실행")
+    if run_tests:
+        try:
+            _selftest_copy_html()
+            st.success("복사 위젯 자가 테스트 통과 ✅")
+            # 미리보기 컴포넌트
+            components.html(build_copy_html('테스트 "따옴표" 및 개행\n두번째 줄', "preview"), height=220)
+        except AssertionError as e:
+            st.error(f"자가 테스트 실패: {e}")
+        except Exception as e:
+            st.error(f"자가 테스트 중 예외: {e}")
