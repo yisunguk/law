@@ -50,10 +50,19 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# =============================
+# 복사 버튼 카드 (동적 높이 + 내부 스크롤)
+# =============================
+def _estimate_height(text: str, min_h=160, max_h=900, per_line=18):
+    # 대략 60자를 한 줄로 보아 줄 수 추정
+    lines = text.count("\n") + max(1, math.ceil(len(text) / 60))
+    h = min_h + lines * per_line
+    return max(min_h, min(h, max_h))
+
 def render_ai_with_copy(message: str, key: str):
-    safe_for_clipboard = json.dumps(message)  # 클립보드 용
-    safe_html = html.escape(message)          # 화면 렌더링 용 (XSS/레이아웃 보호)
-    est_h = _estimate_height(message)
+    safe_for_clipboard = json.dumps(message)           # 클립보드용(원문)
+    safe_html = html.escape(message)                   # 화면 렌더링용(HTML 이스케이프)
+    est_h = _estimate_height(message)                  # 높이 추정
 
     html_card = f"""
     <div class="copy-wrap" style="max-height:{est_h}px; overflow:auto;">
@@ -67,8 +76,8 @@ def render_ai_with_copy(message: str, key: str):
           </svg>복사
         </button>
       </div>
-      <!-- pre 태그 + escape된 텍스트 -->
-      <pre class="copy-body" style="margin-top:6px;white-space:pre-wrap">{safe_html}</pre>
+      <!-- escape된 본문을 pre로 표기해서 레이아웃 보호 -->
+      <pre class="copy-body" style="margin-top:6px;white-space:pre-wrap;word-break:break-word">{safe_html}</pre>
     </div>
     <script>
       (function(){{
@@ -87,51 +96,6 @@ def render_ai_with_copy(message: str, key: str):
     </script>
     """
     components.html(html_card, height=est_h + 48)
-
-
-# =============================
-# 복사 버튼 카드 (동적 높이 + 내부 스크롤)
-# =============================
-def _estimate_height(text: str, min_h=160, max_h=900, per_line=18):
-    # 대략 60자를 한 줄로 보아 줄 수 추정
-    lines = text.count("\n") + max(1, math.ceil(len(text) / 60))
-    h = min_h + lines * per_line
-    return max(min_h, min(h, max_h))
-
-def render_ai_with_copy(message: str, key: str):
-    safe = json.dumps(message)  # JS로 전달할 때 안전 처리
-    est_h = _estimate_height(message)  # 메시지 길이 기반 높이 추정
-    html = f"""
-    <div class="copy-wrap" style="max-height:{est_h}px; overflow:auto;">
-      <div class="copy-head">
-        <strong>AI 어시스턴트</strong>
-        <button id="copy-{key}" class="copy-btn" title="클립보드로 복사">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-            <path d="M9 9h9v12H9z" stroke="#444"/>
-            <path d="M6 3h9v3" stroke="#444"/>
-            <path d="M6 6h3v3" stroke="#444"/>
-          </svg>복사
-        </button>
-      </div>
-      <div class="copy-body">{message}</div>
-    </div>
-    <script>
-      (function(){{
-        const btn = document.getElementById("copy-{key}");
-        if (btn) {{
-          btn.addEventListener("click", async () => {{
-            try {{
-              await navigator.clipboard.writeText({safe});
-              const old = btn.innerHTML;
-              btn.innerHTML = "복사됨!";
-              setTimeout(()=>btn.innerHTML = old, 1200);
-            }} catch(e) {{ alert("복사 실패: "+e); }}
-          }});
-        }}
-      }})();
-    </script>
-    """
-    components.html(html, height=est_h + 48)  # 여유치 포함
 
 # =============================
 # Secrets 로딩
