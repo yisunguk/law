@@ -360,7 +360,7 @@ render_ai_with_copy(full_text, key=f"now-{ts}")
 
 
     # 대화 저장(법령 요약 포함)
-    st.session_state.messages.append({
+st.session_state.messages.append({
         "role": "assistant", "content": full_text,
         "law": law_data if st.session_state.settings["include_search"] else None,
         "ts": ts
