@@ -34,7 +34,7 @@ st.markdown("""
   .copy-head {display:flex;justify-content:space-between;align-items:center;gap:12px}
   .copy-btn  {display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid #ddd;border-radius:8px;
               background:#f8f9fa;cursor:pointer;font-size:12px}
-  .copy-body {margin-top:6px;line-height:1.6;white-space:pre-wrap}
+  .copy-body {margin-top:6px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
 
   /* 타이핑 인디케이터 */
   .typing-indicator {display:inline-block;width:16px;height:16px;border:3px solid #eee;border-top:3px solid #8b5cf6;
@@ -53,7 +53,7 @@ st.markdown(
 # =============================
 # 복사 버튼 카드 (동적 높이 + 내부 스크롤)
 # =============================
-def _estimate_height(text: str, min_h=160, max_h=900, per_line=18):
+def _estimate_height(text: str, min_h=160, max_h=700, per_line=18):
     # 대략 60자를 한 줄로 보아 줄 수 추정
     lines = text.count("\n") + max(1, math.ceil(len(text) / 60))
     h = min_h + lines * per_line
@@ -77,7 +77,7 @@ def render_ai_with_copy(message: str, key: str):
         </button>
       </div>
       <!-- escape된 본문을 pre로 표기해서 레이아웃 보호 -->
-      <pre class="copy-body" style="margin-top:6px;white-space:pre-wrap;word-break:break-word">{safe_html}</pre>
+      <pre class="copy-body">{safe_html}</pre>
     </div>
     <script>
       (function(){{
@@ -329,38 +329,36 @@ if user_q:
 한국어로 쉽게 설명하세요."""
     })
 
-    # 어시스턴트 말풍선(스트리밍)
-    # --- 어시스턴트 말풍선: 스트리밍 표시만 ---
+    # --- 어시스턴트 말풍선: 스트리밍 표시만 (리렌더 간격 완화) ---
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_text, buffer = "", ""
 
-    if client is None:
-        full_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
-        placeholder.markdown(full_text)
-    else:
-        try:
-            placeholder.markdown('<span class="typing-indicator"></span> 답변 생성 중...', unsafe_allow_html=True)
-            for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1000):
-                buffer += piece
-                if len(buffer) >= 200:
-                    full_text += buffer; buffer = ""
-                    placeholder.markdown(full_text)
-                    time.sleep(0.05)
-            if buffer:
-                full_text += buffer
-                placeholder.markdown(full_text)
-        except Exception as e:
-            full_text = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{law_ctx}"
+        if client is None:
+            full_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
             placeholder.markdown(full_text)
+        else:
+            try:
+                placeholder.markdown('<span class="typing-indicator"></span> 답변 생성 중...', unsafe_allow_html=True)
+                for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1000):
+                    buffer += piece
+                    if len(buffer) >= 200:            # 80 → 200
+                        full_text += buffer; buffer = ""
+                        placeholder.markdown(full_text)
+                        time.sleep(0.05)              # 0.02 → 0.05
+                if buffer:
+                    full_text += buffer
+                    placeholder.markdown(full_text)
+            except Exception as e:
+                full_text = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{law_ctx}"
+                placeholder.markdown(full_text)
 
-# --- 말풍선 바깥에서 카드(iframe) 추가 렌더: 레이아웃 충돌 방지 ---
-st.container().markdown("")   # 여백용 스페이서 (선택)
-render_ai_with_copy(full_text, key=f"now-{ts}")
-
+    # --- 말풍선 바깥에서 카드(iframe) 추가 렌더: 레이아웃 충돌 방지 ---
+    st.container().markdown("")   # 여백용 스페이서(선택)
+    render_ai_with_copy(full_text, key=f"now-{ts}")
 
     # 대화 저장(법령 요약 포함)
-st.session_state.messages.append({
+    st.session_state.messages.append({
         "role": "assistant", "content": full_text,
         "law": law_data if st.session_state.settings["include_search"] else None,
         "ts": ts
