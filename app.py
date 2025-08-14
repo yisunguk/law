@@ -330,32 +330,34 @@ if user_q:
     })
 
     # 어시스턴트 말풍선(스트리밍)
+    # --- 어시스턴트 말풍선: 스트리밍 표시만 ---
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_text, buffer = "", ""
 
-        if client is None:
-            full_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
-            placeholder.markdown(full_text)
-        else:
-            try:
-                # 타이핑 인디케이터
-                placeholder.markdown('<span class="typing-indicator"></span> 답변 생성 중...', unsafe_allow_html=True)
-                for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1000):
-                    buffer += piece
-                    if len(buffer) >= 80:  # 깜빡임 완화
-                        full_text += buffer; buffer = ""
-                        placeholder.markdown(full_text)
-                        time.sleep(0.02)
-                if buffer:
-                    full_text += buffer
+    if client is None:
+        full_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
+        placeholder.markdown(full_text)
+    else:
+        try:
+            placeholder.markdown('<span class="typing-indicator"></span> 답변 생성 중...', unsafe_allow_html=True)
+            for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1000):
+                buffer += piece
+                if len(buffer) >= 200:
+                    full_text += buffer; buffer = ""
                     placeholder.markdown(full_text)
-            except Exception as e:
-                full_text = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{law_ctx}"
+                    time.sleep(0.05)
+            if buffer:
+                full_text += buffer
                 placeholder.markdown(full_text)
+        except Exception as e:
+            full_text = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{law_ctx}"
+            placeholder.markdown(full_text)
 
-        # ✅ 말풍선을 지우지 않고, 그 아래에 복사 카드 '추가' 렌더 (사라짐 방지)
-        render_ai_with_copy(full_text, key=f"now-{ts}")
+# --- 말풍선 바깥에서 카드(iframe) 추가 렌더: 레이아웃 충돌 방지 ---
+st.container().markdown("")   # 여백용 스페이서 (선택)
+render_ai_with_copy(full_text, key=f"now-{ts}")
+
 
     # 대화 저장(법령 요약 포함)
     st.session_state.messages.append({
