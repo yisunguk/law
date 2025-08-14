@@ -1,4 +1,4 @@
-# app.py (Hardening v2.1)
+# app.py (No-iframe / Chat-bubble Copy v3)
 import time
 import json
 import math
@@ -9,7 +9,6 @@ from datetime import datetime
 
 import requests
 import streamlit as st
-import streamlit.components.v1 as components
 from openai import AzureOpenAI
 
 # =============================
@@ -21,24 +20,11 @@ st.markdown("""
 <style>
   .block-container {max-width: 900px; margin: 0 auto;}
   .stChatInput {max-width: 900px; margin-left: auto; margin-right: auto;}
-
   .header {text-align:center;padding:1.0rem;border-radius:12px;
            background:linear-gradient(135deg,#8b5cf6,#a78bfa);
            color:#fff;margin:0 0 1rem 0}
-
-  /* 복사 카드 */
-  .copy-wrap {background:#fff;color:#222;padding:12px;border-radius:12px;
-              box-shadow:0 1px 6px rgba(0,0,0,.06);margin:6px 0}
-  .copy-head {display:flex;justify-content:space-between;align-items:center;gap:12px}
-  .copy-btn  {display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid #ddd;border-radius:8px;
-              background:#f8f9fa;cursor:pointer;font-size:12px}
-  .copy-body {margin-top:6px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
-
-  /* 다크 모드 가독성 */
-  [data-theme="dark"] .copy-wrap { background:#2b2b2b; color:#e6e6e6; }
-  [data-theme="dark"] .copy-body { color:#e6e6e6; }
-
-  /* 타이핑 인디케이터 */
+  /* 말풍선 안 pre/code 가독성(다크/라이트 공통) */
+  pre, code { white-space: pre-wrap; word-break: break-word; }
   .typing-indicator {display:inline-block;width:16px;height:16px;border:3px solid #eee;border-top:3px solid #8b5cf6;
                      border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle}
   @keyframes spin {0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
@@ -53,52 +39,7 @@ st.markdown(
 )
 
 # =============================
-# 복사 카드 (동적 높이 + 내부 스크롤)
-# =============================
-def _estimate_height(text: str, min_h=160, max_h=700, per_line=18):
-    lines = text.count("\n") + max(1, math.ceil(len(text) / 60))
-    h = min_h + lines * per_line
-    return max(min_h, min(h, max_h))
-
-def render_ai_with_copy(message: str, key: str):
-    safe_for_clipboard = json.dumps(message)   # 클립보드용 원문
-    safe_html = html.escape(message)           # 화면 출력용 이스케이프
-    est_h = _estimate_height(message)
-
-    html_card = f"""
-    <div class="copy-wrap" style="max-height:{est_h}px; overflow:auto;">
-      <div class="copy-head">
-        <strong>AI 어시스턴트</strong>
-        <button id="copy-{key}" class="copy-btn" title="클립보드로 복사">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-            <path d="M9 9h9v12H9z" stroke="#444"/>
-            <path d="M6 3h9v3" stroke="#444"/>
-            <path d="M6 6h3v3" stroke="#444"/>
-          </svg>복사
-        </button>
-      </div>
-      <pre class="copy-body">{safe_html}</pre>
-    </div>
-    <script>
-      (function(){{
-        const btn = document.getElementById("copy-{key}");
-        if (btn) {{
-          btn.addEventListener("click", async () => {{
-            try {{
-              await navigator.clipboard.writeText({safe_for_clipboard});
-              const old = btn.innerHTML;
-              btn.innerHTML = "복사됨!";
-              setTimeout(()=>btn.innerHTML = old, 1200);
-            }} catch(e) {{ alert("복사 실패: "+e); }}
-          }});
-        }}
-      }})();
-    </script>
-    """
-    components.html(html_card, height=est_h + 48)
-
-# =============================
-# Secrets 로딩
+# Secrets
 # =============================
 def load_secrets():
     law_key = None; azure = None
@@ -117,7 +58,7 @@ def load_secrets():
 LAW_API_KEY, AZURE = load_secrets()
 
 # =============================
-# Azure OpenAI 클라이언트
+# Azure OpenAI
 # =============================
 client = None
 if AZURE:
@@ -131,20 +72,16 @@ if AZURE:
         st.error(f"Azure OpenAI 초기화 실패: {e}")
 
 # =============================
-# 세션 상태 (기본값 안전 주입)
+# 세션 상태 (안전 기본값 주입)
 # =============================
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "settings" not in st.session_state:
     st.session_state.settings = {"num_rows": 5, "include_search": True, "safe_mode": True}
 else:
-    # 기존 세션에 safe_mode 키가 없으면 기본값 True 추가
-    if "safe_mode" not in st.session_state.settings:
-        st.session_state.settings["safe_mode"] = True
-    if "num_rows" not in st.session_state.settings:
-        st.session_state.settings["num_rows"] = 5
-    if "include_search" not in st.session_state.settings:
-        st.session_state.settings["include_search"] = True
+    st.session_state.settings.setdefault("num_rows", 5)
+    st.session_state.settings.setdefault("include_search", True)
+    st.session_state.settings.setdefault("safe_mode", True)
 
 # =============================
 # 법제처 API
@@ -200,7 +137,7 @@ def format_law_context(law_data):
     return "\n\n".join(rows)
 
 # =============================
-# 모델 호출 (스트리밍/비스트리밍)
+# 모델 호출
 # =============================
 def build_history_messages(max_turns=10):
     sys = {"role": "system", "content": "당신은 대한민국의 법령 정보를 전문적으로 안내하는 AI 어시스턴트입니다."}
@@ -261,12 +198,13 @@ with st.sidebar:
     st.metric("총 메시지 수", len(st.session_state.messages))
 
 # =============================
-# 과거 대화 렌더
+# 과거 대화 렌더 (말풍선 내부에 '복사' 아이콘 포함)
 # =============================
 for i, m in enumerate(st.session_state.messages):
     with st.chat_message(m["role"]):
         if m["role"] == "assistant":
-            render_ai_with_copy(m["content"], key=f"past-{i}")
+            # st.code는 말풍선 내 'Copy' 아이콘 제공 (DOM 안전)
+            st.code(m["content"], language="markdown")
             if m.get("law"):
                 with st.expander("📋 이 턴에서 참고한 법령 요약"):
                     for j, law in enumerate(m["law"], 1):
@@ -352,17 +290,17 @@ if user_q:
     if client is None:
         final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
         with st.chat_message("assistant"):
-            st.markdown("✅ 결과가 아래 카드로 표시되었습니다.")
+            st.code(final_text, language="markdown")
     else:
         if safe_mode:
-            # ===== 안정 모드: 스트리밍 없이 최종본만 =====
+            # === 안정 모드: 스트리밍 없이 최종본만 ===
             with st.chat_message("assistant"):
                 st.markdown('<span class="typing-indicator"></span> 답변 생성 중...', unsafe_allow_html=True)
             final_text = chat_completion(model_messages, temperature=0.7, max_tokens=1000)
             with st.chat_message("assistant"):
-                st.markdown("✅ 결과가 아래 카드로 표시되었습니다.")
+                st.code(final_text, language="markdown")
         else:
-            # ===== 스트리밍 모드: 미리보기 최소화 =====
+            # === 스트리밍 모드: 미리보기는 말풍선 내에서만 ===
             with st.chat_message("assistant"):
                 placeholder = st.empty()
                 full_text, buffer = "", ""
@@ -372,23 +310,16 @@ if user_q:
                         buffer += piece
                         if len(buffer) >= 200:
                             full_text += buffer; buffer = ""
-                            preview = (full_text[-800:] if len(full_text) > 800 else full_text)
-                            placeholder.markdown(preview)
+                            # 말풍선 내 실시간 표시
+                            placeholder.code(full_text[-1200:] if len(full_text) > 1200 else full_text, language="markdown")
                             time.sleep(0.05)
                     if buffer:
                         full_text += buffer
-                        preview = (full_text[-800:] if len(full_text) > 800 else full_text)
-                        placeholder.markdown(preview)
+                        placeholder.code(full_text, language="markdown")
                 except Exception as e:
                     full_text = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{law_ctx}"
-                    placeholder.markdown(full_text)
+                    placeholder.code(full_text, language="markdown")
             final_text = full_text
-            with st.chat_message("assistant"):
-                st.markdown("✅ 결과가 아래 카드로 표시되었습니다.")
-
-    # --- 말풍선 바깥 별도 컨테이너에 카드 렌더 ---
-    st.container().markdown("")  # spacer
-    render_ai_with_copy(final_text, key=f"now-{ts}")
 
     # 대화 저장
     st.session_state.messages.append({
