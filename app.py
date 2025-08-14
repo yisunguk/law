@@ -1,10 +1,5 @@
-# app.py (No-iframe / Chat-bubble Copy v3)
-import time
-import json
-import math
-import html
-import urllib.parse
-import xml.etree.ElementTree as ET
+# app.py (No-iframe, Sidebarless, Hardcoded Options)
+import time, json, math, html, urllib.parse, xml.etree.ElementTree as ET
 from datetime import datetime
 
 import requests
@@ -12,19 +7,31 @@ import streamlit as st
 from openai import AzureOpenAI
 
 # =============================
-# 기본 설정 & 스타일
+# 기본 설정 & 전역 스타일
 # =============================
-st.set_page_config(page_title="법제처 AI 챗봇", page_icon="⚖️", layout="wide")
+st.set_page_config(
+    page_title="법제처 AI 챗봇",
+    page_icon="⚖️",
+    layout="wide",
+    initial_sidebar_state="collapsed",  # 사이드바 기본 접기
+)
 
 st.markdown("""
 <style>
+  /* 사이드바와 토글 완전 숨김 */
+  [data-testid="stSidebar"] { display: none !important; }
+  [data-testid="collapsedControl"] { display: none !important; }
+
   .block-container {max-width: 900px; margin: 0 auto;}
   .stChatInput {max-width: 900px; margin-left: auto; margin-right: auto;}
+
   .header {text-align:center;padding:1.0rem;border-radius:12px;
            background:linear-gradient(135deg,#8b5cf6,#a78bfa);
            color:#fff;margin:0 0 1rem 0}
+
   /* 말풍선 안 pre/code 가독성(다크/라이트 공통) */
   pre, code { white-space: pre-wrap; word-break: break-word; }
+
   .typing-indicator {display:inline-block;width:16px;height:16px;border:3px solid #eee;border-top:3px solid #8b5cf6;
                      border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle}
   @keyframes spin {0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
@@ -72,16 +79,17 @@ if AZURE:
         st.error(f"Azure OpenAI 초기화 실패: {e}")
 
 # =============================
-# 세션 상태 (안전 기본값 주입)
+# 세션 상태 (하드코딩 옵션 주입)
 # =============================
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "settings" not in st.session_state:
-    st.session_state.settings = {"num_rows": 5, "include_search": True, "safe_mode": True}
-else:
-    st.session_state.settings.setdefault("num_rows", 5)
-    st.session_state.settings.setdefault("include_search", True)
-    st.session_state.settings.setdefault("safe_mode", True)
+    st.session_state.settings = {}
+
+# ✅ 사용자 선택 불가: 항상 이 값으로 고정
+st.session_state.settings["num_rows"] = 10
+st.session_state.settings["include_search"] = True   # 맥락 검색 항상 켬
+st.session_state.settings["safe_mode"] = False       # 안정 모드 사용 안 함(스트리밍)
 
 # =============================
 # 법제처 API
@@ -147,7 +155,7 @@ def build_history_messages(max_turns=10):
         msgs.append({"role": m["role"], "content": m["content"]})
     return msgs
 
-def stream_chat_completion(messages, temperature=0.7, max_tokens=1000):
+def stream_chat_completion(messages, temperature=0.3, max_tokens=3000):
     stream = client.chat.completions.create(
         model=AZURE["deployment"],
         messages=messages,
@@ -183,27 +191,11 @@ def chat_completion(messages, temperature=0.7, max_tokens=1000):
         return ""
 
 # =============================
-# 사이드바
-# =============================
-with st.sidebar:
-    st.markdown("### ⚙️ 옵션")
-    st.session_state.settings["num_rows"] = st.slider("참고 검색 개수(법제처)", 1, 10, st.session_state.settings["num_rows"])
-    st.session_state.settings["include_search"] = st.checkbox("법제처 검색 맥락 포함", value=st.session_state.settings["include_search"])
-    st.session_state.settings["safe_mode"] = st.checkbox("안정 모드(최종본만 표시, 권장)", value=st.session_state.settings["safe_mode"])
-    st.divider()
-    if st.button("🆕 새로운 대화 시작", use_container_width=True):
-        st.session_state.messages.clear()
-        st.rerun()
-    st.divider()
-    st.metric("총 메시지 수", len(st.session_state.messages))
-
-# =============================
-# 과거 대화 렌더 (말풍선 내부에 '복사' 아이콘 포함)
+# 과거 대화 렌더 (말풍선 내부 복사 아이콘 제공)
 # =============================
 for i, m in enumerate(st.session_state.messages):
     with st.chat_message(m["role"]):
         if m["role"] == "assistant":
-            # st.code는 말풍선 내 'Copy' 아이콘 제공 (DOM 안전)
             st.code(m["content"], language="markdown")
             if m.get("law"):
                 with st.expander("📋 이 턴에서 참고한 법령 요약"):
@@ -215,7 +207,7 @@ for i, m in enumerate(st.session_state.messages):
             st.markdown(m["content"])
 
 # =============================
-# 입력창
+# 입력창 & 답변
 # =============================
 user_q = st.chat_input("법령에 대한 질문을 입력하세요… (Enter로 전송)")
 
@@ -227,13 +219,14 @@ if user_q:
     with st.chat_message("user"):
         st.markdown(user_q)
 
-    # (옵션) 법제처 검색
+    # (하드코딩) 법제처 맥락 검색 항상 실행
     law_data, used_endpoint, err = ([], None, None)
-    if st.session_state.settings["include_search"]:
-        with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
-            law_data, used_endpoint, err = search_law_data(user_q, num_rows=st.session_state.settings["num_rows"])
-        if used_endpoint: st.caption(f"법제처 API endpoint: `{used_endpoint}`")
-        if err: st.warning(err)
+    with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
+        law_data, used_endpoint, err = search_law_data(user_q, num_rows=st.session_state.settings["num_rows"])
+    if used_endpoint:
+        st.caption(f"법제처 API endpoint: `{used_endpoint}`")
+    if err:
+        st.warning(err)
     law_ctx = format_law_context(law_data)
 
     # 프롬프트 생성
@@ -285,45 +278,34 @@ if user_q:
 한국어로 쉽게 설명하세요."""
     })
 
-    safe_mode = st.session_state.settings.get("safe_mode", True)
-
+    # (하드코딩) safe_mode = False → 스트리밍 표시
     if client is None:
         final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
         with st.chat_message("assistant"):
             st.code(final_text, language="markdown")
     else:
-        if safe_mode:
-            # === 안정 모드: 스트리밍 없이 최종본만 ===
-            with st.chat_message("assistant"):
-                st.markdown('<span class="typing-indicator"></span> 답변 생성 중...', unsafe_allow_html=True)
-            final_text = chat_completion(model_messages, temperature=0.7, max_tokens=1000)
-            with st.chat_message("assistant"):
-                st.code(final_text, language="markdown")
-        else:
-            # === 스트리밍 모드: 미리보기는 말풍선 내에서만 ===
-            with st.chat_message("assistant"):
-                placeholder = st.empty()
-                full_text, buffer = "", ""
-                try:
-                    placeholder.markdown('<span class="typing-indicator"></span> 답변 생성 중...', unsafe_allow_html=True)
-                    for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1000):
-                        buffer += piece
-                        if len(buffer) >= 200:
-                            full_text += buffer; buffer = ""
-                            # 말풍선 내 실시간 표시
-                            placeholder.code(full_text[-1200:] if len(full_text) > 1200 else full_text, language="markdown")
-                            time.sleep(0.05)
-                    if buffer:
-                        full_text += buffer
-                        placeholder.code(full_text, language="markdown")
-                except Exception as e:
-                    full_text = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{law_ctx}"
+        with st.chat_message("assistant"):
+            placeholder = st.empty()
+            full_text, buffer = "", ""
+            try:
+                placeholder.markdown('<span class="typing-indicator"></span> 답변 생성 중...', unsafe_allow_html=True)
+                for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1000):
+                    buffer += piece
+                    if len(buffer) >= 200:
+                        full_text += buffer; buffer = ""
+                        placeholder.code(full_text[-1200:] if len(full_text) > 1200 else full_text, language="markdown")
+                        time.sleep(0.05)
+                if buffer:
+                    full_text += buffer
                     placeholder.code(full_text, language="markdown")
-            final_text = full_text
+            except Exception as e:
+                full_text = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{law_ctx}"
+                placeholder.code(full_text, language="markdown")
+        final_text = full_text
 
     # 대화 저장
     st.session_state.messages.append({
         "role": "assistant", "content": final_text,
-        "law": law_data if st.session_state.settings["include_search"] else None,
+        "law": law_data,  # 항상 검색하므로 저장
         "ts": ts
     })
