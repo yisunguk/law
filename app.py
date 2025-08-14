@@ -1,4 +1,4 @@
-# app.py
+# app.py (Hardening v2)
 import time
 import json
 import math
@@ -13,17 +13,15 @@ import streamlit.components.v1 as components
 from openai import AzureOpenAI
 
 # =============================
-# 기본 설정 & 스타일 (ChatGPT 레이아웃)
+# 기본 설정 & 스타일
 # =============================
 st.set_page_config(page_title="법제처 AI 챗봇", page_icon="⚖️", layout="wide")
 
 st.markdown("""
 <style>
-  /* 중앙 900px 컨테이너 - 답변/입력 동일 폭 */
   .block-container {max-width: 900px; margin: 0 auto;}
   .stChatInput {max-width: 900px; margin-left: auto; margin-right: auto;}
 
-  /* 상단 헤더 */
   .header {text-align:center;padding:1.0rem;border-radius:12px;
            background:linear-gradient(135deg,#8b5cf6,#a78bfa);
            color:#fff;margin:0 0 1rem 0}
@@ -35,6 +33,10 @@ st.markdown("""
   .copy-btn  {display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid #ddd;border-radius:8px;
               background:#f8f9fa;cursor:pointer;font-size:12px}
   .copy-body {margin-top:6px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+
+  /* 다크 모드 가독성 */
+  [data-theme="dark"] .copy-wrap { background:#2b2b2b; color:#e6e6e6; }
+  [data-theme="dark"] .copy-body { color:#e6e6e6; }
 
   /* 타이핑 인디케이터 */
   .typing-indicator {display:inline-block;width:16px;height:16px;border:3px solid #eee;border-top:3px solid #8b5cf6;
@@ -51,18 +53,17 @@ st.markdown(
 )
 
 # =============================
-# 복사 버튼 카드 (동적 높이 + 내부 스크롤)
+# 복사 카드 (동적 높이 + 내부 스크롤)
 # =============================
 def _estimate_height(text: str, min_h=160, max_h=700, per_line=18):
-    # 대략 60자를 한 줄로 보아 줄 수 추정
-    lines = text.count("\n") + max(1, math.ceil(len(text) / 60))
+    lines = text.count("\\n") + max(1, math.ceil(len(text) / 60))
     h = min_h + lines * per_line
     return max(min_h, min(h, max_h))
 
 def render_ai_with_copy(message: str, key: str):
-    safe_for_clipboard = json.dumps(message)           # 클립보드용(원문)
-    safe_html = html.escape(message)                   # 화면 렌더링용(HTML 이스케이프)
-    est_h = _estimate_height(message)                  # 높이 추정
+    safe_for_clipboard = json.dumps(message)   # 클립보드용 원문
+    safe_html = html.escape(message)           # 화면 출력용 이스케이프
+    est_h = _estimate_height(message)
 
     html_card = f"""
     <div class="copy-wrap" style="max-height:{est_h}px; overflow:auto;">
@@ -76,7 +77,6 @@ def render_ai_with_copy(message: str, key: str):
           </svg>복사
         </button>
       </div>
-      <!-- escape된 본문을 pre로 표기해서 레이아웃 보호 -->
       <pre class="copy-body">{safe_html}</pre>
     </div>
     <script>
@@ -131,13 +131,12 @@ if AZURE:
         st.error(f"Azure OpenAI 초기화 실패: {e}")
 
 # =============================
-# 세션 상태 (ChatGPT 호환 구조)
+# 세션 상태
 # =============================
-# messages: [{role: "user"|"assistant", content: str, law: list|None, ts: str}]
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "settings" not in st.session_state:
-    st.session_state.settings = {"num_rows": 5, "include_search": True}
+    st.session_state.settings = {"num_rows": 5, "include_search": True, "safe_mode": True}
 
 # =============================
 # 법제처 API
@@ -185,18 +184,17 @@ def format_law_context(law_data):
     rows = []
     for i, law in enumerate(law_data, 1):
         rows.append(
-            f"{i}. {law['법령명']} ({law['법령구분명']})\n"
-            f"   - 소관부처: {law['소관부처명']}\n"
-            f"   - 시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}\n"
+            f"{i}. {law['법령명']} ({law['법령구분명']})\\n"
+            f"   - 소관부처: {law['소관부처명']}\\n"
+            f"   - 시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}\\n"
             f"   - 링크: {law['법령상세링크'] or '없음'}"
         )
-    return "\n\n".join(rows)
+    return "\\n\\n".join(rows)
 
 # =============================
-# 모델 메시지 구성/스트리밍
+# 모델 호출 (스트리밍/비스트리밍)
 # =============================
 def build_history_messages(max_turns=10):
-    """최근 N턴 히스토리를 모델에 전달 (ChatGPT와 동일 맥락 유지)."""
     sys = {"role": "system", "content": "당신은 대한민국의 법령 정보를 전문적으로 안내하는 AI 어시스턴트입니다."}
     msgs = [sys]
     history = st.session_state.messages[-max_turns*2:]
@@ -226,13 +224,27 @@ def stream_chat_completion(messages, temperature=0.7, max_tokens=1000):
         except Exception:
             continue
 
+def chat_completion(messages, temperature=0.7, max_tokens=1000):
+    resp = client.chat.completions.create(
+        model=AZURE["deployment"],
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=False,
+    )
+    try:
+        return resp.choices[0].message.content
+    except Exception:
+        return ""
+
 # =============================
-# 사이드바 (옵션 & 새로운 대화)
+# 사이드바
 # =============================
 with st.sidebar:
     st.markdown("### ⚙️ 옵션")
     st.session_state.settings["num_rows"] = st.slider("참고 검색 개수(법제처)", 1, 10, st.session_state.settings["num_rows"])
     st.session_state.settings["include_search"] = st.checkbox("법제처 검색 맥락 포함", value=st.session_state.settings["include_search"])
+    st.session_state.settings["safe_mode"] = st.checkbox("안정 모드(최종본만 표시, 권장)", value=st.session_state.settings["safe_mode"])
     st.divider()
     if st.button("🆕 새로운 대화 시작", use_container_width=True):
         st.session_state.messages.clear()
@@ -241,7 +253,7 @@ with st.sidebar:
     st.metric("총 메시지 수", len(st.session_state.messages))
 
 # =============================
-# 과거 대화 렌더 (ChatGPT 스타일)
+# 과거 대화 렌더
 # =============================
 for i, m in enumerate(st.session_state.messages):
     with st.chat_message(m["role"]):
@@ -257,14 +269,14 @@ for i, m in enumerate(st.session_state.messages):
             st.markdown(m["content"])
 
 # =============================
-# 하단 입력창 (고정, 답변과 동일 폭)
+# 입력창
 # =============================
 user_q = st.chat_input("법령에 대한 질문을 입력하세요… (Enter로 전송)")
 
 if user_q:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # 사용자 메시지 즉시 표기/저장
+    # 사용자 메시지 표기/저장
     st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
     with st.chat_message("user"):
         st.markdown(user_q)
@@ -274,13 +286,11 @@ if user_q:
     if st.session_state.settings["include_search"]:
         with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
             law_data, used_endpoint, err = search_law_data(user_q, num_rows=st.session_state.settings["num_rows"])
-        if used_endpoint:
-            st.caption(f"법제처 API endpoint: `{used_endpoint}`")
-        if err:
-            st.warning(err)
+        if used_endpoint: st.caption(f"법제처 API endpoint: `{used_endpoint}`")
+        if err: st.warning(err)
     law_ctx = format_law_context(law_data)
 
-    # 모델 히스토리 + 현재 질문 프롬프트
+    # 프롬프트 생성
     model_messages = build_history_messages(max_turns=10)
     model_messages.append({
         "role": "user",
@@ -329,37 +339,55 @@ if user_q:
 한국어로 쉽게 설명하세요."""
     })
 
-    # --- 어시스턴트 말풍선: 스트리밍 표시만 (리렌더 간격 완화) ---
-    with st.chat_message("assistant"):
-        placeholder = st.empty()
-        full_text, buffer = "", ""
+    safe_mode = st.session_state.settings.get("safe_mode", True)
 
-        if client is None:
-            full_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
-            placeholder.markdown(full_text)
+    if client is None:
+        # 클라이언트 없으면 간단 안내
+        final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\\n\\n" + law_ctx
+        with st.chat_message("assistant"):
+            st.markdown("✅ 결과가 아래 카드로 표시되었습니다.")
+    else:
+        if safe_mode:
+            # ===== 안정 모드: 스트리밍 없이 최종본만 =====
+            with st.chat_message("assistant"):
+                st.markdown('<span class="typing-indicator"></span> 답변 생성 중...', unsafe_allow_html=True)
+            final_text = chat_completion(model_messages, temperature=0.7, max_tokens=1000)
+            with st.chat_message("assistant"):
+                st.markdown("✅ 결과가 아래 카드로 표시되었습니다.")
         else:
-            try:
-                placeholder.markdown('<span class="typing-indicator"></span> 답변 생성 중...', unsafe_allow_html=True)
-                for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1000):
-                    buffer += piece
-                    if len(buffer) >= 200:            # 80 → 200
-                        full_text += buffer; buffer = ""
-                        placeholder.markdown(full_text)
-                        time.sleep(0.05)              # 0.02 → 0.05
-                if buffer:
-                    full_text += buffer
+            # ===== 스트리밍 모드: 미리보기는 최소화 =====
+            with st.chat_message("assistant"):
+                placeholder = st.empty()
+                full_text, buffer = "", ""
+                try:
+                    placeholder.markdown('<span class="typing-indicator"></span> 답변 생성 중...', unsafe_allow_html=True)
+                    for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1000):
+                        buffer += piece
+                        if len(buffer) >= 200:
+                            full_text += buffer; buffer = ""
+                            # 미리보기는 길어지지 않게 마지막 800자만
+                            preview = (full_text[-800:] if len(full_text) > 800 else full_text)
+                            placeholder.markdown(preview)
+                            time.sleep(0.05)
+                    if buffer:
+                        full_text += buffer
+                        preview = (full_text[-800:] if len(full_text) > 800 else full_text)
+                        placeholder.markdown(preview)
+                except Exception as e:
+                    full_text = f"답변 생성 중 오류가 발생했습니다: {e}\\n\\n{law_ctx}"
                     placeholder.markdown(full_text)
-            except Exception as e:
-                full_text = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{law_ctx}"
-                placeholder.markdown(full_text)
+            final_text = full_text
+            # 스트리밍 미리보기는 남기지 않고 단문으로 치환
+            with st.chat_message("assistant"):
+                st.markdown("✅ 결과가 아래 카드로 표시되었습니다.")
 
-    # --- 말풍선 바깥에서 카드(iframe) 추가 렌더: 레이아웃 충돌 방지 ---
-    st.container().markdown("")   # 여백용 스페이서(선택)
-    render_ai_with_copy(full_text, key=f"now-{ts}")
+    # --- 말풍선 바깥 별도 컨테이너에 카드(iframe) 렌더 ---
+    st.container().markdown("")  # spacer
+    render_ai_with_copy(final_text, key=f"now-{ts}")
 
-    # 대화 저장(법령 요약 포함)
+    # 대화 저장
     st.session_state.messages.append({
-        "role": "assistant", "content": full_text,
+        "role": "assistant", "content": final_text,
         "law": law_data if st.session_state.settings["include_search"] else None,
         "ts": ts
     })
