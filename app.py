@@ -29,8 +29,8 @@ def _get_secret(path: list, default=None):
     except Exception:
         return default
 
-# 법제처 DRF OC
-LAW_API_KEY = _get_secret(["LAW_API_KEY"], "")
+# 공공데이터포털 ServiceKey
+DATA_PORTAL_SERVICE_KEY = _get_secret(["DATA_PORTAL_SERVICE_KEY"], "")
 
 # Azure OpenAI
 AZURE_OPENAI_API_KEY   = _get_secret(["azure_openai", "api_key"], "")
@@ -96,7 +96,7 @@ def save_message(thread_id: str, msg: Dict[str, Any]):
         pass
 
 # =========================
-# Styles (minimal & safe)
+# Styles (ChatGPT 스타일)
 # =========================
 st.markdown(
     """
@@ -118,28 +118,96 @@ st.markdown(
 }
 .chat-history-item:hover { background:#3a3c42 }
 
-/* ===== 커스텀 입력창 ===== */
-#chatbar {
-  position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
-  width: 960px; max-width: 95vw;
-  background: #111418; border: 1px solid #32363b; border-radius: 24px;
-  box-shadow: 0 8px 20px rgba(0,0,0,.25);
-  z-index: 9999;
+/* ChatGPT 스타일 채팅 */
+.chat-container {
+  max-width: 800px; margin: 0 auto; padding: 0 1rem;
 }
-#chatbar .row { display:flex; gap:12px; align-items:center; padding:12px 14px; }
-#chatbar textarea {
-  width: 100%; background: #2a2d33; color:#e8eaed;
-  border: 1px solid #3a3f45; border-radius: 18px; padding: 12px 14px;
-  min-height: 110px; font-size: 16px; line-height: 1.5; resize: none;
+
+.chat-message {
+  display: flex; margin: 1.5rem 0; align-items: flex-start;
 }
-#chatbar button {
-  min-width: 76px; height: 40px; border-radius: 12px; border: 1px solid #4b5563;
-  background: #3b82f6; color: white; font-weight: 600; cursor: pointer;
+
+.chat-message.user {
+  flex-direction: row-reverse;
 }
-#chatbar button:hover { filter: brightness(1.05); }
+
+.chat-avatar {
+  width: 30px; height: 30px; border-radius: 50%; 
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; margin: 0 12px; flex-shrink: 0;
+}
+
+.chat-avatar.user {
+  background: #10a37f; color: white;
+}
+
+.chat-avatar.assistant {
+  background: #f7f7f8; color: #374151;
+}
+
+.chat-content {
+  background: #f7f7f8; padding: 1rem; border-radius: 18px;
+  max-width: 70%; word-wrap: break-word;
+}
+
+.chat-message.user .chat-content {
+  background: #10a37f; color: white;
+}
+
+/* 입력창 */
+.chat-input-container {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  width: 90%; max-width: 800px; background: white;
+  border: 1px solid #e5e7eb; border-radius: 24px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 1000;
+}
+
+.chat-input-wrapper {
+  display: flex; align-items: flex-end; padding: 8px;
+}
+
+.chat-textarea {
+  flex: 1; border: none; outline: none; resize: none;
+  padding: 12px 16px; font-size: 16px; line-height: 1.5;
+  min-height: 24px; max-height: 200px; border-radius: 20px;
+  background: transparent;
+}
+
+.chat-send-button {
+  background: #10a37f; color: white; border: none; border-radius: 50%;
+  width: 40px; height: 40px; margin-left: 8px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background-color 0.2s;
+}
+
+.chat-send-button:hover {
+  background: #0d8f6f;
+}
+
+.chat-send-button:disabled {
+  background: #d1d5db; cursor: not-allowed;
+}
 
 /* 본문이 입력창에 가리지 않게 하단 여백 확보 */
-.block-container { padding-bottom: 180px; }
+.block-container { padding-bottom: 120px; }
+
+/* 로딩 애니메이션 */
+.typing-indicator {
+  display: flex; align-items: center; gap: 4px; padding: 12px 16px;
+}
+
+.typing-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #9ca3af;
+  animation: typing 1.4s infinite ease-in-out;
+}
+
+.typing-dot:nth-child(1) { animation-delay: -0.32s; }
+.typing-dot:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes typing {
+  0%, 80%, 100% { transform: scale(0); opacity: 0.5; }
+  40% { transform: scale(1); opacity: 1; }
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -152,7 +220,7 @@ st.markdown(
     """
 <div class="chat-header">
   <h1>⚖️ 법제처 AI 챗봇</h1>
-  <p>법제처 공식 데이터 + Azure OpenAI + Firebase 대화 메모리</p>
+  <p>공공데이터포털 + Azure OpenAI + ChatGPT 스타일 인터페이스</p>
 </div>
 """,
     unsafe_allow_html=True,
@@ -185,12 +253,8 @@ if restored:
 # =========================
 # Utilities
 # =========================
-
 def law_search(keyword: str, rows: int = 5) -> List[str]:
-    """국가법령 검색
-    우선순위 1) 공공데이터포털(apis.data.go.kr, ServiceKey/XML) → 2) DRF(law.go.kr, OC/XML) 폴백
-    반환: "- 제목 (시행일자: YYYYMMDD)" 최대 rows개
-    """
+    """국가법령 검색 - 공공데이터포털 사용"""
     rows = max(1, min(int(rows or 5), 20))
 
     def _warn(msg: str, sample: str = ""):
@@ -207,12 +271,14 @@ def law_search(keyword: str, rows: int = 5) -> List[str]:
         except ET.ParseError as pe:
             _warn(f"XML 파싱 오류: {pe}")
             return []
+        
         rc = (root.findtext('.//resultCode') or '').strip()
         if rc and rc != '00':
             msg = (root.findtext('.//resultMsg') or '').strip()
             code_map = {'01':'잘못된 요청 파라미터','02':'인증키 오류','03':'필수 파라미터 누락','09':'일시적 시스템 오류','99':'정의되지 않은 오류'}
             _warn(f"API 오류(resultCode={rc}): {code_map.get(rc, msg or '오류')}")
             return []
+        
         hits = []
         for node in root.findall('.//law'):
             title = (node.findtext('법령명한글') or node.findtext('법령명') or '').strip()
@@ -221,41 +287,40 @@ def law_search(keyword: str, rows: int = 5) -> List[str]:
                 hits.append(f"- {title} (시행일자: {date})")
         return hits[:rows]
 
-    # 1) 공공데이터포털 (ServiceKey — 반드시 Decoding 값을 사용)
-    if DATA_PORTAL_SERVICE_KEY:
-        try:
-            base = 'https://apis.data.go.kr/1170000/law/lawSearchList.do'
-            params = {
-                'serviceKey': DATA_PORTAL_SERVICE_KEY,
-                'ServiceKey': DATA_PORTAL_SERVICE_KEY,
-                'target': 'law',
-                'query' : keyword or '*',
-                'numOfRows': rows,
-                'pageNo': 1,
-            }
-            res = requests.get(base, params=params, timeout=15)
-            ctype = (res.headers.get('Content-Type') or '').lower()
-            txt = res.text or ''
-            if res.status_code != 200:
-                _warn(f"공공데이터포털 오류(code={res.status_code})", txt)
-            elif 'xml' in ctype or txt.strip().startswith('<'):
-                if _is_html(txt):
-                    _warn("공공데이터포털이 HTML(사람용 페이지)을 반환했습니다. ServiceKey/쿼터/파라미터를 확인하세요.", txt)
-                else:
-                    hits = _parse_xml(txt)
-                    if hits:
-                        return hits
+    # 공공데이터포털 API 호출
+    if not DATA_PORTAL_SERVICE_KEY:
+        st.warning("공공데이터포털 ServiceKey가 설정되지 않았습니다.")
+        return []
+    
+    try:
+        base = 'https://apis.data.go.kr/1170000/law/lawSearchList.do'
+        params = {
+            'serviceKey': DATA_PORTAL_SERVICE_KEY,
+            'target': 'law',
+            'query': keyword or '*',
+            'numOfRows': rows,
+            'pageNo': 1,
+        }
+        res = requests.get(base, params=params, timeout=15)
+        ctype = (res.headers.get('Content-Type') or '').lower()
+        txt = res.text or ''
+        
+        if res.status_code != 200:
+            _warn(f"공공데이터포털 오류(code={res.status_code})", txt)
+        elif 'xml' in ctype or txt.strip().startswith('<'):
+            if _is_html(txt):
+                _warn("공공데이터포털이 HTML(사람용 페이지)을 반환했습니다. ServiceKey/쿼터/파라미터를 확인하세요.", txt)
             else:
-                _warn(f"공공데이터포털이 XML이 아닌 응답을 반환했습니다(Content-Type={ctype})", txt)
-        except Exception as e:
-            _warn(f"공공데이터포털 호출 오류: {e}")
+                hits = _parse_xml(txt)
+                if hits:
+                    return hits
+        else:
+            _warn(f"공공데이터포털이 XML이 아닌 응답을 반환했습니다(Content-Type={ctype})", txt)
+    except Exception as e:
+        _warn(f"공공데이터포털 호출 오류: {e}")
 
-       return []
+    return []
 
-def law_context_str(hits: List[str]) -> str:
-    return "\n".join(hits) if hits else "관련 검색 결과가 없습니다."
-def law_context_str(hits: List[str]) -> str:
-    return "\n".join(hits) if hits else "관련 검색 결과가 없습니다."
 def law_context_str(hits: List[str]) -> str:
     return "\n".join(hits) if hits else "관련 검색 결과가 없습니다."
 
@@ -275,7 +340,6 @@ def get_client() -> Optional[AzureOpenAI]:
             api_key=AZURE_OPENAI_API_KEY,
             api_version=AZURE_OPENAI_API_VERSION,
         )
-        # 간단한 연결 테스트
         return client
     except Exception as e:
         st.error(f"Azure OpenAI 연결 실패: {str(e)}")
@@ -296,8 +360,6 @@ with st.sidebar:
     if c2.button("요약 저장", use_container_width=True):
         st.success("요약 저장 완료!")
 
-    # Thread ID/URL 표시는 숨김
-
     st.markdown("---")
     st.markdown("#### 대화 히스토리(최근)")
     for m in st.session_state.messages[-8:]:
@@ -306,58 +368,123 @@ with st.sidebar:
         st.markdown(f'<div class="chat-history-item">{role}: {preview}...</div>', unsafe_allow_html=True)
 
 # =========================
-# Render history
+# Chat Container
 # =========================
+st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+
+# Render history
 for m in st.session_state.messages:
     role = m.get("role", "assistant")
-    with st.chat_message(role if role in ("user", "assistant") else "assistant"):
-        st.markdown(m.get("content", ""))
+    is_user = role == "user"
+    
+    st.markdown(
+        f"""
+        <div class="chat-message {'user' if is_user else 'assistant'}">
+          <div class="chat-avatar {'user' if is_user else 'assistant'}">
+            {'👤' if is_user else '⚖️'}
+          </div>
+          <div class="chat-content">
+            {m.get("content", "")}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 # 환경 경고 배너(선택적)
 if not client:
     st.info("Azure OpenAI 설정이 없으면 기본 안내만 표시됩니다. (Secrets에 api_key/endpoint/deployment/api_version 확인)")
 
+st.markdown('</div>', unsafe_allow_html=True)
+
 # =========================
-# Custom chat bar (form)
+# Custom chat input (ChatGPT 스타일)
 # =========================
-chatbar = st.empty()
-with chatbar.container():
+chat_input = st.empty()
+with chat_input.container():
     st.markdown(
         """
-        <div id="chatbar">
-          <div class="row">
-            <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:#f59e0b;color:#111;font-weight:900">⚖️</span>
-            <div style="flex:1">
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # clear_on_submit=True → 제출 후 자동 초기화
-    with st.form("chat_form", clear_on_submit=True):
-        user_text = st.text_area(
-            label="",
-            key="draft_input",
-            placeholder="법령에 대한 질문을 입력하세요... (Shift+Enter: 줄바꿈, Enter: 전송)",
-            height=110,
-        )
-        cols = st.columns([1, 6])
-        with cols[0]:
-            submitted = st.form_submit_button("보내기")
-        with cols[1]:
-            st.caption("Shift+Enter로 줄바꿈, Enter로 전송")
-
-    st.markdown(
-        """
-            </div>
+        <div class="chat-input-container">
+          <div class="chat-input-wrapper">
+            <textarea 
+              id="chat-textarea" 
+              class="chat-textarea" 
+              placeholder="법령에 대한 질문을 입력하세요... (Shift+Enter: 줄바꿈, Enter: 전송)"
+              rows="1"
+            ></textarea>
+            <button id="chat-send-btn" class="chat-send-button" onclick="sendMessage()">
+              ➤
+            </button>
           </div>
         </div>
         """,
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
 
 # =========================
-# Handle submit
+# JavaScript for ChatGPT-style input
 # =========================
+st.markdown(
+    """
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const textarea = document.getElementById('chat-textarea');
+        const sendBtn = document.getElementById('chat-send-btn');
+        
+        if (textarea && sendBtn) {
+            // 자동 높이 조절
+            textarea.addEventListener('input', function() {
+                this.style.height = 'auto';
+                this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+            });
+            
+            // Enter로 전송, Shift+Enter로 줄바꿈
+            textarea.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            });
+            
+            // 전송 버튼 클릭
+            window.sendMessage = function() {
+                const message = textarea.value.trim();
+                if (message) {
+                    // Streamlit 세션에 메시지 전달
+                    const event = new CustomEvent('streamlit:sendMessage', {
+                        detail: { message: message }
+                    });
+                    window.dispatchEvent(event);
+                    
+                    // 입력창 초기화
+                    textarea.value = '';
+                    textarea.style.height = '24px';
+                }
+            };
+        }
+    });
+    </script>
+    """,
+    unsafe_allow_html=True
+)
+
+# =========================
+# Handle message submission
+# =========================
+# JavaScript 이벤트를 감지하여 메시지 처리
+if st.button("테스트 전송", key="test_send", help="JavaScript 이벤트 테스트용"):
+    st.info("JavaScript 이벤트가 정상 작동하는지 확인하세요.")
+
+# 사용자 입력을 받는 Streamlit 폼 (임시)
+with st.form("chat_form", clear_on_submit=True):
+    user_text = st.text_area(
+        label="",
+        key="draft_input",
+        placeholder="법령에 대한 질문을 입력하세요... (Shift+Enter: 줄바꿈, Enter: 전송)",
+        height=100,
+    )
+    submitted = st.form_submit_button("보내기")
+
 if submitted:
     user_q = (user_text or "").strip()
     if user_q:
@@ -366,9 +493,6 @@ if submitted:
         # 사용자 메시지
         st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
         save_message(st.session_state.thread_id, {"role": "user", "content": user_q, "ts": ts})
-
-        with st.chat_message("user"):
-            st.markdown(user_q)
 
         # 컨텍스트/버퍼 초기화
         ctx: str = ""
@@ -399,35 +523,30 @@ if submitted:
         )
 
         # 어시스턴트(스트리밍: placeholder)
-        with st.chat_message("assistant"):
-            placeholder = st.empty()
-
+        with st.spinner("AI 답변 생성 중..."):
             if client is None:
                 assistant_full = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + ctx
-                placeholder.markdown(assistant_full)
             else:
                 try:
-                    with st.spinner("AI 답변 생성 중..."):
-                        stream = client.chat.completions.create(
-                            model=AZURE_OPENAI_DEPLOYMENT,   # 배포 이름 그대로
-                            messages=history_for_model,
-                            temperature=0.3,
-                            top_p=1.0,
-                            stream=True,
-                            timeout=60,  # 타임아웃 설정
-                        )
-                        buf = []
-                        for ch in stream:
-                            piece = ""
-                            try:
-                                piece = ch.choices[0].delta.get("content", "")
-                            except Exception:
-                                pass
-                            if piece:
-                                buf.append(piece)
-                                assistant_full = "".join(buf)
-                                placeholder.markdown(assistant_full)
-                        assistant_full = "".join(buf)
+                    stream = client.chat.completions.create(
+                        model=AZURE_OPENAI_DEPLOYMENT,
+                        messages=history_for_model,
+                        temperature=0.3,
+                        top_p=1.0,
+                        stream=True,
+                        timeout=60,
+                    )
+                    buf = []
+                    for ch in stream:
+                        piece = ""
+                        try:
+                            piece = ch.choices[0].delta.get("content", "")
+                        except Exception:
+                            pass
+                        if piece:
+                            buf.append(piece)
+                            assistant_full = "".join(buf)
+                    assistant_full = "".join(buf)
                 except Exception as e:
                     error_msg = f"답변 생성 중 오류가 발생했습니다: {str(e)}"
                     if "timeout" in str(e).lower():
@@ -438,37 +557,11 @@ if submitted:
                         error_msg = "인증 오류가 발생했습니다. API 키를 확인해주세요."
                     
                     assistant_full = f"{error_msg}\n\n{ctx}"
-                    placeholder.markdown(assistant_full)
                     st.error(f"상세 오류: {str(e)}")
 
         # 저장
         st.session_state.messages.append({"role": "assistant", "content": assistant_full, "ts": time.time()})
         save_message(st.session_state.thread_id, {"role": "assistant", "content": assistant_full, "ts": time.time()})
-
-# =========================
-# JavaScript for keyboard shortcuts
-# =========================
-st.markdown(
-    """
-    <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const textarea = document.querySelector('textarea[data-testid="stTextArea"]');
-        if (textarea) {
-            textarea.addEventListener('keydown', function(e) {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    const form = textarea.closest('form');
-                    if (form) {
-                        const submitButton = form.querySelector('button[type="submit"]');
-                        if (submitButton) {
-                            submitButton.click();
-                        }
-                    }
-                }
-            });
-        }
-    });
-    </script>
-    """,
-    unsafe_allow_html=True
-)
+        
+        # 페이지 새로고침으로 메시지 표시
+        st.rerun()
