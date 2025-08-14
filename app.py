@@ -1,4 +1,4 @@
-# app.py (clean, stable)
+# app.py (stable full version)
 
 import os
 import time
@@ -11,9 +11,7 @@ import requests
 import streamlit as st
 from openai import AzureOpenAI
 
-# =============================
-# 페이지 & 환경
-# =============================
+# ============== Page & Env ==============
 st.set_page_config(page_title="법제처 AI 챗봇", page_icon="⚖️", layout="wide")
 
 AZURE_OPENAI_API_BASE = os.getenv("AZURE_OPENAI_API_BASE", "")
@@ -24,9 +22,7 @@ AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-06-01")
 FIREBASE_CREDENTIALS = os.getenv("FIREBASE_CREDENTIALS", "")
 FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "")
 
-# =============================
-# Firebase (옵션)
-# =============================
+# ============== Firebase (optional) ==============
 try:
     import firebase_admin
     from firebase_admin import credentials, firestore
@@ -79,45 +75,32 @@ def save_message(thread_id: str, msg: Dict[str, Any]):
     except Exception:
         pass
 
-# =============================
-# 스타일 (안정화된 최소 커스터마이즈)
-# =============================
+# ============== Style ==============
 st.markdown(
     """
 <style>
-/* 전체 글꼴 */
 * {font-family: -apple-system, system-ui, Segoe UI, Roboto, 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif}
-
-/* 헤더 */
 .chat-header {
   text-align:center; padding:2rem 0; margin-bottom:1.25rem;
   color:white; border-radius:14px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
-
-/* 사이드바 히스토리 */
 .chat-history-item {
   background:#2b2d31; color:#e6e6e6;
   padding:.7rem; margin:.4rem 0; border-radius:10px;
   border-left:3px solid #667eea; font-size:.9rem;
 }
 .chat-history-item:hover { background:#3a3c42 }
-
-/* 입력창 높이 확대 */
 div[data-testid="stChatInput"] textarea {
   min-height:110px; font-size:18px; line-height:1.5;
 }
-
-/* 카드 가장자리 여백 */
 .block-container { padding-bottom: 6rem; }
 </style>
 """,
     unsafe_allow_html=True,
 )
 
-# =============================
-# 헤더
-# =============================
+# ============== Header ==============
 st.markdown(
     """
 <div class="chat-header">
@@ -128,29 +111,28 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# =============================
-# 세션 상태
-# =============================
+# ============== Session ==============
 if "messages" not in st.session_state:
     st.session_state.messages: List[Dict[str, Any]] = []
 if "thread_id" not in st.session_state:
-    # 쿼리스트링 t 로 복원 (신/구 API 호환)
+    # querystring t 로 복원 (신/구 API 호환)
+    t = ""
     try:
         t = st.query_params.get("t", "")
     except Exception:
-        t = (st.experimental_get_query_params() or {}).get("t", [""])
+        qp = st.experimental_get_query_params() or {}
+        t = qp.get("t", [""])
         t = t[0] if isinstance(t, list) else t
     st.session_state.thread_id = t or uuid.uuid4().hex[:12]
 
-# 과거 대화 복원
+# 복원
 restored = load_thread(st.session_state.thread_id)
 if restored:
     st.session_state.messages = restored
 
-# =============================
-# 법령 검색 (간단)
-# =============================
+# ============== Utilities ==============
 def law_search(keyword: str):
+    """법제처 간단 검색 → 리스트[str]"""
     try:
         url = "http://www.law.go.kr/DRF/lawSearch.do"
         params = {"OC": os.getenv("MOLEG_OC", ""), "target": "law", "query": keyword, "type": "XML"}
@@ -172,9 +154,6 @@ def law_search(keyword: str):
 def law_context_str(hits: List[str]) -> str:
     return "\n".join(hits) if hits else "관련 검색 결과가 없습니다."
 
-# =============================
-# OpenAI 클라이언트
-# =============================
 def get_client():
     if not AZURE_OPENAI_API_BASE or not AZURE_OPENAI_API_KEY:
         return None
@@ -186,9 +165,7 @@ def get_client():
 
 client = get_client()
 
-# =============================
-# 사이드바
-# =============================
+# ============== Sidebar ==============
 with st.sidebar:
     st.subheader("대화 관리")
     c1, c2 = st.columns(2)
@@ -199,7 +176,7 @@ with st.sidebar:
     if c2.button("요약 저장", use_container_width=True):
         st.success("요약 저장 완료!")
 
-    # ⚠️ Thread ID/URL 표시는 요청에 따라 숨김 (기능은 내부 유지)
+    # Thread ID/URL 표시는 요청에 따라 숨김
 
     st.markdown("---")
     st.markdown("#### 대화 히스토리(최근)")
@@ -208,21 +185,17 @@ with st.sidebar:
         preview = (m.get("content", "") or "").replace("\n", " ")[:42]
         st.markdown(f'<div class="chat-history-item">{role}: {preview}...</div>', unsafe_allow_html=True)
 
-# =============================
-# 메인: 기록된 메시지 렌더
-# =============================
+# ============== Render history ==============
 for m in st.session_state.messages:
     role = m.get("role", "assistant")
     with st.chat_message(role if role in ("user", "assistant") else "assistant"):
         st.markdown(m.get("content", ""))
 
-# =============================
-# 입력 & 응답
-# =============================
+# ============== Input & Response ==============
 user_q = st.chat_input("법령에 대한 질문을 입력하세요... (Enter로 전송)")
+
 if user_q:
     ts = time.time()
-
     # 사용자 메시지
     st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
     save_message(st.session_state.thread_id, {"role": "user", "content": user_q, "ts": ts})
@@ -230,11 +203,15 @@ if user_q:
     with st.chat_message("user"):
         st.markdown(user_q)
 
+    # 컨텍스트/버퍼 **사전 초기화** (재실행 안전)
+    ctx: str = ""
+    assistant_full: str = ""
+
     # 보조 컨텍스트(법령 검색)
     hits = law_search(user_q)
     ctx = law_context_str(hits)
 
-    # 모델 메시지 구성
+    # 모델 히스토리
     history_for_model = [
         {"role": m["role"], "content": m["content"]}
         for m in st.session_state.messages[-12:]
@@ -253,47 +230,22 @@ if user_q:
         }
     )
 
-    # 어시스턴트 메시지(스트리밍)
-    assistant_full = ""
+    # 어시스턴트(스트리밍: placeholder 방식으로 통일)
+    with st.chat_message("assistant"):
+        placeholder = st.empty()
 
-    # --- 어시스턴트 메시지(스트리밍) 교체본 시작 ---
-assistant_full = ""
-
-with st.chat_message("assistant"):
-    if client is None:
-        assistant_full = "Azure OpenAI 설정이 없어서 기본 안내를 제공합니다.\n\n" + ctx
-        st.markdown(assistant_full)
-    else:
-        try:
-            stream = client.chat.completions.create(
-                model=AZURE_OPENAI_DEPLOYMENT,
-                messages=history_for_model,
-                temperature=0.3,
-                top_p=1.0,
-                stream=True,
-            )
-
-            # write_stream이 있는 버전: 제너레이터 + 버퍼 리스트로 누적
-            if hasattr(st, "write_stream"):
-                buf = []
-
-                def gen():
-                    for ch in stream:
-                        piece = ""
-                        try:
-                            piece = ch.choices[0].delta.get("content", "")
-                        except Exception:
-                            pass
-                        if piece:
-                            buf.append(piece)
-                            yield piece
-
-                st.write_stream(gen())
-                assistant_full = "".join(buf)
-
-            else:
-                # Fallback: placeholder 갱신
-                placeholder = st.empty()
+        if client is None:
+            assistant_full = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + ctx
+            placeholder.markdown(assistant_full)
+        else:
+            try:
+                stream = client.chat.completions.create(
+                    model=AZURE_OPENAI_DEPLOYMENT,
+                    messages=history_for_model,
+                    temperature=0.3,
+                    top_p=1.0,
+                    stream=True,
+                )
                 buf = []
                 for ch in stream:
                     piece = ""
@@ -303,14 +255,14 @@ with st.chat_message("assistant"):
                         pass
                     if piece:
                         buf.append(piece)
-                        placeholder.markdown("".join(buf))
+                        assistant_full = "".join(buf)
+                        placeholder.markdown(assistant_full)
+                # 최종 반영
                 assistant_full = "".join(buf)
+            except Exception as e:
+                assistant_full = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{ctx}"
+                placeholder.markdown(assistant_full)
 
-        except Exception as e:
-            assistant_full = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{ctx}"
-            st.markdown(assistant_full)
-# --- 어시스턴트 메시지(스트리밍) 교체본 끝 ---
-
-    # 대화 저장
+    # 저장
     st.session_state.messages.append({"role": "assistant", "content": assistant_full, "ts": time.time()})
     save_message(st.session_state.thread_id, {"role": "assistant", "content": assistant_full, "ts": time.time()})
