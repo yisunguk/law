@@ -1,5 +1,5 @@
-# app.py — Chat-bubble + Copy, no sidebar, hardcoded options (final)
-import time, json, html, urllib.parse, xml.etree.ElementTree as ET
+# app.py — Chat-bubble + Copy (button below, no overlay), no sidebar, hardcoded options
+import time, json, html, re, urllib.parse, xml.etree.ElementTree as ET
 from datetime import datetime
 
 import requests
@@ -35,9 +35,9 @@ st.markdown("""
     background:var(--bubble-bg,#1f1f1f);
     color:var(--bubble-fg,#f5f5f5);
     border-radius:14px;
-    padding:16px 48px 16px 16px;  /* 오른쪽 복사버튼 공간 */
+    padding:16px;                 /* 버튼은 아래줄에 별도로 배치 */
     font-size:17px!important;
-    line-height:1.5!important;
+    line-height:1.8!important;
     white-space:pre-wrap;
     word-break:break-word;
     box-shadow:0 1px 8px rgba(0,0,0,.12);
@@ -46,16 +46,20 @@ st.markdown("""
     --bubble-bg:#ffffff; --bubble-fg:#222222;
     box-shadow:0 1px 8px rgba(0,0,0,.06);
   }
-  /* 복사 버튼 (상단 오른쪽) */
-  .copy-fab{
-    position:absolute;top:10px;right:10px;
+
+  /* 말풍선 아래 줄의 복사 버튼 줄 */
+  .copy-row{
+    display:flex;justify-content:flex-end;
+    margin:8px 8px 0 0;
+  }
+  .copy-btn{
     display:inline-flex;align-items:center;gap:6px;
     padding:6px 10px;border:1px solid rgba(255,255,255,.15);
     border-radius:10px;background:rgba(0,0,0,.25);
-    backdrop-filter:blur(4px);cursor:pointer;font-size:12px;
+    backdrop-filter:blur(4px);cursor:pointer;font-size:12px;color:inherit;
   }
-  [data-theme="light"] .copy-fab{background:rgba(255,255,255,.9);border-color:#ddd;}
-  .copy-fab svg{pointer-events:none}
+  [data-theme="light"] .copy-btn{background:rgba(255,255,255,.9);border-color:#ddd;}
+  .copy-btn svg{pointer-events:none}
 </style>
 """, unsafe_allow_html=True)
 
@@ -67,16 +71,17 @@ st.markdown(
 )
 
 # =============================
-# 유틸: 말풍선 + 복사 버튼, 텍스트 정규화
+# 유틸: 텍스트 정규화 + 말풍선 렌더(버튼은 아래 줄에 고정 노출)
 # =============================
 def _normalize_text(s: str) -> str:
-    """앞/뒤 공백 줄 제거 + 3줄 이상 연속 빈 줄은 2줄로 축약."""
+    """앞/뒤 공백 줄 제거 + 3줄 이상 연속 빈 줄은 2줄로 축약 + '2.\\n제목'을 '2. 제목'으로 정리."""
     s = s.replace("\r\n", "\n")
     lines = s.split("\n")
     while lines and not lines[0].strip():
         lines.pop(0)
     while lines and not lines[-1].strip():
         lines.pop()
+
     out, blanks = [], 0
     for ln in lines:
         if ln.strip() == "":
@@ -86,35 +91,26 @@ def _normalize_text(s: str) -> str:
         else:
             blanks = 0
             out.append(ln)
-    return "\n".join(out)
+    s = "\n".join(out)
+
+    # 번호 제목이 줄바꿈으로 분리된 패턴을 한 줄로 합치기 (예: "2.\n\n제목" → "2. 제목")
+    s = re.sub(r'(^|\n)\s*(\d+)\.\s*\n+\s*', r'\1\2. ', s)
+    return s
 
 def render_bubble_with_copy(message: str, key: str):
+    """본문은 escape해서 안전하게 렌더, 복사 버튼은 '아래 줄'에 항상 보이게."""
     message = _normalize_text(message)
-    safe_html = html.escape(message)
-    safe_raw_json = json.dumps(message)
+    safe_html = html.escape(message)     # 화면용
+    safe_raw_json = json.dumps(message)  # 클립보드용
 
     # 본문 말풍선
     st.markdown(f'<div class="chat-bubble" id="bubble-{key}">{safe_html}</div>',
                 unsafe_allow_html=True)
 
-    # ✅ 버튼 아이프레임: 높이 36px + 오른쪽 정렬 + z-index 보장
+    # 버튼 한 줄(아이프레임을 쓰되 오버레이/음수 마진 없음 → 안정 노출)
     components.html(f"""
-    <div style="
-        position: relative;
-        height: 36px;                 /* 0 → 36px 로 변경 (보이게) */
-        margin-top: -44px;            /* 말풍선 상단에 겹치게 끌어올림 */
-        display: flex; justify-content: flex-end;
-        pointer-events: none;         /* 배경 클릭 안 잡히게 */
-        z-index: 2147483647;          /* 항상 위로 */
-    ">
-      <button id="copy-{key}" style="
-          pointer-events: all;        /* 버튼만 클릭 가능 */
-          display: inline-flex; align-items: center; gap: 6px;
-          padding: 6px 10px; border: 1px solid rgba(255,255,255,.15);
-          border-radius: 10px; background: rgba(0,0,0,.25);
-          backdrop-filter: blur(4px); cursor: pointer; font-size: 12px;
-          color: inherit;
-      " class="copy-fab-btn">
+    <div class="copy-row">
+      <button id="copy-{key}" class="copy-btn">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
           <path d="M9 9h9v12H9z" stroke="currentColor"/>
           <path d="M6 3h9v3" stroke="currentColor"/>
@@ -139,8 +135,7 @@ def render_bubble_with_copy(message: str, key: str):
         }});
       }})();
     </script>
-    """, height=36)  # ← height=0 → 36 로 변경
-
+    """, height=40)
 
 # =============================
 # Secrets
@@ -286,7 +281,7 @@ def chat_completion(messages, temperature=0.7, max_tokens=1000):
         return ""
 
 # =============================
-# 과거 대화 렌더 (말풍선 + 복사)
+# 과거 대화 렌더 (말풍선 + '아래 줄' 복사 버튼)
 # =============================
 for i, m in enumerate(st.session_state.messages):
     with st.chat_message(m["role"]):
