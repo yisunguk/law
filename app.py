@@ -8,7 +8,6 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 import requests
-import xml.etree.ElementTree as ET
 import streamlit as st
 from openai import AzureOpenAI
 
@@ -32,8 +31,6 @@ def _get_secret(path: list, default=None):
 # 법제처 DRF OC
 LAW_API_KEY = _get_secret(["LAW_API_KEY"], "")
 
-# 공공데이터포털 서비스키 (apis.data.go.kr)
-DATA_PORTAL_SERVICE_KEY = _get_secret(["DATA_PORTAL_SERVICE_KEY"], "")
 # Azure OpenAI
 AZURE_OPENAI_API_KEY   = _get_secret(["azure_openai", "api_key"], "")
 AZURE_OPENAI_API_BASE  = _get_secret(["azure_openai", "endpoint"], "")
@@ -187,141 +184,97 @@ if restored:
 # =========================
 # Utilities
 # =========================
-
-def law_search(keyword: str, rows: int = 5) -> List[str]:
-    """법제처 검색 (XML 우선) — apis.data.go.kr 우선, 미설정 시 DRF(법제처) 폴백.
-    - Data Portal: https://apis.data.go.kr/1170000/law/lawSearchList.do (ServiceKey, XML)
-    - DRF:          http://www.law.go.kr/DRF/lawSearch.do (OC, XML)
-    반환: "- 제목 (시행일자: YYYYMMDD)" 형태 리스트
-    """
-    rows = max(1, min(int(rows or 5), 20))
-
-    def _warn(msg: str, sample: str = ""):
-        from textwrap import shorten
-        if sample:
-            st.warning(f"{msg} : {shorten(sample.strip(), width=180)}")
-        else:
-            st.warning(msg)
-
-    def _is_html(text: str) -> bool:
-        t = (text or "").lstrip().lower()
-        return t.startswith("<!doctype html") or t.startswith("<html") or "<form" in t[:400]
-
-    def _get(el, tag):
-        x = el.find(tag)
-        return x.text.strip() if (x is not None and x.text) else ""
-
-    def _parse_items(xml_text: str) -> List[str]:
-        try:
-            root = ET.fromstring(xml_text)
-        except ET.ParseError as pe:
-            _warn(f"XML 파싱 오류: {pe}")
+def law_search(keyword: str) -> List[str]:
+    """법제처 간단 검색 → 리스트[str]"""
+    if not LAW_API_KEY:
+        return []
+    try:
+        url = "http://www.law.go.kr/DRF/lawSearch.do"
+        params = {"OC": LAW_API_KEY, "target": "law", "query": keyword, "type": "XML"}
+        res = requests.get(url, params=params, headers=DEFAULT_HTTP_HEADERS, timeout=15, allow_redirects=False)  # 타임아웃 증가
+        
+        if res.status_code != 200 or not res.text.strip():
             return []
-
-        # 에러코드 확인
-        code_el = root.find('.//resultCode')
-        if code_el is not None and (code_el.text or '').strip() not in ('', '00'):
-            code = code_el.text.strip()
-            msg_el = root.find('.//resultMsg')
-            msg = (msg_el.text.strip() if msg_el is not None and msg_el.text else "")
-            # 가이드 문서의 에러코드 매핑
-            error_map = {
-                '01': '잘못된 요청 파라미터',
-                '02': '인증키 오류',
-                '03': '필수 파라미터 누락',
-                '09': '일시적 시스템 오류',
-                '99': '정의되지 않은 오류',
-            }
-            detail = error_map.get(code, msg or '오류')
-            _warn(f"API 오류(resultCode={code}): {detail}")
+        
+        # XML 응답 디버깅을 위한 로그
+        response_text = res.text.strip()
+        if not response_text.startswith('<?xml') and not response_text.startswith('<'):
+            st.warning(f"법제처 API가 XML이 아닌 응답을 반환했습니다: {response_text[:100]}...")
             return []
-
-        hits = []
-        # law/admrul/ordin/trty/expc/detc/licbyl/lstrm 등 공통 처리
-        for node in root.findall('.//law') + root.findall('.//admrul') + root.findall('.//Trty') + root.findall('.//Detc') + root.findall('.//licbyl') + root.findall('.//lstrm'):
-            title = (
-                _get(node, '법령명한글')
-                or _get(node, '행정규칙명')
-                or _get(node, '자치법규명')
-                or _get(node, '조약명')
-                or _get(node, '안건명')
-                or _get(node, '사건명')
-                or _get(node, '별표명')
-                or _get(node, '법령용어명')
-            )
-            date = (
-                _get(node, '시행일자')
-                or _get(node, '공포일자')
-                or _get(node, '발령일자')
-                or _get(node, '종국일자')
-            )
-            if title:
-                hits.append(f"- {title} (시행일자: {date})")
-
-        return hits[:rows] if hits else []
-
-    # ===== 1) 공공데이터포털 (권장) =====
-    if DATA_PORTAL_SERVICE_KEY:
+        
         try:
-            url = 'https://apis.data.go.kr/1170000/law/lawSearchList.do'
-            params = {
-                'ServiceKey': DATA_PORTAL_SERVICE_KEY,
-                'target': 'law',
-                'query': keyword if keyword else '*',
-                'numOfRows': rows,
-                'pageNo': 1,
-            }
-            res = requests.get(url, params=params, timeout=15)
-            ctype = (res.headers.get('Content-Type') or '').lower()
-            txt = res.text or ''
+            import xml.etree.ElementTree as ET
 
-            if res.status_code != 200:
-                _warn(f"공공데이터포털 API 오류(code={res.status_code})", txt)
-                # 포털 실패 시 DRF 폴백 시도
-            elif 'xml' in ctype or txt.strip().startswith('<'):
-                if _is_html(txt):
-                    _warn("공공데이터포털이 HTML(사람용 페이지)을 반환했습니다. 인증키/URL/쿼터를 확인하세요.", txt)
-                else:
-                    hits = _parse_items(txt)
-                    if hits:
-                        return hits
-            else:
-                _warn(f"공공데이터포털이 XML이 아닌 응답을 반환했습니다(Content-Type={ctype})", txt)
-        except requests.Timeout:
-            _warn("공공데이터포털 API 응답 시간 초과")
-        except Exception as e:
-            _warn(f"공공데이터포털 API 호출 오류: {e}")
-
-    # ===== 2) DRF 폴백 (법제처 직결) =====
-    if LAW_API_KEY:
-        try:
-            url = 'http://www.law.go.kr/DRF/lawSearch.do'
-            params = {'OC': LAW_API_KEY.strip(), 'target': 'law', 'query': keyword, 'type': 'XML'}
-            res = requests.get(url, params=params, timeout=15)
-            ctype = (res.headers.get('Content-Type') or '').lower()
-            txt = res.text or ''
-
-            if res.status_code != 200:
-                _warn(f"법제처 DRF API 오류(code={res.status_code})", txt)
-            elif 'xml' in ctype or txt.strip().startswith('<'):
-                if _is_html(txt):
-                    _warn("법제처 DRF가 HTML(오류 페이지)을 반환했습니다. OC 키/쿼터/파라미터를 확인하세요.", txt)
-                else:
-                    hits = _parse_items(txt)
-                    if hits:
-                        return hits
-            else:
-                _warn(f"법제처 DRF가 XML이 아닌 응답을 반환했습니다(Content-Type={ctype})", txt)
-
-        except requests.Timeout:
-            _warn("법제처 DRF 응답 시간 초과")
-        except Exception as e:
-            _warn(f"법제처 DRF 호출 오류: {e}")
-
-    return []
+# 외부 API 호출 시 최소한의 헤더(일부 서버는 UA 없는 요청을 차단)
+DEFAULT_HTTP_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    'Accept': '*/*',
+}
+            # XML 파싱 시도
+            root = ET.fromstring(response_text)
+            
+            # 다양한 XML 구조 시도
+            hits = []
+            
+            # 방법 1: 기본 law 태그 검색
+            law_items = root.findall(".//law")
+            if law_items:
+                for item in law_items:
+                    title = item.findtext("법령명한글") or item.findtext("법령명") or ""
+                    date = item.findtext("시행일자") or item.findtext("시행일") or ""
+                    if title:
+                        hits.append(f"- {title} (시행일자: {date})")
+            
+            # 방법 2: 다른 가능한 태그들 검색
+            if not hits:
+                for tag_name in ["법령", "law", "item", "result"]:
+                    items = root.findall(f".//{tag_name}")
+                    if items:
+                        for item in items:
+                            # 모든 하위 태그에서 제목과 날짜 찾기
+                            title = ""
+                            date = ""
+                            for child in item:
+                                if "명" in child.tag or "title" in child.tag.lower():
+                                    title = child.text or ""
+                                elif "일" in child.tag or "date" in child.tag.lower():
+                                    date = child.text or ""
+                            
+                            if title:
+                                hits.append(f"- {title} (시행일자: {date})")
+                        break
+            
+            # 방법 3: 텍스트 기반 검색 (XML 파싱이 실패한 경우)
+            if not hits:
+                # XML 태그를 제거하고 텍스트만 추출
+                import re
+                clean_text = re.sub(r'<[^>]+>', '', response_text)
+                lines = clean_text.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if line and len(line) > 5 and ('법' in line or '규정' in line or '조례' in line):
+                        hits.append(f"- {line}")
+            
+            return hits[:5]
+            
+        except ET.ParseError as xml_error:
+            st.warning(f"XML 파싱 오류: {str(xml_error)}")
+            # XML 파싱 실패 시 텍스트 기반 검색 시도
+            import re
+            clean_text = re.sub(r'<[^>]+>', '', response_text)
+            lines = clean_text.split('\n')
+            hits = []
+            for line in lines:
+                line = line.strip()
+                if line and len(line) > 5 and ('법' in line or '규정' in line or '조례' in line):
+                    hits.append(f"- {line}")
+            return hits[:5]
+            
+    except Exception as e:
+        st.warning(f"법제처 API 검색 중 오류: {str(e)}")
+        return []
 
 def law_context_str(hits: List[str]) -> str:
-    """검색 결과 리스트를 개행 문자열로 변환"""
     return "\n".join(hits) if hits else "관련 검색 결과가 없습니다."
 
 def get_client() -> Optional[AzureOpenAI]:
