@@ -190,7 +190,7 @@ def law_search(keyword: str) -> List[str]:
         return []
 
     try:
-        url = "http://www.law.go.kr/DRF/lawSearch.do"
+        url = "https://apis.data.go.kr/1170000/law"
         # 핵심: type=JSON 로 변경
         params = {"OC": LAW_API_KEY, "target": "law", "query": keyword, "type": "JSON"}
         res = requests.get(url, params=params, timeout=15)
