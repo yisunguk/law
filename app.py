@@ -256,37 +256,28 @@ if user_q:
     # 어시스턴트 메시지(스트리밍)
     assistant_full = ""
 
-    with st.chat_message("assistant"):
-        if client is None:
-            assistant_full = "Azure OpenAI 설정이 없어서 기본 안내를 제공합니다.\n\n" + ctx
-            st.markdown(assistant_full)
-        else:
-            try:
-                stream = client.chat.completions.create(
-                    model=AZURE_OPENAI_DEPLOYMENT,
-                    messages=history_for_model,
-                    temperature=0.3,
-                    top_p=1.0,
-                    stream=True,
-                )
+    # --- 어시스턴트 메시지(스트리밍) 교체본 시작 ---
+assistant_full = ""
 
-                # Streamlit 1.29+ write_stream 사용 가능 시
-                if hasattr(st, "write_stream"):
-                    def gen():
-                        nonlocal assistant_full
-                        for ch in stream:
-                            piece = ""
-                            try:
-                                piece = ch.choices[0].delta.get("content", "")
-                            except Exception:
-                                pass
-                            if piece:
-                                assistant_full += piece
-                                yield piece
-                    st.write_stream(gen())
-                else:
-                    # Fallback: placeholder 업데이트
-                    placeholder = st.empty()
+with st.chat_message("assistant"):
+    if client is None:
+        assistant_full = "Azure OpenAI 설정이 없어서 기본 안내를 제공합니다.\n\n" + ctx
+        st.markdown(assistant_full)
+    else:
+        try:
+            stream = client.chat.completions.create(
+                model=AZURE_OPENAI_DEPLOYMENT,
+                messages=history_for_model,
+                temperature=0.3,
+                top_p=1.0,
+                stream=True,
+            )
+
+            # write_stream이 있는 버전: 제너레이터 + 버퍼 리스트로 누적
+            if hasattr(st, "write_stream"):
+                buf = []
+
+                def gen():
                     for ch in stream:
                         piece = ""
                         try:
@@ -294,11 +285,31 @@ if user_q:
                         except Exception:
                             pass
                         if piece:
-                            assistant_full += piece
-                            placeholder.markdown(assistant_full)
-            except Exception as e:
-                assistant_full = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{ctx}"
-                st.markdown(assistant_full)
+                            buf.append(piece)
+                            yield piece
+
+                st.write_stream(gen())
+                assistant_full = "".join(buf)
+
+            else:
+                # Fallback: placeholder 갱신
+                placeholder = st.empty()
+                buf = []
+                for ch in stream:
+                    piece = ""
+                    try:
+                        piece = ch.choices[0].delta.get("content", "")
+                    except Exception:
+                        pass
+                    if piece:
+                        buf.append(piece)
+                        placeholder.markdown("".join(buf))
+                assistant_full = "".join(buf)
+
+        except Exception as e:
+            assistant_full = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{ctx}"
+            st.markdown(assistant_full)
+# --- 어시스턴트 메시지(스트리밍) 교체본 끝 ---
 
     # 대화 저장
     st.session_state.messages.append({"role": "assistant", "content": assistant_full, "ts": time.time()})
