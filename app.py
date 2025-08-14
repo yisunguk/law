@@ -17,40 +17,44 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# ... (상단 import 및 Streamlit 설정 동일)
 st.markdown("""
 <style>
-  /* 사이드바/토글 숨김 */
   [data-testid="stSidebar"]{display:none!important;}
   [data-testid="collapsedControl"]{display:none!important;}
 
-  .block-container{max-width:900px;margin:0 auto;}
-  .stChatInput{max-width:900px;margin-left:auto;margin-right:auto;}
+  .block-container{max-width:1020px;margin:0 auto;}
+  .stChatInput{max-width:1020px;margin-left:auto;margin-right:auto;}
 
   .header{ text-align:center;padding:1rem;border-radius:12px;
            background:linear-gradient(135deg,#8b5cf6,#a78bfa);color:#fff;margin:0 0 1rem 0 }
 
-  /* ChatGPT 스타일 말풍선 */
   .chat-bubble{
-    position:relative;
     background:var(--bubble-bg,#1f1f1f);
     color:var(--bubble-fg,#f5f5f5);
     border-radius:14px;
-    padding:16px;                 /* 버튼은 아래줄에 별도로 배치 */
-    font-size:17px!important;
-    line-height:1.8!important;
+    padding:14px 16px;
+    font-size:16px!important;
+    line-height:1.6!important;
     white-space:pre-wrap;
     word-break:break-word;
     box-shadow:0 1px 8px rgba(0,0,0,.12);
+  }
+  .chat-bubble p,
+  .chat-bubble li,
+  .chat-bubble blockquote{ margin:0 0 8px 0; }
+  .chat-bubble blockquote{
+    padding-left:12px;
+    border-left:3px solid rgba(255,255,255,.2);
   }
   [data-theme="light"] .chat-bubble{
     --bubble-bg:#ffffff; --bubble-fg:#222222;
     box-shadow:0 1px 8px rgba(0,0,0,.06);
   }
 
-  /* 말풍선 아래 줄의 복사 버튼 줄 */
   .copy-row{
     display:flex;justify-content:flex-end;
-    margin:8px 8px 0 0;
+    margin:6px 4px 0 0;
   }
   .copy-btn{
     display:inline-flex;align-items:center;gap:6px;
@@ -58,10 +62,75 @@ st.markdown("""
     border-radius:10px;background:rgba(0,0,0,.25);
     backdrop-filter:blur(4px);cursor:pointer;font-size:12px;color:inherit;
   }
-  [data-theme="light"] .copy-btn{background:rgba(255,255,255,.9);border-color:#ddd;}
+  [data-theme="light"] .copy-btn{
+    background:rgba(255,255,255,.9);border-color:#ddd;
+  }
   .copy-btn svg{pointer-events:none}
 </style>
 """, unsafe_allow_html=True)
+
+def _normalize_text(s: str) -> str:
+    import re
+    s = s.replace("\r\n", "\n")
+    lines = [ln.rstrip() for ln in s.split("\n")]
+
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    out, prev_blank = [], False
+    for ln in lines:
+        if ln.strip() == "":
+            if not prev_blank:
+                out.append("")
+            prev_blank = True
+        else:
+            prev_blank = False
+            out.append(ln)
+    s = "\n".join(out)
+
+    s = re.sub(r'(^|\n)\s*(\d+)\.\s*\n+\s*', r'\1\2. ', s)
+    s = re.sub(r'(^|\n)\s*([IVXLC]+)\.\s*\n+\s*', r'\1\2. ', s)
+    return s
+
+def render_bubble_with_copy(message: str, key: str):
+    import html, json
+    message = _normalize_text(message)
+    safe_html = html.escape(message)
+    safe_raw_json = json.dumps(message)
+
+    st.markdown(f'<div class="chat-bubble" id="bubble-{key}">{safe_html}</div>', unsafe_allow_html=True)
+
+    components.html(f"""
+    <div class="copy-row">
+      <button id="copy-{key}" class="copy-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <path d="M9 9h9v12H9z" stroke="currentColor"/>
+          <path d="M6 3h9v3" stroke="currentColor"/>
+          <path d="M6 6h3v3" stroke="currentColor"/>
+        </svg>
+        복사
+      </button>
+    </div>
+    <script>
+      (function(){{
+        const btn = document.getElementById("copy-{key}");
+        if (!btn) return;
+        btn.addEventListener("click", async () => {{
+          try {{
+            await navigator.clipboard.writeText({safe_raw_json});
+            const old = btn.innerHTML;
+            btn.innerHTML = "복사됨!";
+            setTimeout(()=>btn.innerHTML = old, 1200);
+          }} catch(e) {{
+            alert("복사 실패: " + e);
+          }}
+        }});
+      }})();
+    </script>
+    """, height=40)
+
 
 st.markdown(
     '<div class="header"><h2>⚖️ 법제처 인공지능 법률 상담 플랫폼</h2>'
