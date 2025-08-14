@@ -33,7 +33,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
 st.markdown(
     '<div class="header"><h2>⚖️ 법제처 인공지능 법률 상담 플랫폼</h2><div>법제처 공식 데이터와 인공지능 기술을 결합한 전문 법률 정보 제공 서비스</div></div>',
     unsafe_allow_html=True,
@@ -69,8 +68,7 @@ def render_ai_with_copy(message: str, key: str = "ai"):
           }}
         </script>
     """
-    # ⚠️ height=0 대신 고정 높이로 레이아웃 안정화
-    components.html(html_string, height=220)
+    components.html(html_string, height=220)  # 안정적 레이아웃
 
 # =============================
 # Secrets 로딩
@@ -111,7 +109,7 @@ if AZURE:
 # 세션 상태
 # =============================
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = []  # [{timestamp, user_question, ai_response, law_data}]
 if "is_processing" not in st.session_state:
     st.session_state.is_processing = False
 
@@ -131,41 +129,35 @@ def search_law_data(query: str, num_rows: int = 5):
         "numOfRows": max(1, int(num_rows)),
         "pageNo": 1,
     }
-
     endpoints = [
         "https://apis.data.go.kr/1170000/law/lawSearchList.do",
         "http://apis.data.go.kr/1170000/law/lawSearchList.do",
     ]
-
     last_err = None
     for url in endpoints:
         try:
             res = requests.get(url, params=params, timeout=15)
             res.raise_for_status()
             root = ET.fromstring(res.text)
-
             laws = []
             for law in root.findall(".//law"):
-                laws.append(
-                    {
-                        "법령명": law.findtext("법령명한글", default=""),
-                        "법령약칭명": law.findtext("법령약칭명", default=""),
-                        "소관부처명": law.findtext("소관부처명", default=""),
-                        "법령구분명": law.findtext("법령구분명", default=""),
-                        "시행일자": law.findtext("시행일자", default=""),
-                        "공포일자": law.findtext("공포일자", default=""),
-                        "법령상세링크": law.findtext("법령상세링크", default=""),
-                    }
-                )
+                laws.append({
+                    "법령명": law.findtext("법령명한글", default=""),
+                    "법령약칭명": law.findtext("법령약칭명", default=""),
+                    "소관부처명": law.findtext("소관부처명", default=""),
+                    "법령구분명": law.findtext("법령구분명", default=""),
+                    "시행일자": law.findtext("시행일자", default=""),
+                    "공포일자": law.findtext("공포일자", default=""),
+                    "법령상세링크": law.findtext("법령상세링크", default=""),
+                })
             return laws, url, None
         except Exception as e:
             last_err = e
             continue
-
     return [], None, f"법제처 API 연결 실패: {last_err}"
 
 # =============================
-# 프롬프트/폴백 유틸
+# 유틸: 프롬프트/폴백/대화 히스토리 구성
 # =============================
 def format_law_context(law_data):
     if not law_data:
@@ -186,6 +178,72 @@ def fallback_answer(user_question, law_data):
         f"**관련 법령(요약):**\n{format_law_context(law_data)}\n\n"
         f"*Azure OpenAI 설정이 없거나 호출 중 오류가 발생해 기본 답변을 제공합니다.*"
     )
+
+def build_chat_messages(user_q: str, law_ctx: str, max_turns: int = 6):
+    """
+    GPT처럼 맥락 유지:
+    - 최근 max_turns(=6) 턴의 사용자/AI 메시지를 가져와 history에 포함
+    - 현재 질문은 law_ctx(요약)와 함께 전달
+    """
+    sys = {"role": "system", "content": "당신은 대한민국의 법령 정보를 전문적으로 안내하는 AI 어시스턴트입니다."}
+    messages = [sys]
+
+    # 최근 대화 N턴만 사용 (토큰/비용 보호)
+    history = st.session_state.messages[-max_turns:]
+    for m in history:
+        if m.get("user_question"):
+            messages.append({"role": "user", "content": m["user_question"]})
+        if m.get("ai_response"):
+            messages.append({"role": "assistant", "content": m["ai_response"]})
+
+    # 현재 질문 + 법령 요약 컨텍스트
+    current = f"""
+사용자 질문: {user_q}
+
+관련 법령 정보(요약):
+{law_ctx}
+
+아래 형식으로 답변하세요.
+### 법률자문서
+
+제목: 납품 지연에 따른 계약 해제 가능 여부에 관한 법률 검토
+수신: ○○ 주식회사 대표이사 귀하
+작성: 법무법인 ○○ / 변호사 홍길동
+작성일: 2025. 8. 14.
+
+Ⅰ. 자문 의뢰의 범위
+본 자문은 귀사가 체결한 납품계약에 관한 채무불이행 사유 발생 시 계약 해제 가능 여부 및 그에 따른 법적 효과를 검토하는 것을 목적으로 합니다.
+
+Ⅱ. 사실관계
+(사실관계 요약은 동일하되, 문장을 완전하게 작성하고 시간 순서 및 법률적 평가 가능하도록 기술)
+
+Ⅲ. 관련 법령 및 판례
+
+1. 민법 제544조(채무불이행에 의한 해제)
+   > 당사자 일방이 채무를 이행하지 아니한 때에는 상대방은 상당한 기간을 정하여 이행을 최고하고, 그 기간 내에 이행이 없는 때에는 계약을 해제할 수 있다.
+2. 대법원 2005다14285 판결
+   > 매매계약에 따른 목적물 인도 또는 납품이 기한 내 이루어지지 않은 경우, 상당한 기간을 정하여 최고하였음에도 불구하고 이행이 없는 때에는 계약 해제가 가능함을 판시.
+
+Ⅳ. 법률적 분석
+
+1. 채무불이행 여부
+   계약상 납품 기일(2025. 7. 15.)을 도과한 이후 30일 이상 지연된 사실은 채무불이행에 해당함.
+   지연 사유인 ‘원자재 수급 불가’가 불가항력에 해당하는지 여부가 쟁점이나, 일반적인 원자재 수급 곤란은 불가항력으로 인정되지 않는 판례 경향 존재.
+
+2. 계약 해제 요건 충족 여부
+   상당한 기간(예: 7일)을 정한 최고 후에도 이행이 없을 경우, 민법 제544조에 따라 계약 해제가 가능함.
+   해제 시 계약금 반환 및 손해배상 청구 가능성이 있음.
+
+3. 손해배상 범위
+   계약 해제와 별도로, 귀사가 입은 손해(대체 구매 비용, 지연으로 인한 생산 차질 등)가 입증되면 채무불이행에 따른 손해배상 청구 가능.
+
+Ⅴ. 결론
+귀사는 서면 최고를 거친 후 계약 해제 권리를 행사할 수 있으며, 계약금 반환과 별도로 손해배상을 청구할 수 있습니다.
+다만, 손해액 산정 및 입증을 위해 납품 지연으로 인한 비용 자료를 사전에 확보하는 것이 필요합니다.
+답변은 한국어로 쉽게 설명하세요.
+"""
+    messages.append({"role": "user", "content": current})
+    return messages
 
 # =============================
 # Azure OpenAI 스트리밍 (안전 처리)
@@ -213,19 +271,28 @@ def stream_chat_completion(messages, temperature=0.7, max_tokens=1000):
             continue
 
 # =============================
-# 사이드바
+# 사이드바 (새로운 대화 버튼 포함)
 # =============================
 with st.sidebar:
     st.markdown("### ⚙️ 옵션")
     num_rows = st.number_input("참고 검색 개수(법제처)", min_value=1, max_value=10, value=2, step=1)
     include_search = st.checkbox("법제처 Open API로 관련 조항 검색해 맥락에 포함", value=True)
     st.divider()
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("🆕 새로운 대화", use_container_width=True):
+            st.session_state.messages.clear()
+            st.success("새로운 대화를 시작합니다.")
+            st.rerun()
+    with col_b:
+        if st.button("🗑️ 기록 초기화", use_container_width=True):
+            st.session_state.messages.clear()
+            st.success("대화 기록이 초기화되었습니다.")
+            st.rerun()
+    st.divider()
     st.metric("총 질문 수", len(st.session_state.messages))
     if st.session_state.messages:
         st.metric("마지막 질문", st.session_state.messages[-1]["timestamp"])
-    if st.button("🗑️ 대화 기록 초기화"):
-        st.session_state.messages.clear()
-        st.rerun()
 
 # =============================
 # 과거 대화 렌더 (복사 버튼 포함)
@@ -266,63 +333,15 @@ if send and user_q.strip():
     ai_placeholder = st.empty()
     full_text, buffer = "", ""
 
-    # 프롬프트
     law_ctx = format_law_context(law_data)
-    prompt = f"""
-당신은 대한민국의 법령 정보를 전문적으로 안내하는 AI 어시스턴트입니다.
-
-사용자 질문: {user_q}
-
-관련 법령 정보(요약):
-{law_ctx}
-
-위의 정보를 바탕으로 아래 형식으로 답변하세요.
-### 법률자문서
-
-제목: 납품 지연에 따른 계약 해제 가능 여부에 관한 법률 검토
-수신: ○○ 주식회사 대표이사 귀하
-작성: 법무법인 ○○ / 변호사 홍길동
-작성일: 2025. 8. 14.
-
-Ⅰ. 자문 의뢰의 범위
-본 자문은 귀사가 체결한 납품계약에 관한 채무불이행 사유 발생 시 계약 해제 가능 여부 및 그에 따른 법적 효과를 검토하는 것을 목적으로 합니다.
-
-Ⅱ. 사실관계
-(사실관계 요약은 동일하되, 문장을 완전하게 작성하고 시간 순서 및 법률적 평가 가능하도록 기술)
-
-Ⅲ. 관련 법령 및 판례
-
-1. 민법 제544조(채무불이행에 의한 해제)
-   > 당사자 일방이 채무를 이행하지 아니한 때에는 상대방은 상당한 기간을 정하여 이행을 최고하고, 그 기간 내에 이행이 없는 때에는 계약을 해제할 수 있다.
-2. 대법원 2005다14285 판결
-   > 매매계약에 따른 목적물 인도 또는 납품이 기한 내 이루어지지 않은 경우, 상당한 기간을 정하여 최고하였음에도 불구하고 이행이 없는 때에는 계약 해제가 가능함을 판시.
-
-Ⅳ. 법률적 분석
-
-1. 채무불이행 여부
-   계약상 납품 기일(2025. 7. 15.)을 도과한 이후 30일 이상 지연된 사실은 채무불이행에 해당함.
-   지연 사유인 ‘원자재 수급 불가’가 불가항력에 해당하는지 여부가 쟁점이나, 일반적인 원자재 수급 곤란은 불가항력으로 인정되지 않는 판례 경향 존재.
-
-2. 계약 해제 요건 충족 여부
-   상당한 기간(예: 7일)을 정한 최고 후에도 이행이 없을 경우, 민법 제544조에 따라 계약 해제가 가능함.
-   해제 시 계약금 반환 및 손해배상 청구 가능성이 있음.
-
-3. 손해배상 범위
-   계약 해제와 별도로, 귀사가 입은 손해(대체 구매 비용, 지연으로 인한 생산 차질 등)가 입증되면 채무불이행에 따른 손해배상 청구 가능.
-
-Ⅴ. 결론
-귀사는 서면 최고를 거친 후 계약 해제 권리를 행사할 수 있으며, 계약금 반환과 별도로 손해배상을 청구할 수 있습니다.
-다만, 손해액 산정 및 입증을 위해 납품 지연으로 인한 비용 자료를 사전에 확보하는 것이 필요합니다.
-
-답변은 한국어로 쉽게 설명하세요.
-"""
+    messages = build_chat_messages(user_q, law_ctx, max_turns=6)  # 🔑 맥락 유지
 
     with st.spinner("🤖 AI가 답변을 생성하는 중..."):
         if client is None:
             full_text = fallback_answer(user_q, law_data)
             render_ai_with_copy(full_text, key=str(int(time.time())))
         else:
-            # 타자 효과 진행
+            # 타자 효과
             ai_placeholder.markdown(
                 """
                 <div class="ai-message">
@@ -333,14 +352,9 @@ if send and user_q.strip():
                 unsafe_allow_html=True,
             )
             try:
-                messages = [
-                    {"role": "system", "content": "당신은 대한민국의 법령 정보를 전문적으로 안내하는 AI 어시스턴트입니다."},
-                    {"role": "user", "content": prompt},
-                ]
                 for piece in stream_chat_completion(messages, temperature=0.7, max_tokens=1000):
                     buffer += piece
-                    # 🔧 너무 잦은 리렌더링 방지: 80자마다 갱신
-                    if len(buffer) >= 80:
+                    if len(buffer) >= 80:  # 깜빡임 완화
                         full_text += buffer
                         buffer = ""
                         ai_placeholder.markdown(
@@ -348,14 +362,13 @@ if send and user_q.strip():
                             unsafe_allow_html=True,
                         )
                         time.sleep(0.02)
-                # 남은 버퍼 반영
                 if buffer:
                     full_text += buffer
                     ai_placeholder.markdown(
                         f'<div class="ai-message"><strong>AI 어시스턴트:</strong><br>{full_text}</div>',
                         unsafe_allow_html=True,
                     )
-                # ✅ 더 이상 placeholder를 비우지 않고, 아래에 복사 카드 "추가" 렌더
+                # 스트리밍 끝난 후, 복사 가능 카드 추가 렌더
                 render_ai_with_copy(full_text, key=str(int(time.time())))
             except Exception:
                 try:
@@ -383,7 +396,7 @@ if send and user_q.strip():
     )
     st.session_state.is_processing = False
     st.success("✅ 답변이 완성되었습니다!")
-    # ❌ st.rerun() 제거 — 답변창이 갑자기 사라지는 현상 방지
+    # 의도적 rerun 없음 (답변창이 닫히는 느낌 방지)
 
 # =============================
 # 푸터
