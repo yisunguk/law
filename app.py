@@ -1,4 +1,4 @@
-# app.py — clean & stable
+# app.py — stable (custom input form)
 
 import os
 import time
@@ -102,13 +102,28 @@ st.markdown(
 }
 .chat-history-item:hover { background:#3a3c42 }
 
-/* 입력창 높이만 확대 (겹침/포인터 조작 없음) */
-div[data-testid="stChatInput"] textarea {
-  min-height:110px; font-size:18px; line-height:1.5;
+/* ===== 커스텀 입력창 ===== */
+#chatbar {
+  position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+  width: 960px; max-width: 95vw;
+  background: #111418; border: 1px solid #32363b; border-radius: 24px;
+  box-shadow: 0 8px 20px rgba(0,0,0,.25);
+  z-index: 9999;
 }
+#chatbar .row { display:flex; gap:12px; align-items:center; padding:12px 14px; }
+#chatbar textarea {
+  width: 100%; background: #2a2d33; color:#e8eaed;
+  border: 1px solid #3a3f45; border-radius: 18px; padding: 12px 14px;
+  min-height: 110px; font-size: 16px; line-height: 1.5; resize: none;
+}
+#chatbar button {
+  min-width: 76px; height: 40px; border-radius: 12px; border: 1px solid #4b5563;
+  background: #3b82f6; color: white; font-weight: 600; cursor: pointer;
+}
+#chatbar button:hover { filter: brightness(1.05); }
 
-/* 본문이 입력창에 가리지 않게 하단 여백만 확보 */
-.block-container { padding-bottom: 6rem; }
+/* 본문이 입력창에 가리지 않게 하단 여백 확보 */
+.block-container { padding-bottom: 180px; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -134,7 +149,6 @@ if "messages" not in st.session_state:
     st.session_state.messages: List[Dict[str, Any]] = []
 
 def _get_thread_id_from_query() -> str:
-    # Streamlit 신/구 API 모두 호환
     try:
         q = st.query_params or {}
         t = q.get("t", "")
@@ -220,37 +234,75 @@ for m in st.session_state.messages:
         st.markdown(m.get("content", ""))
 
 # =========================
-# Input & Response
+# Custom chat bar (form)
 # =========================
-user_q = st.chat_input("법령에 대한 질문을 입력하세요... (Enter로 전송)")
+# 폼을 페이지 맨 아래 고정 바 형태로 렌더
+chatbar = st.empty()
+with chatbar.container():
+    st.markdown(
+        """
+        <div id="chatbar">
+          <div class="row">
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:#f59e0b;color:#111;font-weight:900">⚖️</span>
+            <div style="flex:1">
+        """,
+        unsafe_allow_html=True,
+    )
 
-if user_q:
-    ts = time.time()
+    with st.form("chat_form", clear_on_submit=False):
+        user_text = st.text_area(
+            label="",
+            key="__draft__",
+            placeholder="법령에 대한 질문을 입력하세요...",
+            height=110,
+        )
+        cols = st.columns([1, 6])
+        with cols[0]:
+            submitted = st.form_submit_button("보내기")
+        with cols[1]:
+            st.caption("Enter로 줄바꿈, '보내기' 버튼으로 전송")
 
-    # 사용자 메시지
-    st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
-    save_message(st.session_state.thread_id, {"role": "user", "content": user_q, "ts": ts})
+    st.markdown(
+        """
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    with st.chat_message("user"):
-        st.markdown(user_q)
+# =========================
+# Handle submit
+# =========================
+if submitted:
+    user_q = (user_text or "").strip()
+    if user_q:
+        ts = time.time()
 
-    # 사전 초기화 (재실행 안전)
-    ctx: str = ""
-    assistant_full: str = ""
+        # 사용자 메시지
+        st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
+        save_message(st.session_state.thread_id, {"role": "user", "content": user_q, "ts": ts})
 
-    # 보조 컨텍스트
-    hits = law_search(user_q)
-    ctx = law_context_str(hits)
+        with st.chat_message("user"):
+            st.markdown(user_q)
 
-    # 모델 히스토리
-    history_for_model = [
-        {"role": m["role"], "content": m["content"]}
-        for m in st.session_state.messages[-12:]
-    ]
-    history_for_model.append(
-        {
-            "role": "user",
-            "content": f"""사용자 질문: {user_q}
+        # 사전 초기화
+        ctx: str = ""
+        assistant_full: str = ""
+
+        # 보조 컨텍스트
+        hits = law_search(user_q)
+        ctx = law_context_str(hits)
+
+        # 모델 히스토리
+        history_for_model = [
+            {"role": m["role"], "content": m["content"]}
+            for m in st.session_state.messages[-12:]
+        ]
+        history_for_model.append(
+            {
+                "role": "user",
+                "content": f"""사용자 질문: {user_q}
 
 관련 법령 정보(요약):
 {ctx}
@@ -258,41 +310,45 @@ if user_q:
 요청: 위 법령 검색 결과를 참고해 질문에 답하세요.
 필요하면 관련 조문도 함께 제시하세요.
 한국어로 쉽게 설명하세요.""",
-        }
-    )
+            }
+        )
 
-    # 어시스턴트(스트리밍: placeholder 방식)
-    with st.chat_message("assistant"):
-        placeholder = st.empty()
+        # 어시스턴트(스트리밍: placeholder)
+        with st.chat_message("assistant"):
+            placeholder = st.empty()
 
-        if client is None:
-            assistant_full = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + ctx
-            placeholder.markdown(assistant_full)
-        else:
-            try:
-                stream = client.chat.completions.create(
-                    model=AZURE_OPENAI_DEPLOYMENT,
-                    messages=history_for_model,
-                    temperature=0.3,
-                    top_p=1.0,
-                    stream=True,
-                )
-                buf = []
-                for ch in stream:
-                    piece = ""
-                    try:
-                        piece = ch.choices[0].delta.get("content", "")
-                    except Exception:
-                        pass
-                    if piece:
-                        buf.append(piece)
-                        assistant_full = "".join(buf)
-                        placeholder.markdown(assistant_full)
-                assistant_full = "".join(buf)
-            except Exception as e:
-                assistant_full = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{ctx}"
+            if client is None:
+                assistant_full = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + ctx
                 placeholder.markdown(assistant_full)
+            else:
+                try:
+                    stream = client.chat.completions.create(
+                        model=AZURE_OPENAI_DEPLOYMENT,
+                        messages=history_for_model,
+                        temperature=0.3,
+                        top_p=1.0,
+                        stream=True,
+                    )
+                    buf = []
+                    for ch in stream:
+                        piece = ""
+                        try:
+                            piece = ch.choices[0].delta.get("content", "")
+                        except Exception:
+                            pass
+                        if piece:
+                            buf.append(piece)
+                            assistant_full = "".join(buf)
+                            placeholder.markdown(assistant_full)
+                    assistant_full = "".join(buf)
+                except Exception as e:
+                    assistant_full = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{ctx}"
+                    placeholder.markdown(assistant_full)
 
-    # 저장
-    st.session_state.messages.append({"role": "assistant", "content": assistant_full, "ts": time.time()})
-    save_message(st.session_state.thread_id, {"role": "assistant", "content": assistant_full, "ts": time.time()})
+        # 저장
+        st.session_state.messages.append({"role": "assistant", "content": assistant_full, "ts": time.time()})
+        save_message(st.session_state.thread_id, {"role": "assistant", "content": assistant_full, "ts": time.time()})
+
+        # 입력창 비우기
+        st.session_state["__draft__"] = ""
+        st.rerun()
