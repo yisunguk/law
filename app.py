@@ -2,6 +2,8 @@
 import time
 import json
 import urllib.parse
+import math
+import streamlit.components.v1 as components
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
@@ -47,15 +49,24 @@ st.markdown(
 # =============================
 # 복사 버튼 카드 (ChatGPT 유사)
 # =============================
+def _estimate_height(text: str, min_h=160, max_h=900, per_line=18):
+    # 대략 60자 = 한 줄로 보고 줄 수 추정
+    lines = text.count("\n") + math.ceil(len(text)/60)
+    h = min_h + lines * per_line
+    return max(min_h, min(h, max_h))
+
 def render_ai_with_copy(message: str, key: str):
     safe = json.dumps(message)
+    est_h = _estimate_height(message)  # ← 메시지 길이에 따라 높이 동적 계산
     html = f"""
-    <div class="copy-wrap">
+    <div class="copy-wrap" style="max-height:{est_h}px; overflow:auto;">
       <div class="copy-head">
         <strong>AI 어시스턴트</strong>
         <button id="copy-{key}" class="copy-btn" title="클립보드로 복사">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-            <path d="M9 9h9v12H9z" stroke="#444"/><path d="M6 3h9v3" stroke="#444"/><path d="M6 6h3v3" stroke="#444"/>
+            <path d="M9 9h9v12H9z" stroke="#444"/>
+            <path d="M6 3h9v3" stroke="#444"/>
+            <path d="M6 6h3v3" stroke="#444"/>
           </svg>복사
         </button>
       </div>
@@ -77,7 +88,7 @@ def render_ai_with_copy(message: str, key: str):
       }})();
     </script>
     """
-    components.html(html, height=190)
+    components.html(html, height=est_h + 40)  # 내부 스크롤 영역 포함 여유
 
 # =============================
 # Secrets 로딩
@@ -216,7 +227,7 @@ with st.sidebar:
     st.divider()
     if st.button("🆕 새로운 대화 시작", use_container_width=True):
         st.session_state.messages.clear()
-        st.experimental_rerun()
+        st.rerun()
     st.divider()
     st.metric("총 메시지 수", len(st.session_state.messages))
 
@@ -248,6 +259,20 @@ if user_q:
     st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
     with st.chat_message("user"):
         st.markdown(user_q)
+
+    # 입력창 영역을 답변창과 동일한 폭으로 맞추기
+    with st.container():
+    col1, col2, col3 = st.columns([1, 4, 1])  # 가운데 컬럼이 답변창과 동일 폭
+    with col2:
+        user_input = st.text_area(
+            "법령에 대한 질문을 입력하세요",
+            placeholder="여기에 질문을 입력하세요...",
+            height=100
+        )
+        if st.button("전송", use_container_width=True):
+            if user_input.strip():
+                st.session_state.messages.append({"role": "user", "content": user_input})
+                st.rerun()
 
     # 법제처 검색(옵션)
     law_data, used_endpoint, err = ([], None, None)
