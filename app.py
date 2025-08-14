@@ -12,20 +12,22 @@ import streamlit.components.v1 as components
 from openai import AzureOpenAI
 
 # =============================
-# 기본 설정 & 스타일 (ChatGPT 레이아웃)
+# 기본 설정 & 스타일 (ChatGPT 레이아웃 + 간격 축소)
 # =============================
 st.set_page_config(page_title="법제처 AI 챗봇", page_icon="⚖️", layout="wide")
 
 st.markdown("""
 <style>
   /* 중앙 900px 컨테이너 - 답변/입력 동일 폭 */
-  .block-container {max-width: 900px; margin: 0 auto;}
+  .block-container {max-width: 900px; margin: 0 auto; padding-bottom: .5rem !important;}
   .stChatInput {max-width: 900px; margin-left: auto; margin-right: auto;}
+  /* 입력 위쪽 여백 최소화 */
+  .stChatInput textarea {font-size:15px; margin-top: 0 !important;}
 
   /* 상단 헤더 */
   .header {text-align:center;padding:1.0rem;border-radius:12px;
            background:linear-gradient(135deg,#8b5cf6,#a78bfa);
-           color:#fff;margin:0 0 1rem 0}
+           color:#fff;margin:0 0 .75rem 0}
 
   /* 복사 카드 */
   .copy-wrap {background:#fff;color:#222;padding:12px;border-radius:12px;
@@ -44,21 +46,22 @@ st.markdown("""
 
 st.markdown(
     '<div class="header"><h2>⚖️ 법제처 인공지능 법률 상담 플랫폼</h2>'
-    '<div>법제처 공식 데이터룰 사용해서 정확한 상담이 가능합니다.</div></div>',
+    '<div>법제처 공식 데이터 + Azure OpenAI</div></div>',
     unsafe_allow_html=True,
 )
 
 # =============================
-# 복사 버튼 카드 (동적 높이 + 내부 스크롤)
+# 복사 버튼 카드 (자동 높이 / 스크롤 없음 / 말풍선 아래 추가)
 # =============================
-def _estimate_height(text: str, min_h=160, max_h=900, per_line=18):
-    # 대략 60자를 한 줄로 보아 줄 수 추정
+def _estimate_height(text: str, min_h=220, max_h=2000, per_line=18):
+    # 대략 60자 = 한 줄로 가정하여 줄 수 추정
     lines = text.count("\n") + max(1, math.ceil(len(text) / 60))
     h = min_h + lines * per_line
     return max(min_h, min(h, max_h))
 
 def render_ai_with_copy(message: str, key: str):
     safe = json.dumps(message)  # JS로 전달할 때 안전 처리
+    est_h = _estimate_height(message)
     html = f"""
     <div class="copy-wrap">
       <div class="copy-head">
@@ -89,7 +92,7 @@ def render_ai_with_copy(message: str, key: str):
       }})();
     </script>
     """
-    components.html(html, height=200 + len(message) // 2)  # 내용 길이에 따라 카드 높이 자동 조정
+    components.html(html, height=est_h)
 
 # =============================
 # Secrets 로딩
@@ -253,23 +256,7 @@ for i, m in enumerate(st.session_state.messages):
 # =============================
 # 하단 입력창 (고정, 답변과 동일 폭)
 # =============================
-# ===== 입력창과 답변 사이 간격 줄이기 =====
-st.markdown(
-    """
-    <style>
-    .block-container {
-        padding-bottom: 0.5rem !important;
-    }
-    .stTextInput {
-        margin-top: 0.5rem !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
 user_q = st.chat_input("법령에 대한 질문을 입력하세요… (Enter로 전송)")
-
 
 if user_q:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -300,42 +287,9 @@ if user_q:
 {law_ctx}
 
 아래 형식으로 답변하세요.
-법률자문서
-
-제목: 납품 지연에 따른 계약 해제 가능 여부에 관한 법률 검토
-작성: 법제처 인공지능 법률 상담사
-작성일: 오늘일자
-
-Ⅰ. 자문 의뢰의 범위
-본 자문은 귀사가 체결한 납품계약에 관한 채무불이행 사유 발생 시 계약 해제 가능 여부 및 그에 따른 법적 효과를 검토하는 것을 목적으로 합니다.
-
-Ⅱ. 사실관계
-(사실관계 요약은 동일하되, 문장을 완전하게 작성하고 시간 순서 및 법률적 평가 가능하도록 기술)
-
-Ⅲ. 관련 법령 및 판례
-
-1. 민법 제544조(채무불이행에 의한 해제)
-   > 당사자 일방이 채무를 이행하지 아니한 때에는 상대방은 상당한 기간을 정하여 이행을 최고하고, 그 기간 내에 이행이 없는 때에는 계약을 해제할 수 있다.
-2. 대법원 2005다14285 판결
-   > 매매계약에 따른 목적물 인도 또는 납품이 기한 내 이루어지지 않은 경우, 상당한 기간을 정하여 최고하였음에도 불구하고 이행이 없는 때에는 계약 해제가 가능함을 판시.
-
-Ⅳ. 법률적 분석
-
-1. 채무불이행 여부
-   계약상 납품 기일(2025. 7. 15.)을 도과한 이후 30일 이상 지연된 사실은 채무불이행에 해당함.
-   지연 사유인 ‘원자재 수급 불가’가 불가항력에 해당하는지 여부가 쟁점이나, 일반적인 원자재 수급 곤란은 불가항력으로 인정되지 않는 판례 경향 존재.
-
-2. 계약 해제 요건 충족 여부
-   상당한 기간(예: 7일)을 정한 최고 후에도 이행이 없을 경우, 민법 제544조에 따라 계약 해제가 가능함.
-   해제 시 계약금 반환 및 손해배상 청구 가능성이 있음.
-
-3. 손해배상 범위
-   계약 해제와 별도로, 귀사가 입은 손해(대체 구매 비용, 지연으로 인한 생산 차질 등)가 입증되면 채무불이행에 따른 손해배상 청구 가능.
-
-Ⅴ. 결론
-귀사는 서면 최고를 거친 후 계약 해제 권리를 행사할 수 있으며, 계약금 반환과 별도로 손해배상을 청구할 수 있습니다.
-다만, 손해액 산정 및 입증을 위해 납품 지연으로 인한 비용 자료를 사전에 확보하는 것이 필요합니다.
-
+1) 질문에 대한 직접적인 답변
+2) 관련 법령의 구체적인 내용
+3) 참고/주의사항
 한국어로 쉽게 설명하세요."""
     })
 
