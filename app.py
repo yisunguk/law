@@ -1,9 +1,8 @@
 # app.py
 import time
 import json
-import urllib.parse
 import math
-import streamlit.components.v1 as components
+import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
@@ -13,17 +12,21 @@ import streamlit.components.v1 as components
 from openai import AzureOpenAI
 
 # =============================
-# 기본 설정 & 스타일
+# 기본 설정 & 스타일 (ChatGPT 레이아웃)
 # =============================
 st.set_page_config(page_title="법제처 AI 챗봇", page_icon="⚖️", layout="wide")
 
 st.markdown("""
 <style>
-  /* 전체 폭 제한: ChatGPT처럼 중앙 정렬 */
-  .block-container {max-width: 900px;}
+  /* 중앙 900px 컨테이너 - 답변/입력 동일 폭 */
+  .block-container {max-width: 900px; margin: 0 auto;}
+  .stChatInput {max-width: 900px; margin-left: auto; margin-right: auto;}
+
   /* 상단 헤더 */
   .header {text-align:center;padding:1.0rem;border-radius:12px;
-           background:linear-gradient(135deg,#8b5cf6,#a78bfa);color:#fff;margin:0 0 1rem 0}
+           background:linear-gradient(135deg,#8b5cf6,#a78bfa);
+           color:#fff;margin:0 0 1rem 0}
+
   /* 복사 카드 */
   .copy-wrap {background:#fff;color:#222;padding:12px;border-radius:12px;
               box-shadow:0 1px 6px rgba(0,0,0,.06);margin:6px 0}
@@ -31,12 +34,11 @@ st.markdown("""
   .copy-btn  {display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid #ddd;border-radius:8px;
               background:#f8f9fa;cursor:pointer;font-size:12px}
   .copy-body {margin-top:6px;line-height:1.6;white-space:pre-wrap}
+
   /* 타이핑 인디케이터 */
   .typing-indicator {display:inline-block;width:16px;height:16px;border:3px solid #eee;border-top:3px solid #8b5cf6;
                      border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle}
   @keyframes spin {0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
-  /* 채팅 입력창 여백 보정 */
-  .stChatInput textarea {font-size:15px}
 </style>
 """, unsafe_allow_html=True)
 
@@ -47,17 +49,17 @@ st.markdown(
 )
 
 # =============================
-# 복사 버튼 카드 (ChatGPT 유사)
+# 복사 버튼 카드 (동적 높이 + 내부 스크롤)
 # =============================
 def _estimate_height(text: str, min_h=160, max_h=900, per_line=18):
-    # 대략 60자 = 한 줄로 보고 줄 수 추정
-    lines = text.count("\n") + math.ceil(len(text)/60)
+    # 대략 60자를 한 줄로 보아 줄 수 추정
+    lines = text.count("\n") + max(1, math.ceil(len(text) / 60))
     h = min_h + lines * per_line
     return max(min_h, min(h, max_h))
 
 def render_ai_with_copy(message: str, key: str):
-    safe = json.dumps(message)
-    est_h = _estimate_height(message)  # ← 메시지 길이에 따라 높이 동적 계산
+    safe = json.dumps(message)  # JS로 전달할 때 안전 처리
+    est_h = _estimate_height(message)  # 메시지 길이 기반 높이 추정
     html = f"""
     <div class="copy-wrap" style="max-height:{est_h}px; overflow:auto;">
       <div class="copy-head">
@@ -88,7 +90,7 @@ def render_ai_with_copy(message: str, key: str):
       }})();
     </script>
     """
-    components.html(html, height=est_h + 40)  # 내부 스크롤 영역 포함 여유
+    components.html(html, height=est_h + 48)  # 여유치 포함
 
 # =============================
 # Secrets 로딩
@@ -99,7 +101,6 @@ def load_secrets():
         law_key = st.secrets["LAW_API_KEY"]
     except Exception:
         st.error("`LAW_API_KEY`가 없습니다. Streamlit → App settings → Secrets에 추가하세요.")
-
     try:
         azure = st.secrets["azure_openai"]
         _ = azure["api_key"]; _ = azure["endpoint"]; _ = azure["deployment"]; _ = azure["api_version"]
@@ -127,7 +128,7 @@ if AZURE:
 # =============================
 # 세션 상태 (ChatGPT 호환 구조)
 # =============================
-# st.session_state.messages: [{role: "user"|"assistant", "content": str, "law": list|None, "ts": str}]
+# messages: [{role: "user"|"assistant", content: str, law: list|None, ts: str}]
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "settings" not in st.session_state:
@@ -186,8 +187,11 @@ def format_law_context(law_data):
         )
     return "\n\n".join(rows)
 
-def build_messages_for_model(max_turns=10):
-    """최근 N턴 히스토리를 모델에 그대로 전달 (ChatGPT와 동일한 맥락 유지)"""
+# =============================
+# 모델 메시지 구성/스트리밍
+# =============================
+def build_history_messages(max_turns=10):
+    """최근 N턴 히스토리를 모델에 전달 (ChatGPT와 동일 맥락 유지)."""
     sys = {"role": "system", "content": "당신은 대한민국의 법령 정보를 전문적으로 안내하는 AI 어시스턴트입니다."}
     msgs = [sys]
     history = st.session_state.messages[-max_turns*2:]
@@ -205,20 +209,20 @@ def stream_chat_completion(messages, temperature=0.7, max_tokens=1000):
     )
     for chunk in stream:
         try:
-            if not hasattr(chunk, "choices") or not chunk.choices: 
+            if not hasattr(chunk, "choices") or not chunk.choices:
                 continue
             c = chunk.choices[0]
-            if getattr(c, "finish_reason", None): 
+            if getattr(c, "finish_reason", None):
                 break
             d = getattr(c, "delta", None)
-            text = getattr(d, "content", None) if d else None
-            if text:
-                yield text
+            txt = getattr(d, "content", None) if d else None
+            if txt:
+                yield txt
         except Exception:
             continue
 
 # =============================
-# 사이드바 (새 대화 / 옵션)
+# 사이드바 (옵션 & 새로운 대화)
 # =============================
 with st.sidebar:
     st.markdown("### ⚙️ 옵션")
@@ -232,7 +236,7 @@ with st.sidebar:
     st.metric("총 메시지 수", len(st.session_state.messages))
 
 # =============================
-# 과거 대화 렌더링 (st.chat_message)
+# 과거 대화 렌더 (ChatGPT 스타일)
 # =============================
 for i, m in enumerate(st.session_state.messages):
     with st.chat_message(m["role"]):
@@ -248,33 +252,19 @@ for i, m in enumerate(st.session_state.messages):
             st.markdown(m["content"])
 
 # =============================
-# 하단 입력창 (ChatGPT 스타일)
+# 하단 입력창 (고정, 답변과 동일 폭)
 # =============================
 user_q = st.chat_input("법령에 대한 질문을 입력하세요… (Enter로 전송)")
 
 if user_q:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # 사용자 메시지 즉시 표시/저장
+    # 사용자 메시지 즉시 표기/저장
     st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
     with st.chat_message("user"):
         st.markdown(user_q)
 
-    # 입력창 영역을 답변창과 동일한 폭으로 맞추기
-    with st.container():
-    col1, col2, col3 = st.columns([1, 4, 1])  # 가운데 컬럼이 답변창과 동일 폭
-    with col2:
-        user_input = st.text_area(
-            "법령에 대한 질문을 입력하세요",
-            placeholder="여기에 질문을 입력하세요...",
-            height=100
-        )
-        if st.button("전송", use_container_width=True):
-            if user_input.strip():
-                st.session_state.messages.append({"role": "user", "content": user_input})
-                st.rerun()
-
-    # 법제처 검색(옵션)
+    # (옵션) 법제처 검색
     law_data, used_endpoint, err = ([], None, None)
     if st.session_state.settings["include_search"]:
         with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
@@ -285,8 +275,8 @@ if user_q:
             st.warning(err)
     law_ctx = format_law_context(law_data)
 
-    # 모델 히스토리 + 현재 질문 추가
-    model_messages = build_messages_for_model(max_turns=10)
+    # 모델 히스토리 + 현재 질문 프롬프트
+    model_messages = build_history_messages(max_turns=10)
     model_messages.append({
         "role": "user",
         "content": f"""사용자 질문: {user_q}
@@ -295,11 +285,11 @@ if user_q:
 {law_ctx}
 
 아래 형식으로 답변하세요.
-법률자문서
+### 법률자문서(전문형 예시)
 
 제목: 납품 지연에 따른 계약 해제 가능 여부에 관한 법률 검토
 작성: 법제처 인공지능 법률 상담사
-작성일: 오늘 일자
+작성일: 오늘일자
 
 Ⅰ. 자문 의뢰의 범위
 본 자문은 귀사가 체결한 납품계약에 관한 채무불이행 사유 발생 시 계약 해제 가능 여부 및 그에 따른 법적 효과를 검토하는 것을 목적으로 합니다.
@@ -338,6 +328,7 @@ if user_q:
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_text, buffer = "", ""
+
         if client is None:
             full_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
             placeholder.markdown(full_text)
@@ -347,7 +338,7 @@ if user_q:
                 placeholder.markdown('<span class="typing-indicator"></span> 답변 생성 중...', unsafe_allow_html=True)
                 for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1000):
                     buffer += piece
-                    if len(buffer) >= 80:
+                    if len(buffer) >= 80:  # 깜빡임 완화
                         full_text += buffer; buffer = ""
                         placeholder.markdown(full_text)
                         time.sleep(0.02)
@@ -358,11 +349,12 @@ if user_q:
                 full_text = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{law_ctx}"
                 placeholder.markdown(full_text)
 
-        # 스트리밍 종료 후, 복사 카드로 바꿔치기
-        placeholder.empty()
+        # ✅ 말풍선을 지우지 않고, 그 아래에 복사 카드 '추가' 렌더 (사라짐 방지)
         render_ai_with_copy(full_text, key=f"now-{ts}")
 
     # 대화 저장(법령 요약 포함)
     st.session_state.messages.append({
-        "role": "assistant", "content": full_text, "law": law_data if st.session_state.settings["include_search"] else None, "ts": ts
+        "role": "assistant", "content": full_text,
+        "law": law_data if st.session_state.settings["include_search"] else None,
+        "ts": ts
     })
