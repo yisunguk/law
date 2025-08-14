@@ -15,9 +15,9 @@ from openai import AzureOpenAI
 LAW_API_KEY = st.secrets["LAW_API_KEY"]
 
 AZURE_OPENAI_API_KEY = st.secrets["azure_openai"]["api_key"]
-AZURE_OPENAI_ENDPOINT = st.secrets["azure_openai"]["endpoint"]
-AZURE_OPENAI_DEPLOYMENT = st.secrets["azure_openai"]["deployment"]
-AZURE_OPENAI_API_VERSION = st.secrets["azure_openai"]["api_version"]
+AZURE_OPENAI_API_BASE = st.secrets["azure_openai"]["endpoint"]      # ← endpoint를 API_BASE로 사용
+AZURE_OPENAI_DEPLOYMENT = st.secrets["azure_openai"]["deployment"]  # 예: gpt-4o-mini-leesunguk
+AZURE_OPENAI_API_VERSION = st.secrets["azure_openai"]["api_version"]  # 예: 2025-01-01-preview
 
 FIREBASE_CONFIG = {
     "type": st.secrets["firebase"]["type"],
@@ -57,12 +57,10 @@ except Exception:
 def init_firebase():
     if firebase_admin is None:
         return None
-    if not FIREBASE_CREDENTIALS or not FIREBASE_PROJECT_ID:
-        return None
     try:
         if not firebase_admin._apps:
-            cred = credentials.Certificate(json.loads(FIREBASE_CREDENTIALS))
-            firebase_admin.initialize_app(cred, {"projectId": FIREBASE_PROJECT_ID})
+            cred = credentials.Certificate(FIREBASE_CONFIG)  # ← dict 바로 전달
+            firebase_admin.initialize_app(cred, {"projectId": FIREBASE_CONFIG["project_id"]})
         return firestore.client()
     except Exception:
         return None
@@ -192,9 +190,10 @@ if restored:
 # =========================
 def law_search(keyword: str):
     """법제처 간단 검색 → 리스트[str]"""
+    def law_search(keyword: str):
     try:
         url = "http://www.law.go.kr/DRF/lawSearch.do"
-        params = {"OC": os.getenv("MOLEG_OC", ""), "target": "law", "query": keyword, "type": "XML"}
+        params = {"OC": LAW_API_KEY, "target": "law", "query": keyword, "type": "XML"}  # ← 여기
         res = requests.get(url, params=params, timeout=10)
         if res.status_code != 200:
             return []
@@ -217,7 +216,7 @@ def get_client():
     if not AZURE_OPENAI_API_BASE or not AZURE_OPENAI_API_KEY:
         return None
     return AzureOpenAI(
-        azure_endpoint=AZURE_OPENAI_API_BASE,
+        azure_endpoint=AZURE_OPENAI_API_BASE,   # ← endpoint
         api_key=AZURE_OPENAI_API_KEY,
         api_version=AZURE_OPENAI_API_VERSION,
     )
@@ -344,12 +343,13 @@ if submitted:
             else:
                 try:
                     stream = client.chat.completions.create(
-                        model=AZURE_OPENAI_DEPLOYMENT,
-                        messages=history_for_model,
-                        temperature=0.3,
-                        top_p=1.0,
-                        stream=True,
-                    )
+                      model=AZURE_OPENAI_DEPLOYMENT,  # ← 배포 이름
+                      messages=history_for_model,
+                      temperature=0.3,
+                      top_p=1.0,
+                      stream=True,
+)
+
                     buf = []
                     for ch in stream:
                         piece = ""
