@@ -1,4 +1,4 @@
-# app.py — stable (custom input form)
+# app.py — stable (custom input form, no SessionState write-after-submit)
 
 import os
 import time
@@ -236,7 +236,6 @@ for m in st.session_state.messages:
 # =========================
 # Custom chat bar (form)
 # =========================
-# 폼을 페이지 맨 아래 고정 바 형태로 렌더
 chatbar = st.empty()
 with chatbar.container():
     st.markdown(
@@ -249,10 +248,11 @@ with chatbar.container():
         unsafe_allow_html=True,
     )
 
-    with st.form("chat_form", clear_on_submit=False):
+    # ★ clear_on_submit=True 로 변경 → 제출 후 자동 초기화
+    with st.form("chat_form", clear_on_submit=True):
         user_text = st.text_area(
             label="",
-            key="__draft__",
+            key="draft_input",
             placeholder="법령에 대한 질문을 입력하세요...",
             height=110,
         )
@@ -348,7 +348,3 @@ if submitted:
         # 저장
         st.session_state.messages.append({"role": "assistant", "content": assistant_full, "ts": time.time()})
         save_message(st.session_state.thread_id, {"role": "assistant", "content": assistant_full, "ts": time.time()})
-
-        # 입력창 비우기
-        st.session_state["__draft__"] = ""
-        st.rerun()
