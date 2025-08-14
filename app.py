@@ -1,15 +1,23 @@
-# app.py
 import time
 import json
 import math
 import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime
+import uuid
+from typing import List, Dict, Any, Tuple
 
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
 from openai import AzureOpenAI
+
+# Firebase
+try:
+    import firebase_admin
+    from firebase_admin import credentials, firestore
+except Exception:
+    firebase_admin = None
 
 # =============================
 # 기본 설정 & 스타일 (ChatGPT 레이아웃 + 간격 축소)
@@ -46,7 +54,7 @@ st.markdown("""
 
 st.markdown(
     '<div class="header"><h2>⚖️ 법제처 인공지능 법률 상담 플랫폼</h2>'
-    '<div>법제처 공식 데이터 + Azure OpenAI</div></div>',
+    '<div>법제처 공식 데이터 + Azure OpenAI + Firebase 대화 메모리</div></div>',
     unsafe_allow_html=True,
 )
 
@@ -54,42 +62,35 @@ st.markdown(
 # 복사 버튼 카드 (자동 높이 / 스크롤 없음 / 말풍선 아래 추가)
 # =============================
 def _estimate_height(text: str, min_h=220, max_h=2000, per_line=18):
-    # 대략 60자 = 한 줄로 가정하여 줄 수 추정
     lines = text.count("\n") + max(1, math.ceil(len(text) / 60))
     h = min_h + lines * per_line
     return max(min_h, min(h, max_h))
 
 def render_ai_with_copy(message: str, key: str):
-    safe = json.dumps(message)  # JS로 전달할 때 안전 처리
+    safe = json.dumps(message)
     est_h = _estimate_height(message)
     html = f"""
-    <div class="copy-wrap">
-      <div class="copy-head">
+    <div class=\"copy-wrap\">
+      <div class=\"copy-head\">
         <strong>AI 어시스턴트</strong>
-        <button id="copy-{key}" class="copy-btn" title="클립보드로 복사">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-            <path d="M9 9h9v12H9z" stroke="#444"/>
-            <path d="M6 3h9v3" stroke="#444"/>
-            <path d="M6 6h3v3" stroke="#444"/>
-          </svg>복사
-        </button>
+        <button id=\"copy-{key}\" class=\"copy-btn\" title=\"클립보드로 복사\">복사</button>
       </div>
-      <div class="copy-body">{message}</div>
+      <div class=\"copy-body\">{message}</div>
     </div>
     <script>
-      (function(){{
+      (function(){
         const btn = document.getElementById("copy-{key}");
-        if (btn) {{
-          btn.addEventListener("click", async () => {{
-            try {{
+        if (btn) {
+          btn.addEventListener("click", async () => {
+            try {
               await navigator.clipboard.writeText({safe});
               const old = btn.innerHTML;
               btn.innerHTML = "복사됨!";
               setTimeout(()=>btn.innerHTML = old, 1200);
-            }} catch(e) {{ alert("복사 실패: "+e); }}
-          }});
-        }}
-      }})();
+            } catch(e) { alert("복사 실패: "+e); }
+          });
+        }
+      })();
     </script>
     """
     components.html(html, height=est_h)
@@ -98,20 +99,25 @@ def render_ai_with_copy(message: str, key: str):
 # Secrets 로딩
 # =============================
 def load_secrets():
-    law_key = None; azure = None
+    law_key = None; azure = None; fb = None
     try:
         law_key = st.secrets["LAW_API_KEY"]
     except Exception:
-        st.error("`LAW_API_KEY`가 없습니다. Streamlit → App settings → Secrets에 추가하세요.")
+        st.warning("`LAW_API_KEY`가 없습니다. 법제처 검색 기능 없이 동작합니다.")
     try:
         azure = st.secrets["azure_openai"]
         _ = azure["api_key"]; _ = azure["endpoint"]; _ = azure["deployment"]; _ = azure["api_version"]
     except Exception:
         st.error("[azure_openai] 섹션(api_key, endpoint, deployment, api_version) 누락")
         azure = None
-    return law_key, azure
+    try:
+        fb = st.secrets["firebase"]
+    except Exception:
+        st.error("[firebase] 시크릿이 없습니다. Firebase 기반 대화 유지가 비활성화됩니다.")
+        fb = None
+    return law_key, azure, fb
 
-LAW_API_KEY, AZURE = load_secrets()
+LAW_API_KEY, AZURE, FIREBASE_SECRET = load_secrets()
 
 # =============================
 # Azure OpenAI 클라이언트
@@ -128,13 +134,123 @@ if AZURE:
         st.error(f"Azure OpenAI 초기화 실패: {e}")
 
 # =============================
-# 세션 상태 (ChatGPT 호환 구조)
+# Firebase 초기화 & Firestore 핸들러
 # =============================
-# messages: [{role: "user"|"assistant", content: str, law: list|None, ts: str}]
+_db = None
+
+def init_firebase():
+    global _db
+    if _db is not None:
+        return _db
+    if not FIREBASE_SECRET or firebase_admin is None:
+        return None
+    try:
+        if not firebase_admin._apps:
+            cred = credentials.Certificate({
+                "type": FIREBASE_SECRET.get("type"),
+                "project_id": FIREBASE_SECRET.get("project_id"),
+                "private_key_id": FIREBASE_SECRET.get("private_key_id"),
+                # Streamlit secrets는 줄바꿈 포함 문자열을 그대로 주입하므로 replace 필요 없음
+                "private_key": FIREBASE_SECRET.get("private_key"),
+                "client_email": FIREBASE_SECRET.get("client_email"),
+                "client_id": FIREBASE_SECRET.get("client_id"),
+                "auth_uri": FIREBASE_SECRET.get("auth_uri"),
+                "token_uri": FIREBASE_SECRET.get("token_uri"),
+                "auth_provider_x509_cert_url": FIREBASE_SECRET.get("auth_provider_x509_cert_url"),
+                "client_x509_cert_url": FIREBASE_SECRET.get("client_x509_cert_url"),
+                "universe_domain": FIREBASE_SECRET.get("universe_domain"),
+            })
+            firebase_admin.initialize_app(cred)
+        _db = firestore.client()
+        return _db
+    except Exception as e:
+        st.error(f"Firebase 초기화 실패: {e}")
+        return None
+
+DB = init_firebase()
+
+# =============================
+# 세션 상태 (ChatGPT 호환 구조 + thread_id)
+# =============================
+if "thread_id" not in st.session_state:
+    # URL 쿼리로 thread 공유 허용 (?t=...)
+    query_params = st.query_params
+    t_from_url = query_params.get("t") if hasattr(query_params, "get") else None
+    st.session_state.thread_id = t_from_url or uuid.uuid4().hex[:12]
+
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages: List[Dict[str, Any]] = []
 if "settings" not in st.session_state:
     st.session_state.settings = {"num_rows": 5, "include_search": True}
+
+# =============================
+# Firestore I/O
+# =============================
+
+def _threads_col():
+    if DB is None:
+        return None
+    return DB.collection("threads")
+
+
+def load_thread(thread_id: str) -> List[Dict[str, Any]]:
+    if DB is None:
+        return []
+    try:
+        msgs_ref = _threads_col().document(thread_id).collection("messages").order_by("ts")
+        docs = msgs_ref.stream()
+        loaded = [d.to_dict() for d in docs]
+        # 최신 스키마 정규화
+        for m in loaded:
+            if "role" not in m and m.get("type") in ("user", "assistant"):
+                m["role"] = m.pop("type")
+        return loaded
+    except Exception as e:
+        st.warning(f"대화 로드 실패: {e}")
+        return []
+
+
+def save_message(thread_id: str, msg: Dict[str, Any]):
+    if DB is None:
+        return
+    try:
+        _threads_col().document(thread_id).set({
+            "updated_at": firestore.SERVER_TIMESTAMP,
+            "created_at": firestore.SERVER_TIMESTAMP,
+        }, merge=True)
+        _threads_col().document(thread_id).collection("messages").add({
+            **msg,
+            "ts": msg.get("ts") or datetime.utcnow().isoformat(),
+        })
+    except Exception as e:
+        st.warning(f"메시지 저장 실패: {e}")
+
+
+def save_summary(thread_id: str, summary: str):
+    if DB is None:
+        return
+    try:
+        _threads_col().document(thread_id).set({"summary": summary, "summary_updated_at": firestore.SERVER_TIMESTAMP}, merge=True)
+    except Exception:
+        pass
+
+
+def get_summary(thread_id: str) -> str:
+    if DB is None:
+        return ""
+    try:
+        doc = _threads_col().document(thread_id).get()
+        if doc.exists:
+            return (doc.to_dict() or {}).get("summary", "")
+        return ""
+    except Exception:
+        return ""
+
+# 첫 로드 시 Firestore에서 메시지 복원
+if DB and not st.session_state.messages:
+    restored = load_thread(st.session_state.thread_id)
+    if restored:
+        st.session_state.messages = restored
 
 # =============================
 # 법제처 API
@@ -177,6 +293,7 @@ def search_law_data(query: str, num_rows: int = 5):
             continue
     return [], None, f"법제처 API 연결 실패: {last_err}"
 
+
 def format_law_context(law_data):
     if not law_data: return "관련 법령 검색 결과가 없습니다."
     rows = []
@@ -190,16 +307,27 @@ def format_law_context(law_data):
     return "\n\n".join(rows)
 
 # =============================
-# 모델 메시지 구성/스트리밍
+# 모델 메시지 구성/스트리밍 (+ 요약 메모리)
 # =============================
-def build_history_messages(max_turns=10):
-    """최근 N턴 히스토리를 모델에 전달 (ChatGPT와 동일 맥락 유지)."""
+
+def build_history_messages(max_turns=12):
+    """최근 N턴 + Firestore 요약을 함께 모델에 전달 (ChatGPT 유사 맥락 유지)."""
     sys = {"role": "system", "content": "당신은 대한민국의 법령 정보를 전문적으로 안내하는 AI 어시스턴트입니다."}
-    msgs = [sys]
+    msgs: List[Dict[str, str]] = [sys]
+
+    # Firestore에 저장된 장기 요약을 선행 컨텍스트로 사용
+    long_summary = get_summary(st.session_state.thread_id)
+    if long_summary:
+        msgs.append({"role": "system", "content": f"이전 대화의 압축 요약:\n{long_summary}"})
+
+    # 세션 내 최근 발화들
     history = st.session_state.messages[-max_turns*2:]
     for m in history:
-        msgs.append({"role": m["role"], "content": m["content"]})
+        # 모델에 전달할 때는 role/content만
+        if m.get("role") in ("user", "assistant"):
+            msgs.append({"role": m["role"], "content": m["content"]})
     return msgs
+
 
 def stream_chat_completion(messages, temperature=0.7, max_tokens=1000):
     stream = client.chat.completions.create(
@@ -223,6 +351,42 @@ def stream_chat_completion(messages, temperature=0.7, max_tokens=1000):
         except Exception:
             continue
 
+
+def update_long_summary_if_needed():
+    """메시지가 충분히 쌓이면 장기 요약을 생성해 Firestore에 저장.
+    - 12턴마다 이전 대화를 요약해 토큰 절약 + 맥락 지속
+    """
+    if client is None or DB is None:
+        return
+    msgs = st.session_state.messages
+    if len(msgs) < 24:  # user/assistant 합 24개(=12턴) 쌓이면 수행
+        return
+    try:
+        # 최근 8개는 그대로 두고, 그 이전을 요약
+        head = msgs[:-8]
+        text_blob = []
+        for m in head:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            text_blob.append(f"[{role}] {content}")
+        joined = "\n".join(text_blob)[-12000:]  # 안전하게 제한
+
+        prompt = [
+            {"role": "system", "content": "너는 대화 요약가다. 핵심 사실, 결론, 요구사항, 약속/액션아이템을 한국어로 간결히 정리하라."},
+            {"role": "user", "content": f"다음 대화를 10~15문장으로 요약:\n{joined}"},
+        ]
+        res = client.chat.completions.create(
+            model=AZURE["deployment"],
+            messages=prompt,
+            temperature=0.2,
+            max_tokens=512,
+        )
+        summary = res.choices[0].message.content.strip()
+        if summary:
+            save_summary(st.session_state.thread_id, summary)
+    except Exception:
+        pass
+
 # =============================
 # 사이드바 (옵션 & 새로운 대화)
 # =============================
@@ -231,9 +395,19 @@ with st.sidebar:
     st.session_state.settings["num_rows"] = st.slider("참고 검색 개수(법제처)", 1, 10, st.session_state.settings["num_rows"])
     st.session_state.settings["include_search"] = st.checkbox("법제처 검색 맥락 포함", value=st.session_state.settings["include_search"])
     st.divider()
-    if st.button("🆕 새로운 대화 시작", use_container_width=True):
-        st.session_state.messages.clear()
-        st.rerun()
+    col1, col2 = st.columns([1,1])
+    with col1:
+        if st.button("🆕 새로운 대화 시작", use_container_width=True):
+            st.session_state.thread_id = uuid.uuid4().hex[:12]
+            st.session_state.messages.clear()
+            st.rerun()
+    with col2:
+        # 현재 스레드 공유용 링크 노출
+        try:
+            base = st.get_option("browser.serverAddress") or ""
+        except Exception:
+            base = ""
+        st.caption(f"Thread ID: `{st.session_state.thread_id}` — URL에 `?t={st.session_state.thread_id}` 를 붙여 공유 가능")
     st.divider()
     st.metric("총 메시지 수", len(st.session_state.messages))
 
@@ -241,9 +415,9 @@ with st.sidebar:
 # 과거 대화 렌더 (ChatGPT 스타일)
 # =============================
 for i, m in enumerate(st.session_state.messages):
-    with st.chat_message(m["role"]):
-        if m["role"] == "assistant":
-            render_ai_with_copy(m["content"], key=f"past-{i}")
+    with st.chat_message(m.get("role", "user")):
+        if m.get("role") == "assistant":
+            render_ai_with_copy(m.get("content", ""), key=f"past-{i}")
             if m.get("law"):
                 with st.expander("📋 이 턴에서 참고한 법령 요약"):
                     for j, law in enumerate(m["law"], 1):
@@ -251,7 +425,7 @@ for i, m in enumerate(st.session_state.messages):
                         if law.get("법령상세링크"):
                             st.write(f"- 링크: {law['법령상세링크']}")
         else:
-            st.markdown(m["content"])
+            st.markdown(m.get("content", ""))
 
 # =============================
 # 하단 입력창 (고정, 답변과 동일 폭)
@@ -259,10 +433,13 @@ for i, m in enumerate(st.session_state.messages):
 user_q = st.chat_input("법령에 대한 질문을 입력하세요… (Enter로 전송)")
 
 if user_q:
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ts = datetime.utcnow().isoformat()
 
     # 사용자 메시지 즉시 표기/저장
-    st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
+    user_msg = {"role": "user", "content": user_q, "ts": ts}
+    st.session_state.messages.append(user_msg)
+    save_message(st.session_state.thread_id, user_msg)
+
     with st.chat_message("user"):
         st.markdown(user_q)
 
@@ -278,7 +455,7 @@ if user_q:
     law_ctx = format_law_context(law_data)
 
     # 모델 히스토리 + 현재 질문 프롬프트
-    model_messages = build_history_messages(max_turns=10)
+    model_messages = build_history_messages(max_turns=12)
     model_messages.append({
         "role": "user",
         "content": f"""사용자 질문: {user_q}
@@ -303,11 +480,10 @@ if user_q:
             placeholder.markdown(full_text)
         else:
             try:
-                # 타이핑 인디케이터
                 placeholder.markdown('<span class="typing-indicator"></span> 답변 생성 중...', unsafe_allow_html=True)
                 for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1000):
                     buffer += piece
-                    if len(buffer) >= 80:  # 깜빡임 완화
+                    if len(buffer) >= 80:
                         full_text += buffer; buffer = ""
                         placeholder.markdown(full_text)
                         time.sleep(0.02)
@@ -318,12 +494,17 @@ if user_q:
                 full_text = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{law_ctx}"
                 placeholder.markdown(full_text)
 
-        # ✅ 말풍선을 지우지 않고, 그 아래에 복사 카드 '추가' 렌더 (사라짐 방지)
+        # ✅ 말풍선을 지우지 않고, 그 아래에 복사 카드 추가 렌더
         render_ai_with_copy(full_text, key=f"now-{ts}")
 
     # 대화 저장(법령 요약 포함)
-    st.session_state.messages.append({
+    asst_msg = {
         "role": "assistant", "content": full_text,
         "law": law_data if st.session_state.settings["include_search"] else None,
         "ts": ts
-    })
+    }
+    st.session_state.messages.append(asst_msg)
+    save_message(st.session_state.thread_id, asst_msg)
+
+    # 장기 요약 업데이트 (토큰 절약 + 맥락 지속)
+    update_long_summary_if_needed()
