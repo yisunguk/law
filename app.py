@@ -321,8 +321,7 @@ def law_search(keyword: str, rows: int = 5) -> List[str]:
     return []
 
 def law_context_str(hits: List[str]) -> str:
-    return "\n".join(hits) if hits else "관련 검색 결과가 없습니다."
-(hits: List[str]) -> str:
+    """검색 결과 리스트를 개행 문자열로 변환"""
     return "\n".join(hits) if hits else "관련 검색 결과가 없습니다."
 
 def get_client() -> Optional[AzureOpenAI]:
