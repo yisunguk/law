@@ -59,9 +59,8 @@ def _estimate_height(text: str, min_h=160, max_h=900, per_line=18):
 
 def render_ai_with_copy(message: str, key: str):
     safe = json.dumps(message)  # JS로 전달할 때 안전 처리
-    est_h = _estimate_height(message)  # 메시지 길이 기반 높이 추정
     html = f"""
-    <div class="copy-wrap" style="max-height:{est_h}px; overflow:auto;">
+    <div class="copy-wrap">
       <div class="copy-head">
         <strong>AI 어시스턴트</strong>
         <button id="copy-{key}" class="copy-btn" title="클립보드로 복사">
@@ -90,7 +89,7 @@ def render_ai_with_copy(message: str, key: str):
       }})();
     </script>
     """
-    components.html(html, height=est_h + 48)  # 여유치 포함
+    components.html(html, height=200 + len(message) // 2)  # 내용 길이에 따라 카드 높이 자동 조정
 
 # =============================
 # Secrets 로딩
