@@ -73,7 +73,7 @@ st.markdown("""
         border: 1px solid #e9ecef;
     }
     
-    /* 입력창 스타일 */
+    /* 입력창 스타일 - 크기 키움 */
     .stChatInput {
         position: fixed;
         bottom: 0;
@@ -82,10 +82,21 @@ st.markdown("""
         width: 800px;
         max-width: 90vw;
         background: white;
-        padding: 1rem;
+        padding: 1.5rem;
         border-top: 1px solid #e9ecef;
         box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
         z-index: 1000;
+    }
+    
+    /* 입력창 텍스트 영역 크기 키움 */
+    .stChatInput textarea {
+        border-radius: 20px;
+        border: 2px solid #e9ecef;
+        padding: 1rem 1.5rem;
+        font-size: 18px;
+        resize: none;
+        min-height: 60px;
+        line-height: 1.5;
     }
     
     /* 타이핑 인디케이터 */
@@ -150,18 +161,34 @@ st.markdown("""
         background: #5a6268;
     }
     
-    /* 스크롤바 숨기기 */
-    .stChatInput textarea {
-        border-radius: 20px;
-        border: 2px solid #e9ecef;
-        padding: 0.75rem 1rem;
-        font-size: 16px;
-        resize: none;
-    }
-    
     /* 하단 여백 */
     .bottom-spacer {
-        height: 100px;
+        height: 120px;
+    }
+    
+    /* 사이드바 대화 히스토리 */
+    .chat-history-item {
+        background: white;
+        padding: 0.75rem;
+        margin: 0.5rem 0;
+        border-radius: 8px;
+        border-left: 3px solid #667eea;
+        font-size: 0.9rem;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .chat-history-item:hover {
+        background: #f8f9fa;
+        transform: translateX(2px);
+    }
+    
+    .chat-history-item.user {
+        border-left-color: #007bff;
+    }
+    
+    .chat-history-item.assistant {
+        border-left-color: #28a745;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -556,6 +583,22 @@ with st.sidebar:
     st.markdown("### 📋 현재 대화")
     st.caption(f"Thread ID: `{st.session_state.thread_id}`")
     st.caption("URL에 `?t={thread_id}` 를 붙여 공유 가능")
+    
+    # 대화 히스토리 표시
+    if st.session_state.messages:
+        st.markdown("### 💬 대화 히스토리")
+        for i, msg in enumerate(st.session_state.messages[-10:]):  # 최근 10개만 표시
+            role = msg.get("role", "user")
+            content = msg.get("content", "")[:50]  # 50자로 제한
+            if len(msg.get("content", "")) > 50:
+                content += "..."
+            
+            st.markdown(f"""
+            <div class="chat-history-item {role}">
+                <strong>{'사용자' if role == 'user' else 'AI'}</strong><br>
+                {content}
+            </div>
+            """, unsafe_allow_html=True)
     
     st.divider()
     
