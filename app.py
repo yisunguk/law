@@ -273,7 +273,47 @@ def format_law_context(law_data):
 # =============================
 # ❗ No-Auth Public Link Builders (웹페이지용)
 # =============================
-import urllib.parse as _up
+# =============================
+# law.go.kr 한글주소(Hangul Address) 빌더 (무인증)
+# 규칙 요약:
+#  - 기본형: https://www.law.go.kr/<분야>/<이름>
+#  - 법령 정밀 식별: /법령/이름/(공포번호) 또는 (공포번호,공포일자) 또는 (시행일자,공포번호,공포일자)
+#  - 조문/부칙/삼단비교 등: /법령/이름/제X조, /법령/이름/부칙, /법령/이름/삼단비교
+#  - 행정규칙: /행정규칙/이름/(발령번호,발령일자)
+#  - 자치법규: /자치법규/이름/(공포번호,공포일자)
+#  - 조약: /조약/(조약번호,발효일자)  ※ 이름 없이 번호+일자만으로도 가능
+# =============================
+import urllib.parse as _hp
+
+_HBASE = "https://www.law.go.kr"
+
+def _henc(s: str) -> str:
+    return _hp.quote((s or "").strip())
+
+def hangul_by_name(domain: str, name: str) -> str:
+    """기본형: /<분야>/<이름>"""
+    return f"{_HBASE}/{_henc(domain)}/{_henc(name)}"
+
+def hangul_law_with_keys(name: str, keys: list[str]) -> str:
+    """법령 정밀 식별: (공포번호) | (공포번호,공포일자) | (시행일자,공포번호,공포일자)"""
+    body = ",".join(_henc(k) for k in keys if k)
+    return f"{_HBASE}/법령/{_henc(name)}/({body})"
+
+def hangul_law_article(name: str, subpath: str) -> str:
+    """조문/부칙/삼단비교 등: /법령/이름/제X조 | /부칙 | /삼단비교"""
+    return f"{_HBASE}/법령/{_henc(name)}/{_henc(subpath)}"
+
+def hangul_admrul_with_keys(name: str, issue_no: str, issue_date: str) -> str:
+    """행정규칙: /행정규칙/이름/(발령번호,발령일자)"""
+    return f"{_HBASE}/행정규칙/{_henc(name)}/({_henc(issue_no)},{_henc(issue_date)})"
+
+def hangul_ordin_with_keys(name: str, no: str, date: str) -> str:
+    """자치법규: /자치법규/이름/(공포번호,공포일자)"""
+    return f"{_HBASE}/자치법규/{_henc(name)}/({_henc(no)},{_henc(date)})"
+
+def hangul_trty_with_keys(no: str, eff_date: str) -> str:
+    """조약: /조약/(조약번호,발효일자)  ※ 이름 없이도 동작"""
+    return f"{_HBASE}/조약/({_henc(no)},{_henc(eff_date)})"
 
 def law_public_by_name(kor_name: str) -> str:
     return f"https://www.law.go.kr/법령/{_up.quote(kor_name)}"
@@ -302,57 +342,146 @@ def licbyl_file_download(fl_seq: str) -> str:
     # 별표/서식 파일 다운로드(무인증)
     return f"https://www.law.go.kr/LSW/flDownload.do?flSeq={_up.quote(fl_seq)}"
 
+
 # =============================
 # Sidebar: 무인증 링크 생성기
 # =============================
+# =============================
+# Sidebar: 링크 도구
+# =============================
 with st.sidebar:
-    st.header("🔗 무인증 링크 생성기")
-    st.caption("사람용 웹페이지 URL만 생성합니다. (DRF/OC 인증 불필요)")
+    st.header("🔗 링크 도구")
 
-    target = st.selectbox(
-        "대상 선택",
-        ["법령(law)", "행정규칙(admrul)", "자치법규(ordin)", "조약(trty)",
-         "헌재결정례(detc)", "법령해석례(expc: ID 필요)", "법령용어(lstrm: ID 필요)",
-         "별표·서식 파일(licbyl: 파일ID 필요)"]
-    )
+    tab_pub, tab_hangul = st.tabs(["무인증 링크 생성기", "한글주소 빌더"])
 
-    out_url = None
-    if target.startswith("법령("):
-        name = st.text_input("법령명", placeholder="예) 개인정보 보호법")
-        if st.button("링크 생성", use_container_width=True): out_url = law_public_by_name(name)
+    # ————————————————————————————
+    # 탭 1) 무인증 링크 생성기 (이전 기능 그대로)
+    # ————————————————————————————
+    with tab_pub:
+        st.caption("사람용 웹페이지 URL만 생성합니다. (DRF/OC 인증 불필요)")
 
-    elif target.startswith("행정규칙("):
-        name = st.text_input("행정규칙명", placeholder="예) 112종합상황실 운영 및 신고처리 규칙")
-        if st.button("링크 생성", use_container_width=True): out_url = admrul_public_by_name(name)
+        target = st.selectbox(
+            "대상 선택",
+            ["법령(law)", "행정규칙(admrul)", "자치법규(ordin)", "조약(trty)",
+             "헌재결정례(detc)", "법령해석례(expc: ID 필요)", "법령용어(lstrm: ID 필요)",
+             "별표·서식 파일(licbyl: 파일ID 필요)"]
+        )
 
-    elif target.startswith("자치법규("):
-        name = st.text_input("자치법규명", placeholder="예) 서울특별시 경관 조례")
-        if st.button("링크 생성", use_container_width=True): out_url = ordin_public_by_name(name)
+        out_url = None
+        if target.startswith("법령("):
+            name = st.text_input("법령명", placeholder="예) 개인정보 보호법")
+            if st.button("링크 생성", use_container_width=True): out_url = law_public_by_name(name)
 
-    elif target.startswith("조약("):
-        name = st.text_input("조약명", placeholder="예) 대한민국과 ○○국 간의 사회보장협정")
-        if st.button("링크 생성", use_container_width=True): out_url = trty_public_by_name(name)
+        elif target.startswith("행정규칙("):
+            name = st.text_input("행정규칙명", placeholder="예) 112종합상황실 운영 및 신고처리 규칙")
+            if st.button("링크 생성", use_container_width=True): out_url = admrul_public_by_name(name)
 
-    elif target.startswith("헌재결정례("):
-        name_or_no = st.text_input("사건명 또는 사건번호", placeholder="예) 2022헌마1312")
-        if st.button("링크 생성", use_container_width=True): out_url = detc_public_by_name_or_no(name_or_no)
+        elif target.startswith("자치법규("):
+            name = st.text_input("자치법규명", placeholder="예) 서울특별시 경관 조례")
+            if st.button("링크 생성", use_container_width=True): out_url = ordin_public_by_name(name)
 
-    elif target.startswith("법령해석례("):
-        expc_id = st.text_input("해석례 ID(expcSeq)", placeholder="예) 313107")
-        if st.button("링크 생성", use_container_width=True): out_url = expc_public_by_id(expc_id)
+        elif target.startswith("조약("):
+            name = st.text_input("조약명", placeholder="예) 대한민국과 ○○국 간의 사회보장협정")
+            if st.button("링크 생성", use_container_width=True): out_url = trty_public_by_name(name)
 
-    elif target.startswith("법령용어("):
-        trm = st.text_input("용어 ID(trmSeqs)", placeholder="예) 3945293")
-        if st.button("링크 생성", use_container_width=True): out_url = lstrm_public_by_id(trm)
+        elif target.startswith("헌재결정례("):
+            name_or_no = st.text_input("사건명 또는 사건번호", placeholder="예) 2022헌마1312")
+            if st.button("링크 생성", use_container_width=True): out_url = detc_public_by_name_or_no(name_or_no)
 
-    elif target.startswith("별표·서식"):
-        fl = st.text_input("파일 시퀀스(flSeq)", placeholder="예) 110728887 (PDF/파일)")
-        if st.button("링크 생성", use_container_width=True): out_url = licbyl_file_download(fl)
+        elif target.startswith("법령해석례("):
+            expc_id = st.text_input("해석례 ID(expcSeq)", placeholder="예) 313107")
+            if st.button("링크 생성", use_container_width=True): out_url = expc_public_by_id(expc_id)
 
-    if out_url:
-        st.success("생성된 링크")
-        st.code(out_url, language="text")
-        st.link_button("새 탭에서 열기", out_url, use_container_width=True)
+        elif target.startswith("법령용어("):
+            trm = st.text_input("용어 ID(trmSeqs)", placeholder="예) 3945293")
+            if st.button("링크 생성", use_container_width=True): out_url = lstrm_public_by_id(trm)
+
+        elif target.startswith("별표·서식"):
+            fl = st.text_input("파일 시퀀스(flSeq)", placeholder="예) 110728887 (PDF/파일)")
+            if st.button("링크 생성", use_container_width=True): out_url = licbyl_file_download(fl)
+
+        if out_url:
+            st.success("생성된 링크")
+            st.code(out_url, language="text")
+            st.link_button("새 탭에서 열기", out_url, use_container_width=True)
+
+    # ————————————————————————————
+    # 탭 2) 한글주소 빌더 (새 기능)
+    # ————————————————————————————
+    with tab_hangul:
+        st.caption("한글주소 규칙으로 law.go.kr에 직접 연결합니다. (무인증)")
+
+        h_target = st.selectbox(
+            "대상 선택",
+            ["법령(기본형)", "법령(정밀 식별: 공포/시행/공포일자)", "법령(조문/부칙/삼단비교)",
+             "행정규칙(발령번호,발령일자)", "자치법규(공포번호,공포일자)", "조약(번호,발효일자)",
+             "판례(이름 기반)", "헌재결정례(사건명/번호)"],
+            index=0
+        )
+
+        h_url = None
+
+        if h_target == "법령(기본형)":
+            name = st.text_input("법령명", placeholder="예) 자동차관리법")
+            if st.button("생성", use_container_width=True) and name.strip():
+                h_url = hangul_by_name("법령", name)
+
+        elif h_target == "법령(정밀 식별: 공포/시행/공포일자)":
+            name = st.text_input("법령명", placeholder="예) 자동차관리법")
+            col1, col2, col3 = st.columns(3)
+            with col1: g_no = st.text_input("공포번호", placeholder="예) 08358")
+            with col2: g_dt = st.text_input("공포일자(YYYYMMDD)", placeholder="예) 20050331")
+            with col3: ef  = st.text_input("시행일자(YYYYMMDD, 선택)", placeholder="예) 20060401")
+            st.caption("입력 예: (08358) 또는 (07428,20050331) 또는 (20060401,07428,20050331)")
+            if st.button("생성", use_container_width=True) and name.strip():
+                keys = [k for k in [ef, g_no, g_dt] if k] if ef else [k for k in [g_no, g_dt] if k] if g_dt or g_no else [g_no]
+                h_url = hangul_law_with_keys(name, keys)
+
+        elif h_target == "법령(조문/부칙/삼단비교)":
+            name = st.text_input("법령명", placeholder="예) 자동차관리법")
+            sub  = st.text_input("하위 경로", placeholder="예) 제3조 / 부칙 / 삼단비교")
+            if st.button("생성", use_container_width=True) and name.strip() and sub.strip():
+                h_url = hangul_law_article(name, sub)
+
+        elif h_target == "행정규칙(발령번호,발령일자)":
+            name = st.text_input("행정규칙명", placeholder="예) 수입통관사무처리에관한고시")
+            col1, col2 = st.columns(2)
+            with col1: issue_no = st.text_input("발령번호", placeholder="예) 582")
+            with col2: issue_dt = st.text_input("발령일자(YYYYMMDD)", placeholder="예) 20210122")
+            if st.button("생성", use_container_width=True) and name.strip() and issue_no and issue_dt:
+                h_url = hangul_admrul_with_keys(name, issue_no, issue_dt)
+
+        elif h_target == "자치법규(공포번호,공포일자)":
+            name = st.text_input("자치법규명", placeholder="예) 서울특별시경관조례")
+            col1, col2 = st.columns(2)
+            with col1: no = st.text_input("공포번호", placeholder="예) 2120")
+            with col2: dt = st.text_input("공포일자(YYYYMMDD)", placeholder="예) 20150102")
+            if st.button("생성", use_container_width=True) and name.strip() and no and dt:
+                h_url = hangul_ordin_with_keys(name, no, dt)
+
+        elif h_target == "조약(번호,발효일자)":
+            col1, col2 = st.columns(2)
+            with col1: tno = st.text_input("조약번호", placeholder="예) 2193")
+            with col2: eff = st.text_input("발효일자(YYYYMMDD)", placeholder="예) 20140701")
+            if st.button("생성", use_container_width=True) and tno and eff:
+                h_url = hangul_trty_with_keys(tno, eff)
+
+        elif h_target == "판례(이름 기반)":
+            name = st.text_input("판례명", placeholder="예) 대법원 2009도1234 판결")
+            if st.button("생성", use_container_width=True) and name.strip():
+                h_url = hangul_by_name("판례", name)
+
+        elif h_target == "헌재결정례(사건명/번호)":
+            name_or_no = st.text_input("사건명 또는 사건번호", placeholder="예) 2022헌마1312")
+            if st.button("생성", use_container_width=True) and name_or_no.strip():
+                h_url = hangul_by_name("헌재결정례", name_or_no)
+
+        if h_url:
+            st.success("생성된 한글주소")
+            st.code(h_url, language="text")
+            st.link_button("새 탭에서 열기", h_url, use_container_width=True)
+            st.caption("⚠️ 제목이 정확히 일치하지 않으면 404가 날 수 있습니다. (정확명/식별자 권장)")
+
 
 # =============================
 # Model Helpers
@@ -451,14 +580,14 @@ if user_q:
 “국가법령정보 공유서비스 Open API”를 기반으로 제공합니다.
 
 [제공 범위]
-1. 국가 법령(현행) – 법률, 시행령, 시행규칙 등 (law)
-2. 행정규칙 – 예규, 고시, 훈령·지침 등 (admrul)
-3. 자치법규 – 전국 지자체의 조례·규칙·훈령 (ordin)
-4. 조약 – 양자·다자 조약 (trty)
-5. 법령 해석례 – 법제처 유권해석 사례 (expc)
-6. 헌법재판소 결정례 – 위헌·합헌·각하 등 (detc)
-7. 별표·서식 – 법령에 첨부된 별표, 서식 (licbyl)
-8. 법령 용어 사전 – 법령 용어·정의 (lstrm)
+1. 국가 법령(현행) - 법률, 시행령, 시행규칙 등 (law)
+2. 행정규칙 - 예규, 고시, 훈령·지침 등 (admrul)
+3. 자치법규 - 전국 지자체의 조례·규칙·훈령 (ordin)
+4. 조약 - 양자·다자 조약 (trty)
+5. 법령 해석례 - 법제처 유권해석 사례 (expc)
+6. 헌법재판소 결정례 - 위헌·합헌·각하 등 (detc)
+7. 별표·서식 - 법령에 첨부된 별표, 서식 (licbyl)
+8. 법령 용어 사전 - 법령 용어·정의 (lstrm)
 
 [운영 지침]
 - 질의 의도에 맞는 target을 선택해 조회.
