@@ -1,4 +1,4 @@
-# app.py — Chat-bubble + Copy (button below, no overlay), no sidebar, hardcoded options
+# app.py — Chat-bubble + Copy (button below, no overlay) FINAL
 import time, json, html, re, urllib.parse, xml.etree.ElementTree as ET
 from datetime import datetime
 
@@ -8,7 +8,7 @@ import streamlit.components.v1 as components
 from openai import AzureOpenAI
 
 # =============================
-# 페이지 & 전역 스타일
+# Page & Global Styles
 # =============================
 st.set_page_config(
     page_title="법제처 AI 챗봇",
@@ -17,18 +17,22 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ... (상단 import 및 Streamlit 설정 동일)
 st.markdown("""
 <style>
+  /* 사이드바/토글 숨김 */
   [data-testid="stSidebar"]{display:none!important;}
   [data-testid="collapsedControl"]{display:none!important;}
 
+  /* 폭 살짝 확대 */
   .block-container{max-width:1020px;margin:0 auto;}
   .stChatInput{max-width:1020px;margin-left:auto;margin-right:auto;}
 
-  .header{ text-align:center;padding:1rem;border-radius:12px;
-           background:linear-gradient(135deg,#8b5cf6,#a78bfa);color:#fff;margin:0 0 1rem 0 }
+  .header{
+    text-align:center;padding:1rem;border-radius:12px;
+    background:linear-gradient(135deg,#8b5cf6,#a78bfa);color:#fff;margin:0 0 1rem 0
+  }
 
+  /* 말풍선(가독성 압축) */
   .chat-bubble{
     background:var(--bubble-bg,#1f1f1f);
     color:var(--bubble-fg,#f5f5f5);
@@ -40,97 +44,31 @@ st.markdown("""
     word-break:break-word;
     box-shadow:0 1px 8px rgba(0,0,0,.12);
   }
+  /* 문단/목록/인용 마진 축소 */
   .chat-bubble p,
   .chat-bubble li,
   .chat-bubble blockquote{ margin:0 0 8px 0; }
   .chat-bubble blockquote{
-    padding-left:12px;
-    border-left:3px solid rgba(255,255,255,.2);
+    padding-left:12px;border-left:3px solid rgba(255,255,255,.2);
   }
+
   [data-theme="light"] .chat-bubble{
     --bubble-bg:#ffffff; --bubble-fg:#222222;
     box-shadow:0 1px 8px rgba(0,0,0,.06);
   }
 
-  .copy-row{
-    display:flex;justify-content:flex-end;
-    margin:6px 4px 0 0;
-  }
+  /* 말풍선 아래 줄의 복사 버튼 */
+  .copy-row{ display:flex;justify-content:flex-end;margin:6px 4px 0 0; }
   .copy-btn{
     display:inline-flex;align-items:center;gap:6px;
     padding:6px 10px;border:1px solid rgba(255,255,255,.15);
     border-radius:10px;background:rgba(0,0,0,.25);
     backdrop-filter:blur(4px);cursor:pointer;font-size:12px;color:inherit;
   }
-  [data-theme="light"] .copy-btn{
-    background:rgba(255,255,255,.9);border-color:#ddd;
-  }
+  [data-theme="light"] .copy-btn{background:rgba(255,255,255,.9);border-color:#ddd;}
   .copy-btn svg{pointer-events:none}
 </style>
 """, unsafe_allow_html=True)
-
-def _normalize_text(s: str) -> str:
-    import re
-    s = s.replace("\r\n", "\n")
-    lines = [ln.rstrip() for ln in s.split("\n")]
-
-    while lines and not lines[0].strip():
-        lines.pop(0)
-    while lines and not lines[-1].strip():
-        lines.pop()
-
-    out, prev_blank = [], False
-    for ln in lines:
-        if ln.strip() == "":
-            if not prev_blank:
-                out.append("")
-            prev_blank = True
-        else:
-            prev_blank = False
-            out.append(ln)
-    s = "\n".join(out)
-
-    s = re.sub(r'(^|\n)\s*(\d+)\.\s*\n+\s*', r'\1\2. ', s)
-    s = re.sub(r'(^|\n)\s*([IVXLC]+)\.\s*\n+\s*', r'\1\2. ', s)
-    return s
-
-def render_bubble_with_copy(message: str, key: str):
-    import html, json
-    message = _normalize_text(message)
-    safe_html = html.escape(message)
-    safe_raw_json = json.dumps(message)
-
-    st.markdown(f'<div class="chat-bubble" id="bubble-{key}">{safe_html}</div>', unsafe_allow_html=True)
-
-    components.html(f"""
-    <div class="copy-row">
-      <button id="copy-{key}" class="copy-btn">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-          <path d="M9 9h9v12H9z" stroke="currentColor"/>
-          <path d="M6 3h9v3" stroke="currentColor"/>
-          <path d="M6 6h3v3" stroke="currentColor"/>
-        </svg>
-        복사
-      </button>
-    </div>
-    <script>
-      (function(){{
-        const btn = document.getElementById("copy-{key}");
-        if (!btn) return;
-        btn.addEventListener("click", async () => {{
-          try {{
-            await navigator.clipboard.writeText({safe_raw_json});
-            const old = btn.innerHTML;
-            btn.innerHTML = "복사됨!";
-            setTimeout(()=>btn.innerHTML = old, 1200);
-          }} catch(e) {{
-            alert("복사 실패: " + e);
-          }}
-        }});
-      }})();
-    </script>
-    """, height=40)
-
 
 st.markdown(
     '<div class="header"><h2>⚖️ 법제처 인공지능 법률 상담 플랫폼</h2>'
@@ -140,43 +78,71 @@ st.markdown(
 )
 
 # =============================
-# 유틸: 텍스트 정규화 + 말풍선 렌더(버튼은 아래 줄에 고정 노출)
+# Text Normalization
 # =============================
 def _normalize_text(s: str) -> str:
-    """앞/뒤 공백 줄 제거 + 3줄 이상 연속 빈 줄은 2줄로 축약 + '2.\\n제목'을 '2. 제목'으로 정리."""
-    s = s.replace("\r\n", "\n")
-    lines = s.split("\n")
+    """
+    - 개행 표준화
+    - 앞/뒤 빈 줄 제거
+    - 연속 빈 줄 최대 1개 허용
+    - '번호만 있는 줄'을 다음 줄 제목과 합치기
+      (1. / 1) / I. / iii) 등 폭넓게 처리)
+    """
+    # 개행 표준화
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    # 라인 끝 공백 제거 + 앞/뒤 빈 줄 제거
+    lines = [ln.rstrip() for ln in s.split("\n")]
     while lines and not lines[0].strip():
         lines.pop(0)
     while lines and not lines[-1].strip():
         lines.pop()
 
-    out, blanks = [], 0
-    for ln in lines:
+    # 번호줄 + 제목 병합
+    merged = []
+    i = 0
+    num_pat = re.compile(r'^\s*((\d+)|([IVXLC]+)|([ivxlc]+))\s*[\.\)]\s*$')  # 1. / 1) / III. / iii)
+    while i < len(lines):
+        cur = lines[i]
+        m = num_pat.match(cur)
+        if m:
+            j = i + 1
+            # 번호 뒤의 연속 빈 줄 건너뛰고 실제 텍스트 줄 찾기
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j < len(lines):
+                number = (m.group(2) or m.group(3) or m.group(4)).upper()
+                title = lines[j].lstrip()
+                merged.append(f"{number}. {title}")
+                i = j + 1
+                continue
+        merged.append(cur)
+        i += 1
+
+    # 연속 빈 줄 최대 1개 허용
+    out, prev_blank = [], False
+    for ln in merged:
         if ln.strip() == "":
-            blanks += 1
-            if blanks <= 2:
+            if not prev_blank:
                 out.append("")
+            prev_blank = True
         else:
-            blanks = 0
+            prev_blank = False
             out.append(ln)
-    s = "\n".join(out)
 
-    # 번호 제목이 줄바꿈으로 분리된 패턴을 한 줄로 합치기 (예: "2.\n\n제목" → "2. 제목")
-    s = re.sub(r'(^|\n)\s*(\d+)\.\s*\n+\s*', r'\1\2. ', s)
-    return s
+    return "\n".join(out)
 
+# =============================
+# Bubble Renderer (button below)
+# =============================
 def render_bubble_with_copy(message: str, key: str):
-    """본문은 escape해서 안전하게 렌더, 복사 버튼은 '아래 줄'에 항상 보이게."""
+    """본문은 escape하여 안전하게 렌더, 복사 버튼은 '아래 줄'에 항상 보이게."""
     message = _normalize_text(message)
     safe_html = html.escape(message)     # 화면용
     safe_raw_json = json.dumps(message)  # 클립보드용
 
-    # 본문 말풍선
     st.markdown(f'<div class="chat-bubble" id="bubble-{key}">{safe_html}</div>',
                 unsafe_allow_html=True)
 
-    # 버튼 한 줄(아이프레임을 쓰되 오버레이/음수 마진 없음 → 안정 노출)
     components.html(f"""
     <div class="copy-row">
       <button id="copy-{key}" class="copy-btn">
@@ -240,7 +206,7 @@ if AZURE:
         st.error(f"Azure OpenAI 초기화 실패: {e}")
 
 # =============================
-# 세션 상태 (하드코딩 옵션)
+# Session (Hardcoded Options)
 # =============================
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -251,7 +217,7 @@ st.session_state.settings["include_search"] = True   # 항상 켬
 st.session_state.settings["safe_mode"] = False       # 스트리밍 사용
 
 # =============================
-# 법제처 API
+# MOLEG API (Law Search)
 # =============================
 @st.cache_data(show_spinner=False, ttl=300)
 def search_law_data(query: str, num_rows: int = 5):
@@ -304,7 +270,7 @@ def format_law_context(law_data):
     return "\n\n".join(rows)
 
 # =============================
-# 모델 호출 유틸
+# Model Helpers
 # =============================
 def build_history_messages(max_turns=10):
     sys = {"role": "system", "content": "당신은 대한민국의 법령 정보를 전문적으로 안내하는 AI 어시스턴트입니다."}
@@ -350,7 +316,7 @@ def chat_completion(messages, temperature=0.7, max_tokens=1000):
         return ""
 
 # =============================
-# 과거 대화 렌더 (말풍선 + '아래 줄' 복사 버튼)
+# Render History (bubble + copy)
 # =============================
 for i, m in enumerate(st.session_state.messages):
     with st.chat_message(m["role"]):
@@ -366,26 +332,26 @@ for i, m in enumerate(st.session_state.messages):
             st.markdown(m["content"])
 
 # =============================
-# 입력 & 답변
+# Input & Answer
 # =============================
 user_q = st.chat_input("법령에 대한 질문을 입력하세요… (Enter로 전송)")
 
 if user_q:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # 사용자 메시지 표기/저장
+    # 사용자 메시지
     st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
     with st.chat_message("user"):
         st.markdown(user_q)
 
-    # 법제처 맥락 검색(항상 실행)
+    # 법제처 검색(항상 실행)
     with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
         law_data, used_endpoint, err = search_law_data(user_q, num_rows=st.session_state.settings["num_rows"])
     if used_endpoint: st.caption(f"법제처 API endpoint: `{used_endpoint}`")
     if err: st.warning(err)
     law_ctx = format_law_context(law_data)
 
-    # 모델 프롬프트
+    # 프롬프트
     model_messages = build_history_messages(max_turns=10)
     model_messages.append({
         "role": "user",
@@ -434,7 +400,7 @@ if user_q:
 한국어로 쉽게 설명하세요."""
     })
 
-    # ==== 스트리밍 표시 ====
+    # 스트리밍
     if client is None:
         final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
         with st.chat_message("assistant"):
@@ -450,25 +416,26 @@ if user_q:
                     buffer += piece
                     if len(buffer) >= 200:
                         full_text += buffer; buffer = ""
-                        preview = html.escape(_normalize_text(full_text[-1500:]))  # 최근만
-                        placeholder.markdown(f'<div class="chat-bubble">{preview}</div>', unsafe_allow_html=True)
+                        preview = html.escape(_normalize_text(full_text[-1500:]))
+                        placeholder.markdown(f'<div class="chat-bubble">{preview}</div>',
+                                             unsafe_allow_html=True)
                         time.sleep(0.05)
                 if buffer:
                     full_text += buffer
                     preview = html.escape(_normalize_text(full_text))
-                    placeholder.markdown(f'<div class="chat-bubble">{preview}</div>', unsafe_allow_html=True)
+                    placeholder.markdown(f'<div class="chat-bubble">{preview}</div>',
+                                         unsafe_allow_html=True)
             except Exception as e:
                 full_text = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{law_ctx}"
                 placeholder.markdown(f'<div class="chat-bubble">{html.escape(_normalize_text(full_text))}</div>',
                                      unsafe_allow_html=True)
 
-        # 미리보기 제거 후 최종 말풍선 1번만 출력(중복 방지)
+        # 미리보기 지우고 최종 말풍선 1번만 출력
         placeholder.empty()
         final_text = _normalize_text(full_text)
         render_bubble_with_copy(final_text, key=f"ans-{ts}")
 
-    # 대화 저장
+    # 히스토리에 저장
     st.session_state.messages.append({
-        "role": "assistant", "content": final_text,
-        "law": law_data, "ts": ts
+        "role": "assistant", "content": final_text, "law": law_data, "ts": ts
     })
