@@ -1,4 +1,4 @@
-# app.py — Chat-bubble + Copy (button below, no overlay) FINAL
+# app.py — Chat-bubble + Copy (button below, no overlay) FINAL (No-Auth Sidebar Links)
 import time, json, html, re, urllib.parse, xml.etree.ElementTree as ET
 from datetime import datetime
 
@@ -14,14 +14,15 @@ st.set_page_config(
     page_title="법제처 AI 챗봇",
     page_icon="⚖️",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",  # ← ALWAYS show sidebar (changed)
 )
 
 st.markdown("""
 <style>
-  /* 사이드바/토글 숨김 */
+  /* ❌ 기존: 사이드바/토글 숨김 → 주석 처리
   [data-testid="stSidebar"]{display:none!important;}
   [data-testid="collapsedControl"]{display:none!important;}
+  */
 
   /* 폭 살짝 확대 */
   .block-container{max-width:1020px;margin:0 auto;}
@@ -270,6 +271,90 @@ def format_law_context(law_data):
     return "\n\n".join(rows)
 
 # =============================
+# ❗ No-Auth Public Link Builders (웹페이지용)
+# =============================
+import urllib.parse as _up
+
+def law_public_by_name(kor_name: str) -> str:
+    return f"https://www.law.go.kr/법령/{_up.quote(kor_name)}"
+
+def admrul_public_by_name(kor_name: str) -> str:
+    return f"https://www.law.go.kr/행정규칙/{_up.quote(kor_name)}"
+
+def ordin_public_by_name(kor_name: str) -> str:
+    return f"https://www.law.go.kr/자치법규/{_up.quote(kor_name)}"
+
+def trty_public_by_name(kor_name: str) -> str:
+    return f"https://www.law.go.kr/조약/{_up.quote(kor_name)}"
+
+def detc_public_by_name_or_no(case_text: str) -> str:
+    return f"https://www.law.go.kr/헌재결정례/{_up.quote(case_text)}"
+
+def expc_public_by_id(expc_id: str) -> str:
+    # 법령해석례 일반 페이지(무인증): expcSeq 필요
+    return f"https://www.law.go.kr/LSW/expcInfoP.do?expcSeq={_up.quote(expc_id)}"
+
+def lstrm_public_by_id(trm_seqs: str) -> str:
+    # 법령용어 일반 페이지(무인증)
+    return f"https://www.law.go.kr/LSW/lsTrmInfoR.do?trmSeqs={_up.quote(trm_seqs)}"
+
+def licbyl_file_download(fl_seq: str) -> str:
+    # 별표/서식 파일 다운로드(무인증)
+    return f"https://www.law.go.kr/LSW/flDownload.do?flSeq={_up.quote(fl_seq)}"
+
+# =============================
+# Sidebar: 무인증 링크 생성기
+# =============================
+with st.sidebar:
+    st.header("🔗 무인증 링크 생성기")
+    st.caption("사람용 웹페이지 URL만 생성합니다. (DRF/OC 인증 불필요)")
+
+    target = st.selectbox(
+        "대상 선택",
+        ["법령(law)", "행정규칙(admrul)", "자치법규(ordin)", "조약(trty)",
+         "헌재결정례(detc)", "법령해석례(expc: ID 필요)", "법령용어(lstrm: ID 필요)",
+         "별표·서식 파일(licbyl: 파일ID 필요)"]
+    )
+
+    out_url = None
+    if target.startswith("법령("):
+        name = st.text_input("법령명", placeholder="예) 개인정보 보호법")
+        if st.button("링크 생성", use_container_width=True): out_url = law_public_by_name(name)
+
+    elif target.startswith("행정규칙("):
+        name = st.text_input("행정규칙명", placeholder="예) 112종합상황실 운영 및 신고처리 규칙")
+        if st.button("링크 생성", use_container_width=True): out_url = admrul_public_by_name(name)
+
+    elif target.startswith("자치법규("):
+        name = st.text_input("자치법규명", placeholder="예) 서울특별시 경관 조례")
+        if st.button("링크 생성", use_container_width=True): out_url = ordin_public_by_name(name)
+
+    elif target.startswith("조약("):
+        name = st.text_input("조약명", placeholder="예) 대한민국과 ○○국 간의 사회보장협정")
+        if st.button("링크 생성", use_container_width=True): out_url = trty_public_by_name(name)
+
+    elif target.startswith("헌재결정례("):
+        name_or_no = st.text_input("사건명 또는 사건번호", placeholder="예) 2022헌마1312")
+        if st.button("링크 생성", use_container_width=True): out_url = detc_public_by_name_or_no(name_or_no)
+
+    elif target.startswith("법령해석례("):
+        expc_id = st.text_input("해석례 ID(expcSeq)", placeholder="예) 313107")
+        if st.button("링크 생성", use_container_width=True): out_url = expc_public_by_id(expc_id)
+
+    elif target.startswith("법령용어("):
+        trm = st.text_input("용어 ID(trmSeqs)", placeholder="예) 3945293")
+        if st.button("링크 생성", use_container_width=True): out_url = lstrm_public_by_id(trm)
+
+    elif target.startswith("별표·서식"):
+        fl = st.text_input("파일 시퀀스(flSeq)", placeholder="예) 110728887 (PDF/파일)")
+        if st.button("링크 생성", use_container_width=True): out_url = licbyl_file_download(fl)
+
+    if out_url:
+        st.success("생성된 링크")
+        st.code(out_url, language="text")
+        st.link_button("새 탭에서 열기", out_url, use_container_width=True)
+
+# =============================
 # Model Helpers
 # =============================
 def build_history_messages(max_turns=10):
@@ -407,9 +492,8 @@ if user_q:
 4. 개인정보 보호위원회 설치·운영  
 
 **관련 자료**:  
-- [법령 전문 보기](https://www.law.go.kr/법령/개인정보보호법)  
-- [법제처 해석례 검색](https://www.law.go.kr/DRF/lawService.do?target=expc)  
-
+- [법령 전문 보기](https://www.law.go.kr/법령/개인정보보호법)
+  (※ 해석례는 사이드바 ▶ 무인증 링크 생성기에서 ID로 생성하여 안내)
 > **참고**: 본 내용은 법제처 국가법령정보센터 데이터 기준(매일 1회 갱신)이며, 최신 개정 사항은 관보·공포문을 반드시 확인하세요.  
 출처: 법제처 국가법령정보센터
 ---
@@ -426,7 +510,7 @@ if user_q:
             placeholder = st.empty()
             full_text, buffer = "", ""
             try:
-                placeholder.markdown('<div class="chat-bubble"><span class="typing-indicator"></span> 답변 생성 중...</div>',
+                placeholder.markdown('<div class="chat-bubble"><span class="typing-indicator"></span> 답변 생성 중.</div>',
                                      unsafe_allow_html=True)
                 for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1000):
                     buffer += piece
