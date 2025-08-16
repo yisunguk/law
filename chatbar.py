@@ -1,4 +1,4 @@
-# chatbar_clean.py
+# chatbar.py
 # -*- coding: utf-8 -*-
 """
 A cleaner, intuitive chat input with an attach (+) button for Streamlit.
@@ -21,7 +21,7 @@ def _fmt_size(n: int) -> str:
     if n >= KB: return f"{n/KB:.0f} KB"
     return f"{n} B"
 
-def chatbar_clean(
+def chatbar(
     placeholder: str = "메시지를 입력하세요…",
     button_label: str = "보내기",
     accept: Optional[List[str]] = None,
@@ -30,7 +30,7 @@ def chatbar_clean(
     key_prefix: str = "chatbar",
 ):
     """
-    A minimal, clean chat bar with + attach, returns (submitted, text, files).
+    A minimal, chat bar with + attach, returns (submitted, text, files).
     """
     if accept is None:
         accept = ["pdf","docx","txt","png","jpg","jpeg"]
