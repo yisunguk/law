@@ -20,6 +20,14 @@ st.set_page_config(
 )
 
 st.markdown("""
+<div class="header">
+      <h1 style="margin:0;">법제처 AI 챗봇</h1>
+      <p style="margin:.4rem 0 0 0; font-size:0.95rem; opacity:.9;">
+        국가법령정보센터 Open API 기반으로 법령·조문·행정규칙·자치법규·조약/판례 링크와
+        법적 쟁점 요약을 도와드립니다.
+      </p>
+</div>
+            
 <style>
   .block-container{max-width:1020px;margin:0 auto;}
   .stChatInput{max-width:1020px;margin-left:auto;margin-right:auto;}
