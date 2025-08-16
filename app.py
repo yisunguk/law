@@ -39,10 +39,18 @@ st.markdown(f"""
 .stChatInput    {{ max-width:{PAGE_MAX_WIDTH}px; margin-left:auto; margin-right:auto; }}
 section.main    {{ padding-bottom:0; }}
 
+/* Header */
 .header {{
-  text-align:center; padding:1rem; border-radius:12px;
-  background:linear-gradient(135deg,#8b5cf6,#a78bfa); color:#fff; margin:0 0 1rem 0;
+  text-align:center;
+  padding:1rem;
+  border-radius:12px;
+  background: transparent;   /* ← 보라 그라데이션 제거 */
+  color: inherit;             /* ← 테마 기본 텍스트색 사용 */
+  margin:0 0 1rem 0;
+  border: 1px solid rgba(127,127,127,.20); /* 필요 없으면 이 줄 삭제 */
 }}
+[data-theme="dark"] .header {{ border-color: rgba(255,255,255,.12); }}
+
 h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem 0 0.4rem; }}
 
 .stMarkdown > div {{
@@ -74,6 +82,23 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 [data-theme="light"] .pinned-q{{ background: rgba(255,255,255,.85); border-color:#e5e5e5; }}
 .pinned-q .label{{ font-size:12px; opacity:.8; margin-bottom:4px; }}
 .pinned-q .text{{ font-weight:600; line-height:1.4; max-height:7.5rem; overflow:auto; }}
+
+/* Chat message width = container width */
+:root{
+  --msg-max: 100%;          /* 필요하면 900px 등으로 바꿔도 됨 */
+}
+
+/* 기본적으로 Streamlit이 46rem로 제한하는 걸 해제 */
+[data-testid="stChatMessage"]{
+  max-width: var(--msg-max) !important;
+  width: 100% !important;
+}
+
+/* 마크다운 버블도 꽉 차게 */
+[data-testid="stChatMessage"] .stMarkdown,
+[data-testid="stChatMessage"] .stMarkdown > div{
+  width: 100% !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
