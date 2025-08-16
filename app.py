@@ -31,7 +31,7 @@ st.markdown("""
 
   /* 말풍선 느낌을 Markdown 블록에 부여 */
   .stMarkdown > div {
-    background:var(--bubble-bg,#1f1f1f);
+    background:var(--bubble-bg,#1b1b1b);
     color:var(--bubble-fg,#f5f5f5);
     border-radius:14px;
     padding:14px 16px;
@@ -41,7 +41,15 @@ st.markdown("""
     --bubble-bg:#ffffff; --bubble-fg:#222222;
     box-shadow:0 1px 8px rgba(0,0,0,.06);
   }
-  .stMarkdown ul, .stMarkdown ol { margin-left:1.1rem; }
+
+  /* ✅ 헤드라인 크기/간격 축소 */
+  .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 { margin:0.2rem 0 0.6rem 0; line-height:1.25; }
+  .stMarkdown h1 { font-size:1.20rem; }
+  .stMarkdown h2 { font-size:1.10rem; }
+  .stMarkdown h3 { font-size:1.00rem; }
+
+  .stMarkdown ul, .stMarkdown ol { margin:0.2rem 0 0.6rem 1.1rem; }
+  .stMarkdown li { margin:0.15rem 0; }
   .stMarkdown blockquote{
     margin:8px 0; padding-left:12px; border-left:3px solid rgba(255,255,255,.25);
   }
@@ -58,6 +66,7 @@ st.markdown("""
   .copy-btn svg{pointer-events:none}
 </style>
 """, unsafe_allow_html=True)
+
 
 st.markdown(
     '<div class="header"><h2>⚖️ 법제처 인공지능 법률 상담 플랫폼</h2>'
@@ -499,27 +508,52 @@ def choose_output_template(q: str) -> str:
     text = (q or "").lower()
     def has_any(words): return any(w.lower() in text for w in words)
 
-    if has_any(_CRIMINAL_HINTS):
-        # 형사사건
-        return """[출력 서식 강제]
-- 아래 형식을 지키고 각 항목은 1~3문장으로 간결하게 정리하세요. 마크다운 사용.
-## 1) 사건 개요(형사)
-- 죄명/적용 가능 조항, 발생 경위
+    BASE = """
+[출력 서식 강제]
+- 아래 형식을 지키고, 각 항목은 **핵심 3~5 포인트**로 간결하게 작성합니다.
+- **마크다운** 사용(소제목, 목록, 표). 필요 시 **간단 표 2~4열**로 정리.
+- 가능하면 **정확한 조문 번호**를 1~2개 **직접 인용**하세요(요지로 짧게).
+
+## 1) 사건/질문 개요
+- 핵심 상황 요약(사실관계·요청사항 1~3문장)
 
 ## 2) 적용/관련 법령
-- **법령명**(법률/령/규칙) — 소관부처, 공포일/시행일
-- 핵심 조문 인용(필요 부분만)
+- **법령명(법률/령/규칙)** — 소관부처, 공포일/시행일  
+- 관련 **조문 인용**(핵심 문구 1~2줄)
+- 필요한 경우 **행정규칙/자치법규/조약**도 병기
 
-## 3) 쟁점과 해석(피의자/피고인 입장 포함)
-1. 쟁점 1 — 구성요건/고의·과실/인과관계 등 근거
-2. 쟁점 2 — 양형요소, 반의사불벌/친고죄 여부 등
+## 3) 쟁점과 해석
+1. (쟁점) — 해석/판단 요지 + 근거(조문·해석례·결정례)
+2. (쟁점)
+3. (쟁점)
+> 반대해석·예외가 있으면 함께 제시
 
-## 4) 절차·증거·유의사항
-- 고소/고발/진정, 피의자신문, 변호인 조력, 증거수집 팁
+## 4) 제재/처벌·구제수단 요약표
+| 구분 | 법정 기준 | 실무 포인트 |
+|---|---|---|
+| 제재/처벌 | (과태료/벌금/형 등) | (감경/가중, 입증 포인트) |
+| 구제수단 | (이의/심판/소송 등) | (기한, 관할, 준비서류) |
 
 ## 5) 참고 자료
-- [법령 전문 보기](https://www.law.go.kr/법령/정식명칭) 등
+- [법령 전문 보기](https://www.law.go.kr/법령/정식명칭)
+- 관련 **법제처 해석례/헌재 결정례**가 있으면 링크
+
+## 6) 체크리스트
+- [ ] 사실관계 정리: (핵심 쟁점/증거)
+- [ ] 제출/통지 기한 확인
+- [ ] 이해관계자/관할기관 점검
+
 > **유의**: 본 답변은 참고용입니다. 최종 효력은 관보·공포문 및 법제처 고시·공시를 확인하세요.
+"""
+
+    if has_any(_CRIMINAL_HINTS):
+        return BASE.replace("사건/질문", "사건").replace("제재/처벌", "처벌·양형").replace("구제수단", "절차(고소/수사/재판)")
+    if has_any(_CIVIL_HINTS):
+        return BASE.replace("사건/질문", "사건").replace("제재/처벌", "손해배상/지연손해금").replace("구제수단", "소송절차")
+    if has_any(_ADMIN_LABOR):
+        return BASE.replace("사건/질문", "사안").replace("제재/처벌", "제재·행정처분").replace("구제수단", "행정심판/소송·노동위")
+    return BASE  # 일반 질의
+
 """
     if has_any(_CIVIL_HINTS):
         # 민사사건
@@ -597,7 +631,7 @@ def build_history_messages(max_turns=10):
         msgs.append({"role": m["role"], "content": m["content"]})
     return msgs
 
-def stream_chat_completion(messages, temperature=0.7, max_tokens=1200):
+def stream_chat_completion(messages, temperature=0.4, max_tokens=2000):
     stream = client.chat.completions.create(
         model=AZURE["deployment"],
         messages=messages,
@@ -716,7 +750,7 @@ if user_q:
             try:
                 # 스트리밍 중에도 마크다운으로 미리보기
                 placeholder.markdown("_답변 생성 중입니다..._")
-                for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1200):
+                for piece in stream_chat_completion(model_messages, temperature=0.4, max_tokens=2000):
                     buffer += piece
                     if len(buffer) >= 200:
                         full_text += buffer; buffer = ""
