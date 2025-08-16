@@ -776,18 +776,14 @@ if user_q:
         "role": "assistant", "content": final_text, "law": law_data, "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
 
+# 4) ChatBar (맨 아래 고정)
 submitted, typed_text, files = chatbar(
     placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
     accept=["pdf", "docx", "txt"],
     max_files=5,
     max_size_mb=15,
     key_prefix=KEY_PREFIX,
-    max_width_px=PAGE_MAX_WIDTH,   # 상단 컨텐츠 폭과 동일
-    compact=True,                  # 입력바 높이 축소
-    show_upload_label=False,       # 라벨 숨김
-    uploader_style="button",       # ← 컴팩트 첨부 버튼 모드(기본 권장)
 )
-
 
 
 if submitted:
