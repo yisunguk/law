@@ -88,27 +88,31 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
   --msg-max: {PAGE_MAX_WIDTH}px;  /* 입력창과 동일한 최대 폭 */
 }}
 
-[data-testid="stChatMessage"] .stMarkdown {{
-  background: transparent !important;  /* 🔹 배경 제거 */
-  color: inherit !important;           /* 테마 기본 글자색 사용 */
-  border: none !important;             /* 테두리 제거 */
-  box-shadow: none !important;         /* 그림자 제거 */
-  padding: 0 !important;               /* 여백 최소화 */
+/* Chat message wrapper 배경 제거 */
+[data-testid="stChatMessage"] {
+  background: transparent !important;  /* 회색 박스 제거 */
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Chat message 본문 마크다운 배경 제거 */
+[data-testid="stChatMessage"] .stMarkdown {
+  background: transparent !important;
+  color: inherit !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
 
   max-width: {PAGE_MAX_WIDTH}px;
   margin: 0 auto;
   box-sizing: border-box;
-}}
+}
 
-[data-theme="light"] [data-testid="stChatMessage"] .stMarkdown {{
+[data-theme="light"] [data-testid="stChatMessage"] .stMarkdown {
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
 }}
-
-
-
-
 
 </style>
 """, unsafe_allow_html=True)
