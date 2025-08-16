@@ -1,5 +1,4 @@
-# app.py — Final: Markdown Bubble + Copy, Sidebar No-Auth Links, Auto Template (형사/민사/일반)
-# + ChatBar(📎) 첨부 지원 통합본
+# app.py — Top-live streaming + bottom history (역순) 리팩토링
 import time, json, html, re
 from datetime import datetime
 import urllib.parse as up
@@ -33,43 +32,45 @@ h2, h3 {
     font-size: 1.1rem !important;
     font-weight: 600 !important;
     margin-top: 0.8rem;
-    margin-bottom: 0.4rem;            
+    margin-bottom: 0.4rem;
+}
 
-  .block-container{max-width:1020px;margin:0 auto;}
-  .stChatInput{max-width:1020px;margin-left:auto;margin-right:auto;}
+/* 레이아웃 폭 */
+.block-container{max-width:1020px;margin:0 auto;}
+.stChatInput{max-width:1020px;margin-left:auto;margin-right:auto;}
 
-  .header{
-    text-align:center;padding:1rem;border-radius:12px;
-    background:linear-gradient(135deg,#8b5cf6,#a78bfa);color:#fff;margin:0 0 1rem 0
-  }
+.header{
+  text-align:center;padding:1rem;border-radius:12px;
+  background:linear-gradient(135deg,#8b5cf6,#a78bfa);color:#fff;margin:0 0 1rem 0
+}
 
-  /* 말풍선 느낌을 Markdown 블록에 부여 */
-  .stMarkdown > div {
-    background:var(--bubble-bg,#1f1f1f);
-    color:var(--bubble-fg,#f5f5f5);
-    border-radius:14px;
-    padding:14px 16px;
-    box-shadow:0 1px 8px rgba(0,0,0,.12);
-  }
-  [data-theme="light"] .stMarkdown > div {
-    --bubble-bg:#ffffff; --bubble-fg:#222222;
-    box-shadow:0 1px 8px rgba(0,0,0,.06);
-  }
-  .stMarkdown ul, .stMarkdown ol { margin-left:1.1rem; }
-  .stMarkdown blockquote{
-    margin:8px 0; padding-left:12px; border-left:3px solid rgba(255,255,255,.25);
-  }
+/* 말풍선 느낌을 Markdown 블록에 부여 */
+.stMarkdown > div {
+  background:var(--bubble-bg,#1f1f1f);
+  color:var(--bubble-fg,#f5f5f5);
+  border-radius:14px;
+  padding:14px 16px;
+  box-shadow:0 1px 8px rgba(0,0,0,.12);
+}
+[data-theme="light"] .stMarkdown > div {
+  --bubble-bg:#ffffff; --bubble-fg:#222222;
+  box-shadow:0 1px 8px rgba(0,0,0,.06);
+}
+.stMarkdown ul, .stMarkdown ol { margin-left:1.1rem; }
+.stMarkdown blockquote{
+  margin:8px 0; padding-left:12px; border-left:3px solid rgba(255,255,255,.25);
+}
 
-  /* 말풍선 아래 줄의 복사 버튼 */
-  .copy-row{ display:flex;justify-content:flex-end;margin:6px 4px 0 0; }
-  .copy-btn{
-    display:inline-flex;align-items:center;gap:6px;
-    padding:6px 10px;border:1px solid rgba(255,255,255,.15);
-    border-radius:10px;background:rgba(0,0,0,.25);
-    backdrop-filter:blur(4px);cursor:pointer;font-size:12px;color:inherit;
-  }
-  [data-theme="light"] .copy-btn{background:rgba(255,255,255,.9);border-color:#ddd;}
-  .copy-btn svg{pointer-events:none}
+/* 말풍선 아래 줄의 복사 버튼 */
+.copy-row{ display:flex;justify-content:flex-end;margin:6px 4px 0 0; }
+.copy-btn{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:6px 10px;border:1px solid rgba(255,255,255,.15);
+  border-radius:10px;background:rgba(0,0,0,.25);
+  backdrop-filter:blur(4px);cursor:pointer;font-size:12px;color:inherit;
+}
+[data-theme="light"] .copy-btn{background:rgba(255,255,255,.9);border-color:#ddd;}
+.copy-btn svg{pointer-events:none}
 </style>
 """, unsafe_allow_html=True)
 
@@ -95,6 +96,10 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# === [PATCH: 신규] Top live area(현재 턴) & Bottom history(과거 턴) 컨테이너 ===
+live_area = st.container()      # 스트리밍은 항상 여기서! (화면 최상단)
+history_area = st.container()   # 과거 히스토리는 아래에서 역순 렌더
 
 # =============================
 # Text Normalization
@@ -608,7 +613,7 @@ def choose_output_template(q: str) -> str:
 
 ## 4) 참고 자료
 - [법령 전문 보기](https://www.law.go.kr/법령/정식명칭) 등
-> **유의**: 본 답변은 참고용입니다. 최종 효력은 관보·공포문 및 법제처 고시·공시를 확인하세요.
+> **유의**: 본 답변은 참고용입니다. 최종 효력은 관보·공포문 및 법제처 고시·공시 기준.
 """
 
 # =============================
@@ -676,29 +681,29 @@ def chat_completion(messages, temperature=0.7, max_tokens=1200):
         return ""
 
 # =============================
-# Render History (Markdown + Copy)
+# [PATCH] History: 항상 "아래"에서 역순 렌더
 # =============================
-for i, m in reversed(list(enumerate(st.session_state.messages))):
-    with st.chat_message(m["role"]):
-        if m["role"] == "assistant":
-            render_bubble_with_copy(m["content"], key=f"past-{i}")
-            if m.get("law"):
-                with st.expander("📋 이 턴에서 참고한 법령 요약"):
-                    for j, law in enumerate(m["law"], 1):
-                        st.write(f"**{j}. {law['법령명']}** ({law['법령구분명']})  | 시행 {law['시행일자']}  | 공포 {law['공포일자']}")
-                        if law.get("법령상세링크"):
-                            st.write(f"- 링크: {law['법령상세링크']}")
-        else:
-            st.markdown(m["content"])
+with history_area:
+    for i, m in reversed(list(enumerate(st.session_state.messages))):
+        with st.chat_message(m["role"]):
+            if m["role"] == "assistant":
+                render_bubble_with_copy(m["content"], key=f"past-{i}")
+                if m.get("law"):
+                    with st.expander("📋 이 턴에서 참고한 법령 요약"):
+                        for j, law in enumerate(m["law"], 1):
+                            st.write(f"**{j}. {law['법령명']}** ({law['법령구분명']})  | 시행 {law['시행일자']}  | 공포 {law['공포일자']}")
+                            if law.get("법령상세링크"):
+                                st.write(f"- 링크: {law['법령상세링크']}")
+            else:
+                st.markdown(m["content"])
 
 # =============================
-# Input & Answer  (📎 첨부 지원으로 교체)
+# Input & Answer  (📎 첨부 ChatBar)
 # =============================
-# [PATCH] 기존: user_q = st.chat_input("...")  →  첨부 가능 ChatBar로 교체
 submitted, typed_text, files = chatbar(
     placeholder="법령에 대한 질문을 입력하거나, 관련 문서를 첨부해서 문의해 보세요…",
     accept=["pdf", "docx", "txt"],
-        max_files=5, max_size_mb=15, key_prefix="lawchat",
+    max_files=5, max_size_mb=15, key_prefix="lawchat",
 )
 
 # 첨부파일을 텍스트로 추출하여 발췌 생성 (파일당 12,000자 제한)
@@ -719,34 +724,37 @@ if files:
         report_snippets.append(f"# [첨부] {name}\n{sanitize(txt)[:12000]}")
 
 user_q = typed_text if submitted else None
-# ------------------------------------------------
 
+# ------------------------------------------------
 if user_q:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
-    # with st.chat_message("user"):
-    #    st.markdown(user_q)
 
-    # 1) 법제처 검색
-    with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
-        law_data, used_endpoint, err = search_law_data(user_q, num_rows=st.session_state.settings["num_rows"])
-    if used_endpoint: 
-        st.caption(f"법제처 API endpoint: `{used_endpoint}`")
-    if err: 
-        st.warning(err)
-    law_ctx = format_law_context(law_data)
+    # [PATCH] 현재 턴은 Top live 영역에서만 표시 (히스토리에는 아직 저장하지 않음)
+    with live_area:
+        # 사용자 말풍선
+        with st.chat_message("user"):
+            st.markdown(user_q)
 
-    # [PATCH] 첨부 발췌를 컨텍스트에 추가
-    report_ctx = "\n\n[사고보고서 발췌]\n" + "\n\n".join(report_snippets) if report_snippets else ""
+        # 1) 법제처 검색
+        with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
+            law_data, used_endpoint, err = search_law_data(user_q, num_rows=st.session_state.settings["num_rows"])
+        if used_endpoint:
+            st.caption(f"법제처 API endpoint: `{used_endpoint}`")
+        if err:
+            st.warning(err)
+        law_ctx = format_law_context(law_data)
 
-    # 2) 출력 템플릿 자동 선택
-    template_block = choose_output_template(user_q)
+        # [PATCH] 첨부 발췌를 컨텍스트에 추가
+        report_ctx = "\n\n[사고보고서 발췌]\n" + "\n\n".join(report_snippets) if report_snippets else ""
 
-    # 3) 사용자 프롬프트 구성
-    model_messages = build_history_messages(max_turns=10)
-    model_messages.append({
-        "role": "user",
-        "content": f"""사용자 질문: {user_q}
+        # 2) 출력 템플릿 자동 선택
+        template_block = choose_output_template(user_q)
+
+        # 3) 사용자 프롬프트 구성
+        model_messages = build_history_messages(max_turns=10)
+        model_messages.append({
+            "role": "user",
+            "content": f"""사용자 질문: {user_q}
 
 관련 법령 정보(분석):
 {law_ctx}{report_ctx}
@@ -777,39 +785,39 @@ if user_q:
 
 {template_block}
 """
-    })
+        })
 
-    # 4) 응답 생성
-    if client is None:
-        final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx + (("\n\n" + report_ctx) if report_ctx else "")
-        with st.chat_message("assistant"):
-            render_bubble_with_copy(final_text, key=f"ans-{ts}")
-    else:
-        with st.chat_message("assistant"):
-            placeholder = st.empty()
-            full_text, buffer = "", ""
-            try:
-                placeholder.markdown("_답변 생성 중입니다._")
-                for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1200):
-                    buffer += piece
-                    if len(buffer) >= 200:
-                        full_text += buffer; buffer = ""
-                        preview = _normalize_text(full_text[-1500:])
-                        placeholder.markdown(preview); time.sleep(0.03)
-                if buffer:
-                    full_text += buffer
+        # 4) 응답 생성 (스트리밍은 라이브 영역에서만 표시)
+        if client is None:
+            final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx + (("\n\n" + report_ctx) if report_ctx else "")
+            with st.chat_message("assistant"):
+                render_bubble_with_copy(final_text, key=f"ans-{ts}")
+        else:
+            with st.chat_message("assistant"):
+                placeholder = st.empty()
+                full_text, buffer = "", ""
+                try:
+                    placeholder.markdown("_답변 생성 중입니다._")
+                    for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1200):
+                        buffer += piece
+                        if len(buffer) >= 200:
+                            full_text += buffer; buffer = ""
+                            preview = _normalize_text(full_text[-1500:])
+                            placeholder.markdown(preview); time.sleep(0.03)
+                    if buffer:
+                        full_text += buffer
+                        placeholder.markdown(_normalize_text(full_text))
+                except Exception as e:
+                    safe_law_ctx = locals().get("law_ctx", "")
+                    full_text = f"**오류**: {e}" + (f"\n\n{safe_law_ctx}" if safe_law_ctx else "")
                     placeholder.markdown(_normalize_text(full_text))
-            except Exception as e:
-                safe_law_ctx = locals().get("law_ctx", "")
-                full_text = f"**오류**: {e}" + (f"\n\n{safe_law_ctx}" if safe_law_ctx else "")
-                placeholder.markdown(_normalize_text(full_text))
 
-            placeholder.empty()
-            final_text = _normalize_text(full_text)
-            render_bubble_with_copy(final_text, key=f"ans-{ts}")
+                placeholder.empty()
+                final_text = _normalize_text(full_text)
+                render_bubble_with_copy(final_text, key=f"ans-{ts}")
 
-    # 5) 대화 저장
-    st.session_state.messages.append({
-        "role": "assistant", "content": final_text, "law": law_data, "ts": ts
-    })
+    # [PATCH] 스트리밍이 끝난 뒤에만 히스토리에 저장 → rerun (점프 없이 자연스럽게 정착)
+    st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
+    # final_text, law_data는 위 블록에서 정의됨
+    st.session_state.messages.append({"role": "assistant", "content": final_text, "law": law_data, "ts": ts})
     st.rerun()
