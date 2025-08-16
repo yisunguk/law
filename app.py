@@ -1,4 +1,4 @@
-# app.py — Optimized single chat window (past → present) with bottom streaming
+# app.py — Single-window chat with bottom streaming + robust dedupe
 from __future__ import annotations
 
 import io, os, re, json, time
@@ -11,9 +11,8 @@ import streamlit as st
 import streamlit.components.v1 as components
 from openai import AzureOpenAI
 
-# ===== Local modules =====
 from chatbar import chatbar
-# (첨부 파일을 나중에 확장할 수 있도록 import만 유지)
+# (첨부 파싱은 나중 확장용으로 import 유지)
 from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_txt, sanitize
 
 # =============================
@@ -21,6 +20,7 @@ from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_tx
 # =============================
 PAGE_MAX_WIDTH = 1020
 BOTTOM_PADDING_PX = 120   # 고정 ChatBar와 겹침 방지용
+KEY_PREFIX = "lawchat"    # chatbar key prefix
 
 st.set_page_config(
     page_title="법제처 AI 챗봇",
@@ -31,19 +31,16 @@ st.set_page_config(
 
 st.markdown(f"""
 <style>
-/* Layout width */
 .block-container {{ max-width:{PAGE_MAX_WIDTH}px; margin:0 auto; padding-bottom:{BOTTOM_PADDING_PX}px; }}
 .stChatInput    {{ max-width:{PAGE_MAX_WIDTH}px; margin-left:auto; margin-right:auto; }}
 section.main    {{ padding-bottom:0; }}
 
-/* Header */
 .header {{
   text-align:center; padding:1rem; border-radius:12px;
   background:linear-gradient(135deg,#8b5cf6,#a78bfa); color:#fff; margin:0 0 1rem 0;
 }}
 h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem 0 0.4rem; }}
 
-/* Bubble-like markdown */
 .stMarkdown > div {{
   background:var(--bubble-bg,#1f1f1f); color:var(--bubble-fg,#f5f5f5);
   border-radius:14px; padding:14px 16px; box-shadow:0 1px 8px rgba(0,0,0,.12);
@@ -54,7 +51,6 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 .stMarkdown ul, .stMarkdown ol {{ margin-left:1.1rem; }}
 .stMarkdown blockquote {{ margin:8px 0; padding-left:12px; border-left:3px solid rgba(255,255,255,.25); }}
 
-/* Copy button under bubbles */
 .copy-row{{ display:flex; justify-content:flex-end; margin:6px 4px 0 0; }}
 .copy-btn{{
   display:inline-flex; align-items:center; gap:6px; padding:6px 10px;
@@ -100,6 +96,7 @@ def _normalize_text(s: str) -> str:
     lines = [ln.rstrip() for ln in s.split("\n")]
     while lines and not lines[0].strip(): lines.pop(0)
     while lines and not lines[-1].strip(): lines.pop()
+    # 번호 한 줄-제목 한 줄 형태 병합
     merged, i = [], 0
     num_pat = re.compile(r'^\s*((\d+)|([IVXLC]+)|([ivxlc]+))\s*[\.\)]\s*$')
     while i < len(lines):
@@ -150,6 +147,34 @@ def render_bubble_with_copy(message: str, key: str):
       }});
     }})();
     </script>
+    """, height=40)
+
+def copy_url_button(url: str, key: str, label: str = "링크 복사"):
+    if not url: return
+    safe = json.dumps(url)
+    components.html(f"""
+      <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+        <button id="copy-url-{key}" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;cursor:pointer">
+          {label}
+        </button>
+        <span id="copied-{key}" style="font-size:12px;color:var(--text-color,#888)"></span>
+      </div>
+      <script>
+        (function(){{
+          const btn = document.getElementById("copy-url-{key}");
+          const msg = document.getElementById("copied-{key}");
+          if(!btn) return;
+          btn.addEventListener("click", async () => {{
+            try {{
+              await navigator.clipboard.writeText({safe});
+              msg.textContent = "복사됨!";
+              setTimeout(()=>msg.textContent="", 1200);
+            }} catch(e) {{
+              msg.textContent = "복사 실패";
+            }}
+          }});
+        }})();
+      </script>
     """, height=40)
 
 def load_secrets():
@@ -240,18 +265,14 @@ if AZURE:
         st.error(f"Azure OpenAI 초기화 실패: {e}")
 
 if "messages" not in st.session_state: st.session_state.messages = []
-if "settings" not in st.session_state: st.session_state.settings = {
-    "num_rows": 5,
-    "include_search": True,
-    "safe_mode": False,
-}
+if "settings" not in st.session_state: st.session_state.settings = {"num_rows": 5, "include_search": True, "safe_mode": False}
+if "_last_user_nonce" not in st.session_state: st.session_state["_last_user_nonce"] = None  # ✅ 중복 방지용
 
 # =============================
 # MOLEG API (Law Search)
 # =============================
 @st.cache_data(show_spinner=False, ttl=300)
 def search_law_data(query: str, num_rows: int = 5):
-    """법제처 API로 관련 법령 메타데이터 조회"""
     if not LAW_API_KEY:
         return [], None, "LAW_API_KEY 미설정"
     params = {
@@ -261,6 +282,7 @@ def search_law_data(query: str, num_rows: int = 5):
         "numOfRows": max(1, min(10, int(num_rows))),
         "pageNo": 1,
     }
+    last_err = None
     for url in ("https://apis.data.go.kr/1170000/law/lawSearchList.do",
                 "http://apis.data.go.kr/1170000/law/lawSearchList.do"):
         try:
@@ -352,11 +374,11 @@ def build_history_messages(max_turns=10):
             "1) 항상 **한국어 마크다운**으로 작성.\n"
             "2) 구조: 사건/사안 개요 → 적용/관련 법령 → 쟁점 및 해석(근거: 조문·판례·유권해석) "
             "→ 절차·전략(증거·관할·제출서류 등) → 참고 자료.\n"
-            "3) 각 섹션은 **2~4문장 이상**으로 구체적으로 기술(불필요한 수사는 금지, 핵심만).\n"
+            "3) 각 섹션은 **2~4문장 이상**으로 구체적으로 기술.\n"
             "4) 법령 표기는 **정식 명칭+조문 번호**로 병기.\n"
             "5) 판례는 **법원·사건번호·선고일**을 함께 표기.\n"
             "6) 링크는 반드시 **www.law.go.kr** 등 공식 출처만 사용.\n"
-            "7) 말미에 다음 2문구를 넣는다: 출처 고지 및 참고용 고지.\n"
+            "7) 말미에 ①출처: 법제처 국가법령정보센터 ②참고용 고지 문구를 넣음.\n"
         ),
     }
     msgs = [sys]
@@ -530,15 +552,29 @@ with st.sidebar:
 # =============================
 # Chat flow
 # =============================
-# 1) ChatBar는 '파일 맨 끝'에서 호출 → 여기선 사용자 입력만 읽음
-submitted, typed_text, files = False, "", []
 
-# 2) (다음 rerun까지) 방금 입력된 메시지 먼저 저장
-user_q = st.session_state.pop("_pending_user_q", None)  # ChatBar에서 전달 예정
-if user_q:
-    st.session_state.messages.append({"role": "user", "content": user_q, "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+def _push_user_from_pending() -> str | None:
+    """_pending_user_q 가 있으면, Nonce로 중복을 막고 1회만 messages에 추가."""
+    q = st.session_state.pop("_pending_user_q", None)
+    nonce = st.session_state.pop("_pending_user_nonce", None)
+    if not q:
+        return None
+    # 같은 이벤트(Nonce) 재처리 방지
+    if nonce and st.session_state.get("_last_user_nonce") == nonce:
+        return None
+    # 동일 내용이 방금 직전에 이미 들어간 경우도 방지
+    msgs = st.session_state.messages
+    if msgs and msgs[-1].get("role") == "user" and msgs[-1].get("content") == q:
+        st.session_state["_last_user_nonce"] = nonce
+        return None
+    msgs.append({"role": "user", "content": q, "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+    st.session_state["_last_user_nonce"] = nonce
+    return q
 
-# 3) 히스토리 정방향 렌더
+# 1) 직전 제출(이벤트)이 있는 경우, 먼저 히스토리에 1회만 반영
+user_q = _push_user_from_pending()
+
+# 2) 히스토리 정방향 렌더
 with st.container():
     for i, m in enumerate(st.session_state.messages):
         with st.chat_message(m["role"]):
@@ -553,16 +589,13 @@ with st.container():
             else:
                 st.markdown(m["content"])
 
-# 4) 방금 입력이 있었다면 맨 아래에서 스트리밍
+# 3) 방금 입력이 있었다면 맨 아래에서 스트리밍
 if user_q:
-    # MOLEG 검색
     with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
         law_data, used_endpoint, err = search_law_data(user_q, num_rows=st.session_state.settings["num_rows"])
     if used_endpoint: st.caption(f"법제처 API endpoint: `{used_endpoint}`")
     if err: st.warning(err)
     law_ctx = format_law_context(law_data)
-    report_ctx = ""  # 파일 컨텍스트를 붙일 땐 여기 추가
-
     template_block = choose_output_template(user_q)
     model_messages = build_history_messages(max_turns=10) + [{
         "role": "user",
@@ -585,7 +618,7 @@ if user_q:
         try:
             placeholder.markdown("_답변 생성 중입니다._")
             if client is None:
-                full_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx + (("\n\n" + report_ctx) if report_ctx else "")
+                full_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
                 placeholder.markdown(_normalize_text(full_text))
             else:
                 for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1200):
@@ -604,19 +637,23 @@ if user_q:
         final_text = _normalize_text(full_text)
         render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
 
-    st.session_state.messages.append({"role": "assistant", "content": final_text, "law": law_data, "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+    st.session_state.messages.append({
+        "role": "assistant", "content": final_text, "law": law_data, "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
 
-# =============================
-# ChatBar (맨 아래 고정) — 여기서만 한 번 호출
-# =============================
+# 4) ChatBar (맨 아래 고정) — 여기서만 한 번 호출
 submitted, typed_text, files = chatbar(
     placeholder="법령에 대한 질문을 입력하거나, 관련 문서를 첨부해서 문의해 보세요…",
-    accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix="lawchat",
+    accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
 )
 
-# 제출 즉시 messages에 넣지 않고, 다음 rerun에서 반영
+# 제출 즉시: 다음 런에서 처리할 Pending + Nonce 저장, 입력창 비우기
 if submitted:
-    st.session_state["_pending_user_q"] = (typed_text or "").strip()
+    text = (typed_text or "").strip()
+    if text:
+        st.session_state["_pending_user_q"] = text
+        st.session_state["_pending_user_nonce"] = time.time_ns()  # ✅ 이벤트 토큰
+        # 입력창 비우기 (중복 전송 방지 체감 ↑)
+        st.session_state[f"{KEY_PREFIX}-input"] = ""
 
-# (선택) 아주 작은 바닥 여백
 st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
