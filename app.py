@@ -616,37 +616,43 @@ if user_q:
     })
 
     # 4) 응답 생성
-    if client is None:
-        final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
-        with st.chat_message("assistant"):
-            render_bubble_with_copy(final_text, key=f"ans-{ts}")
-    else:
-        with st.chat_message("assistant"):
-            placeholder = st.empty()
-            full_text, buffer = "", ""
-            try:
-                # 스트리밍 중에도 마크다운으로 미리보기
-                placeholder.markdown("_답변 생성 중입니다..._")
-                for piece in stream_chat_completion(model_messages, temperature=0.4, max_tokens=2000):
-                    piece = piece if isinstance(piece, str) else str(piece or "")
-                    buffer += piece
-                    if len(buffer) >= 200:
-                        full_text += buffer
-                        buffer = ""
-                        preview = _normalize_text(full_text[-1500:])
-                        placeholder.markdown(preview)
-                        time.sleep(0.03)
-                if buffer:
+if client is None:
+    final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
+    with st.chat_message("assistant"):
+        render_bubble_with_copy(final_text, key=f"ans-{ts}")
+else:
+    # ✅ else 블록 안에서 들여쓰기
+    with st.chat_message("assistant"):
+        placeholder = st.empty()
+        full_text, buffer = "", ""
+        try:
+            placeholder.markdown("_답변 생성 중입니다..._")
+            for piece in stream_chat_completion(model_messages, temperature=0.4, max_tokens=2000):
+                piece = piece if isinstance(piece, str) else str(piece or "")
+                buffer += piece
+                if len(buffer) >= 200:
                     full_text += buffer
-                    preview = _normalize_text(full_text)
+                    buffer = ""
+                    preview = _normalize_text(full_text[-1500:])
                     placeholder.markdown(preview)
-            except Exception as e:
-                full_text = f"**오류**: {e}\n\n{law_ctx}"
+                    time.sleep(0.03)
+            if buffer:
+                full_text += buffer
                 placeholder.markdown(_normalize_text(full_text))
-        final_text = _normalize_text(full_text)
-        with st.chat_message("assistant"):
-            render_bubble_with_copy(final_text, key=f"ans-{ts}")
+        except Exception as e:
+            full_text = f"**오류**: {e}\n\n{law_ctx}"
+            placeholder.markdown(_normalize_text(full_text))
+        finally:
+            # ✅ 스트리밍 미리보기 제거는 같은 with 블록 안에서
+            placeholder.empty()
 
-    st.session_state.messages.append({
-        "role": "assistant", "content": final_text, "law": law_data, "ts": ts
-    })
+    # ✅ 최종 말풍선은 별도의 assistant 메시지로 1번만
+    final_text = _normalize_text(full_text)
+    with st.chat_message("assistant"):
+        render_bubble_with_copy(final_text, key=f"ans-{ts}")
+
+# (선택) 히스토리 저장은 마지막에 1번만
+st.session_state.messages.append({
+    "role": "assistant", "content": final_text, "law": law_data, "ts": ts
+})
+
