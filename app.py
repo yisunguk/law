@@ -84,21 +84,20 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 .pinned-q .text{{ font-weight:600; line-height:1.4; max-height:7.5rem; overflow:auto; }}
 
 /* Chat message width = container width */
-:root{
-  --msg-max: 100%;          /* 필요하면 900px 등으로 바꿔도 됨 */
-}
+:root {{
+  --msg-max: 100%;         /* 필요하면 960px 등으로 변경 */
+}}
 
-/* 기본적으로 Streamlit이 46rem로 제한하는 걸 해제 */
-[data-testid="stChatMessage"]{
+[data-testid="stChatMessage"] {{
   max-width: var(--msg-max) !important;
   width: 100% !important;
-}
+}}
 
-/* 마크다운 버블도 꽉 차게 */
 [data-testid="stChatMessage"] .stMarkdown,
-[data-testid="stChatMessage"] .stMarkdown > div{
+[data-testid="stChatMessage"] .stMarkdown > div {{
   width: 100% !important;
-}
+}}
+
 </style>
 """, unsafe_allow_html=True)
 
