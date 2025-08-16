@@ -735,7 +735,8 @@ if user_q:
 - 해석 요청 시 원문 + 법제처 해석례·헌재 결정례 우선 안내.
 - 법적 효력은 참고용임을 명시, 최종 판단은 관보·공포문 및 법제처 고시·공시 기준.
 
-{template_block}
+#{template_block}
+
 """
     })
 
@@ -772,3 +773,4 @@ if user_q:
     st.session_state.messages.append({
         "role": "assistant", "content": final_text, "law": law_data, "ts": ts
     })
+"""
