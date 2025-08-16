@@ -1,5 +1,5 @@
 # app.py — Chat-bubble + Copy (button below) FINAL
-# (Sidebar: No-Autocomplete, Case-Number based 판례 링크 빌더 + Copy)
+# (Sidebar: No-Autocomplete, 판례 = 법제처 한글주소(대표) + 대법원 종합법률정보(전체))
 import time, json, html, re
 from datetime import datetime
 import urllib.parse as up
@@ -22,16 +22,12 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-  /* 폭 살짝 확대 */
   .block-container{max-width:1020px;margin:0 auto;}
   .stChatInput{max-width:1020px;margin-left:auto;margin-right:auto;}
-
   .header{
     text-align:center;padding:1rem;border-radius:12px;
     background:linear-gradient(135deg,#8b5cf6,#a78bfa);color:#fff;margin:0 0 1rem 0
   }
-
-  /* 말풍선(가독성 압축) */
   .chat-bubble{
     background:var(--bubble-bg,#1f1f1f);
     color:var(--bubble-fg,#f5f5f5);
@@ -43,19 +39,12 @@ st.markdown("""
     word-break:break-word;
     box-shadow:0 1px 8px rgba(0,0,0,.12);
   }
-  .chat-bubble p,
-  .chat-bubble li,
-  .chat-bubble blockquote{ margin:0 0 8px 0; }
-  .chat-bubble blockquote{
-    padding-left:12px;border-left:3px solid rgba(255,255,255,.2);
-  }
-
+  .chat-bubble p, .chat-bubble li, .chat-bubble blockquote{ margin:0 0 8px 0; }
+  .chat-bubble blockquote{ padding-left:12px;border-left:3px solid rgba(255,255,255,.2); }
   [data-theme="light"] .chat-bubble{
     --bubble-bg:#ffffff; --bubble-fg:#222222;
     box-shadow:0 1px 8px rgba(0,0,0,.06);
   }
-
-  /* 말풍선 아래 줄의 복사 버튼 */
   .copy-row{ display:flex;justify-content:flex-end;margin:6px 4px 0 0; }
   .copy-btn{
     display:inline-flex;align-items:center;gap:6px;
@@ -79,21 +68,13 @@ st.markdown(
 # Text Normalization
 # =============================
 def _normalize_text(s: str) -> str:
-    """
-    - 개행 표준화
-    - 앞/뒤 빈 줄 제거
-    - 연속 빈 줄 최대 1개 허용
-    - '번호만 있는 줄'을 다음 줄 제목과 합치기 (1. / 1) / I. / iii) 등)
-    """
     s = s.replace("\r\n", "\n").replace("\r", "\n")
     lines = [ln.rstrip() for ln in s.split("\n")]
     while lines and not lines[0].strip():
         lines.pop(0)
     while lines and not lines[-1].strip():
         lines.pop()
-
-    merged = []
-    i = 0
+    merged, i = [], 0
     num_pat = re.compile(r'^\s*((\d+)|([IVXLC]+)|([ivxlc]+))\s*[\.\)]\s*$')
     while i < len(lines):
         cur = lines[i]
@@ -108,32 +89,24 @@ def _normalize_text(s: str) -> str:
                 merged.append(f"{number}. {title}")
                 i = j + 1
                 continue
-        merged.append(cur)
-        i += 1
-
+        merged.append(cur); i += 1
     out, prev_blank = [], False
     for ln in merged:
         if ln.strip() == "":
-            if not prev_blank:
-                out.append("")
+            if not prev_blank: out.append("")
             prev_blank = True
         else:
-            prev_blank = False
-            out.append(ln)
+            prev_blank = False; out.append(ln)
     return "\n".join(out)
 
 # =============================
 # Bubble Renderer (button below)
 # =============================
 def render_bubble_with_copy(message: str, key: str):
-    """본문은 escape하여 안전하게 렌더, 복사 버튼은 '아래 줄'에 항상 보이게."""
     message = _normalize_text(message)
-    safe_html = html.escape(message)     # 화면용
-    safe_raw_json = json.dumps(message)  # 클립보드용
-
-    st.markdown(f'<div class="chat-bubble" id="bubble-{key}">{safe_html}</div>',
-                unsafe_allow_html=True)
-
+    safe_html = html.escape(message)
+    safe_raw_json = json.dumps(message)
+    st.markdown(f'<div class="chat-bubble" id="bubble-{key}">{safe_html}</div>', unsafe_allow_html=True)
     components.html(f"""
     <div class="copy-row">
       <button id="copy-{key}" class="copy-btn">
@@ -199,10 +172,8 @@ if AZURE:
 # =============================
 # Session
 # =============================
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "settings" not in st.session_state:
-    st.session_state.settings = {}
+if "messages" not in st.session_state: st.session_state.messages = []
+if "settings" not in st.session_state: st.session_state.settings = {}
 st.session_state.settings["num_rows"] = 5
 st.session_state.settings["include_search"] = True
 st.session_state.settings["safe_mode"] = False
@@ -261,9 +232,7 @@ def format_law_context(law_data):
     return "\n\n".join(rows)
 
 # =============================
-# ❗ No-Auth Public Link Builders (웹페이지용)
-#  - 한글주소 우선: 법령/행정규칙/자치법규/조약/판례/헌재결정례
-#  - 예외 3종(ID 전용): 해석례(expc), 법령용어(lstrm), 별표파일(flDownload)
+# No-Auth Public Link Builders (웹페이지용)
 # =============================
 _HBASE = "https://www.law.go.kr"
 
@@ -271,28 +240,22 @@ def _henc(s: str) -> str:
     return up.quote((s or "").strip())
 
 def hangul_by_name(domain: str, name: str) -> str:
-    """기본형: /<분야>/<이름>"""
     return f"{_HBASE}/{_henc(domain)}/{_henc(name)}"
 
 def hangul_law_with_keys(name: str, keys):
-    """법령 정밀 식별: (공포번호) | (공포번호,공포일자) | (시행일자,공포번호,공포일자)"""
     body = ",".join(_henc(k) for k in keys if k)
     return f"{_HBASE}/법령/{_henc(name)}/({body})"
 
 def hangul_law_article(name: str, subpath: str) -> str:
-    """조문/부칙/삼단비교 등: /법령/이름/제X조 | /부칙 | /삼단비교"""
     return f"{_HBASE}/법령/{_henc(name)}/{_henc(subpath)}"
 
 def hangul_admrul_with_keys(name: str, issue_no: str, issue_date: str) -> str:
-    """행정규칙: /행정규칙/이름/(발령번호,발령일자)"""
     return f"{_HBASE}/행정규칙/{_henc(name)}/({_henc(issue_no)},{_henc(issue_date)})"
 
 def hangul_ordin_with_keys(name: str, no: str, date: str) -> str:
-    """자치법규: /자치법규/이름/(공포번호,공포일자)"""
     return f"{_HBASE}/자치법규/{_henc(name)}/({_henc(no)},{_henc(date)})"
 
 def hangul_trty_with_keys(no: str, eff_date: str) -> str:
-    """조약: /조약/(조약번호,발효일자)  ※ 이름 없이도 동작"""
     return f"{_HBASE}/조약/({_henc(no)},{_henc(eff_date)})"
 
 def expc_public_by_id(expc_id: str) -> str:
@@ -305,13 +268,18 @@ def licbyl_file_download(fl_seq: str) -> str:
     return f"https://www.law.go.kr/LSW/flDownload.do?flSeq={up.quote(fl_seq)}"
 
 # =============================
-# 🔧 판례 사건번호 유효성 검사 & 이름 생성 + URL 복사 버튼
+# 판례: 사건번호 유효성 + 이름 생성 + Scourt 링크
 # =============================
-_CASE_NO_RE = re.compile(r'^(19|20)\d{2}[가-힣]{1,3}\d{1,6}$')
+_CASE_NO_RE = re.compile(r'(19|20)\d{2}[가-힣]{1,3}\d{1,6}')
+
+def extract_case_no(text: str) -> str | None:
+    if not text: return None
+    m = _CASE_NO_RE.search(text.replace(" ", ""))
+    return m.group(0) if m else None
 
 def validate_case_no(case_no: str) -> bool:
     case_no = (case_no or "").replace(" ", "")
-    return bool(_CASE_NO_RE.match(case_no))
+    return bool(_CASE_NO_RE.fullmatch(case_no))
 
 def build_case_name_from_no(case_no: str, court: str = "대법원", disposition: str = "판결") -> str | None:
     case_no = (case_no or "").replace(" ", "")
@@ -319,14 +287,17 @@ def build_case_name_from_no(case_no: str, court: str = "대법원", disposition:
         return None
     return f"{court} {case_no} {disposition}"
 
-def copy_url_button(url: str, key: str):
-    """사이드바에서 URL을 한 번에 복사하는 버튼(components 사용)"""
+def build_scourt_link(case_no: str) -> str:
+    # 대법원 종합법률정보 판례 검색: 사건번호 파라미터
+    return f"https://glaw.scourt.go.kr/wsjo/panre/sjo050.do?saNo={up.quote(case_no)}"
+
+def copy_url_button(url: str, key: str, label: str = "링크 복사"):
     if not url: return
     safe = json.dumps(url)
     components.html(f"""
       <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
         <button id="copy-url-{key}" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;cursor:pointer">
-          링크 복사
+          {label}
         </button>
         <span id="copied-{key}" style="font-size:12px;color:var(--text-color,#888)"></span>
       </div>
@@ -349,7 +320,7 @@ def copy_url_button(url: str, key: str):
     """, height=40)
 
 # =============================
-# Sidebar: 링크 생성기 (무인증 / 자동완성 제거 버전)
+# Sidebar: 링크 생성기 (무인증)
 # =============================
 with st.sidebar:
     st.header("🔗 링크 생성기 (무인증)")
@@ -359,7 +330,7 @@ with st.sidebar:
         [
             "법령(한글주소)", "법령(정밀: 공포/시행/공포일자)", "법령(조문/부칙/삼단비교)",
             "행정규칙(한글주소)", "자치법규(한글주소)", "조약(한글주소 또는 번호/발효일자)",
-            "판례(한글주소: 사건번호 지원)", "헌재결정례(한글주소)",
+            "판례(대표: 법제처 한글주소 + 전체: 대법원 검색)", "헌재결정례(한글주소)",
             "법령해석례(ID 전용)", "법령용어(ID 전용)", "별표·서식 파일(ID 전용)"
         ],
         index=0
@@ -429,16 +400,18 @@ with st.sidebar:
             if st.button("생성", use_container_width=True) and tno and eff:
                 url = hangul_trty_with_keys(tno, eff)
 
-    elif target == "판례(한글주소: 사건번호 지원)":
+    elif target == "판례(대표: 법제처 한글주소 + 전체: 대법원 검색)":
         mode = st.radio("입력 방식", ["사건번호로 만들기", "사건명 직접 입력"], horizontal=False)
 
+        law_url = None
+        scourt_url = None
+
         if mode == "사건번호로 만들기":
-            cno = st.text_input("사건번호", placeholder="예) 2016다12345 / 2009도1234 / 2021마12345")
+            cno = st.text_input("사건번호", placeholder="예) 2010다52349 / 2009도1234 / 2021마12345")
             st.caption("형식: 연도 4자리 + 사건유형(한글 1~3자) + 번호 1~6자리")
 
-            # 자주 쓰는 예시 버튼
             ex1, ex2, ex3 = st.columns(3)
-            if ex1.button("2016다12345", use_container_width=True): cno = "2016다12345"
+            if ex1.button("2010다52349", use_container_width=True): cno = "2010다52349"
             if ex2.button("2009도1234",  use_container_width=True): cno = "2009도1234"
             if ex3.button("2021마12345", use_container_width=True): cno = "2021마12345"
 
@@ -446,24 +419,39 @@ with st.sidebar:
             with colA:  court = st.selectbox("법원", ["대법원"], index=0)
             with colB:  dispo = st.selectbox("선고유형", ["판결", "결정"], index=0)
 
-            if st.button("생성", use_container_width=True):
+            if st.button("링크 생성", use_container_width=True):
                 name = build_case_name_from_no(cno, court=court, disposition=dispo)
                 if not name:
-                    st.error("사건번호 형식이 올바르지 않습니다. 예) 2016다12345, 2009도1234")
+                    st.error("사건번호 형식이 올바르지 않습니다. 예) 2010다52349, 2009도1234")
                 else:
-                    url = hangul_by_name("판례", name)
+                    law_url = hangul_by_name("판례", name)        # 대표 판례가 등록된 경우에만 열림
+                    scourt_url = build_scourt_link(cno)            # 대법원 공식 검색(항상 동작)
 
-            # 유효성 상태 즉시 표시
             if cno:
-                if validate_case_no(cno):
-                    st.success("유효한 사건번호 형식입니다.")
-                else:
-                    st.info("예: 2016다12345, 2009도1234, 2021마12345 (연도4자리+한글1~3자+숫자)")
+                st.success("유효한 사건번호입니다.") if validate_case_no(cno) \
+                    else st.info("예: 2010다52349 (연도4자리+한글1~3자+숫자)")
 
         else:  # 사건명 직접 입력
-            name = st.text_input("판례명", placeholder="예) 대법원 2009도1234 판결")
-            if st.button("생성", use_container_width=True) and (name or "").strip():
-                url = hangul_by_name("판례", name)
+            name = st.text_input("판례명", placeholder="예) 대법원 2010다52349 판결")
+            found_no = extract_case_no(name)
+            if st.button("링크 생성", use_container_width=True) and (name or "").strip():
+                law_url = hangul_by_name("판례", name)
+                if found_no: scourt_url = build_scourt_link(found_no)
+
+        # 결과 표시 (둘 다 보여주기)
+        if law_url or scourt_url:
+            st.subheader("생성된 링크")
+            if law_url:
+                st.write("• 법제처 한글주소(대표 판례)")
+                st.code(law_url, language="text")
+                st.link_button("새 탭에서 열기", law_url, use_container_width=True)
+                copy_url_button(law_url, key=str(abs(hash(law_url))), label="법제처 링크 복사")
+                st.caption("※ 등록된 대표 판례만 열립니다. 404가 뜨면 아래 대법원 검색 링크를 이용하세요.")
+            if scourt_url:
+                st.write("• 대법원 종합법률정보(전체 판례 검색)")
+                st.code(scourt_url, language="text")
+                st.link_button("새 탭에서 열기", scourt_url, use_container_width=True)
+                copy_url_button(scourt_url, key=str(abs(hash(scourt_url))), label="대법원 링크 복사")
 
     elif target == "헌재결정례(한글주소)":
         name_or_no = st.text_input("사건명 또는 사건번호", placeholder="예) 2022헌마1312")
@@ -486,7 +474,7 @@ with st.sidebar:
         if st.button("생성", use_container_width=True) and (fl or "").strip():
             url = licbyl_file_download(fl)
 
-    # 결과 표시 + 복사 버튼
+    # 단일 URL 생성 케이스 출력
     if url:
         st.success("생성된 링크")
         st.code(url, language="text")
@@ -563,20 +551,15 @@ user_q = st.chat_input("법령에 대한 질문을 입력하세요… (Enter로 
 
 if user_q:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # 사용자 메시지
     st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
-    with st.chat_message("user"):
-        st.markdown(user_q)
+    with st.chat_message("user"): st.markdown(user_q)
 
-    # 법제처 검색(항상 실행)
     with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
         law_data, used_endpoint, err = search_law_data(user_q, num_rows=st.session_state.settings["num_rows"])
     if used_endpoint: st.caption(f"법제처 API endpoint: `{used_endpoint}`")
     if err: st.warning(err)
     law_ctx = format_law_context(law_data)
 
-    # 프롬프트
     model_messages = build_history_messages(max_turns=10)
     model_messages.append({
         "role": "user",
@@ -640,42 +623,34 @@ if user_q:
 """
     })
 
-    # 스트리밍 or 기본 출력
     if client is None:
         final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
         with st.chat_message("assistant"):
             render_bubble_with_copy(final_text, key=f"ans-{ts}")
     else:
         with st.chat_message("assistant"):
-            placeholder = st.empty()
-            full_text, buffer = "", ""
+            placeholder = st.empty(); full_text, buffer = "", ""
             try:
-                placeholder.markdown('<div class="chat-bubble"><span class="typing-indicator"></span> 답변 생성 중.</div>',
-                                     unsafe_allow_html=True)
+                placeholder.markdown('<div class="chat-bubble"><span class="typing-indicator"></span> 답변 생성 중.</div>', unsafe_allow_html=True)
                 for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1000):
                     buffer += piece
                     if len(buffer) >= 200:
                         full_text += buffer; buffer = ""
                         preview = html.escape(_normalize_text(full_text[-1500:]))
-                        placeholder.markdown(f'<div class="chat-bubble">{preview}</div>',
-                                             unsafe_allow_html=True)
+                        placeholder.markdown(f'<div class="chat-bubble">{preview}</div>', unsafe_allow_html=True)
                         time.sleep(0.05)
                 if buffer:
                     full_text += buffer
                     preview = html.escape(_normalize_text(full_text))
-                    placeholder.markdown(f'<div class="chat-bubble">{preview}</div>',
-                                         unsafe_allow_html=True)
+                    placeholder.markdown(f'<div class="chat-bubble">{preview}</div>', unsafe_allow_html=True)
             except Exception as e:
                 full_text = f"답변 생성 중 오류가 발생했습니다: {e}\n\n{law_ctx}"
-                placeholder.markdown(f'<div class="chat-bubble">{html.escape(_normalize_text(full_text))}</div>',
-                                     unsafe_allow_html=True)
-
+                placeholder.markdown(f'<div class="chat-bubble">{html.escape(_normalize_text(full_text))}</div>', unsafe_allow_html=True)
         placeholder.empty()
         final_text = _normalize_text(full_text)
         with st.chat_message("assistant"):
             render_bubble_with_copy(final_text, key=f"ans-{ts}")
 
-    # 히스토리에 저장
     st.session_state.messages.append({
         "role": "assistant", "content": final_text, "law": law_data, "ts": ts
     })
