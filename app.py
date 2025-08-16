@@ -1,4 +1,4 @@
-# app.py — Top-live streaming + bottom history (역순) 리팩토링
+# app.py — Single chat window (past → present) with bottom streaming like ChatGPT
 import time, json, html, re
 from datetime import datetime
 import urllib.parse as up
@@ -9,11 +9,11 @@ import streamlit as st
 import streamlit.components.v1 as components
 from openai import AzureOpenAI
 
-# ===== [PATCH] 첨부 입력을 위한 추가 import =====
+# ===== 첨부 입력을 위한 import =====
 from chatbar import chatbar
 from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_txt, sanitize
 import io, os
-# ==============================================
+# ==================================
 
 # =============================
 # Page & Global Styles
@@ -29,16 +29,17 @@ st.markdown("""
 <style>
 /* h2, h3 크기 축소 */
 h2, h3 {
-    font-size: 1.1rem !important;
-    font-weight: 600 !important;
-    margin-top: 0.8rem;
-    margin-bottom: 0.4rem;
+  font-size: 1.1rem !important;
+  font-weight: 600 !important;
+  margin-top: 0.8rem;
+  margin-bottom: 0.4rem;
 }
 
 /* 레이아웃 폭 */
 .block-container{max-width:1020px;margin:0 auto;}
 .stChatInput{max-width:1020px;margin-left:auto;margin-right:auto;}
 
+/* 상단 헤더 */
 .header{
   text-align:center;padding:1rem;border-radius:12px;
   background:linear-gradient(135deg,#8b5cf6,#a78bfa);color:#fff;margin:0 0 1rem 0
@@ -96,10 +97,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
-# === [PATCH: 신규] Top live area(현재 턴) & Bottom history(과거 턴) 컨테이너 ===
-live_area = st.container()      # 스트리밍은 항상 여기서! (화면 최상단)
-history_area = st.container()   # 과거 히스토리는 아래에서 역순 렌더
 
 # =============================
 # Text Normalization
@@ -279,7 +276,7 @@ def lstrm_public_by_id(trm_seqs: str) -> str: return f"https://www.law.go.kr/LSW
 def licbyl_file_download(fl_seq: str) -> str: return f"https://www.law.go.kr/LSW/flDownload.do?flSeq={up.quote(fl_seq)}"
 
 # =============================
-# 판례: 사건번호 유효성 + 이름 생성 + Scourt 링크
+# 판례: 사건번호 유효성 + 링크
 # =============================
 _CASE_NO_RE = re.compile(r'(19|20)\d{2}[가-힣]{1,3}\d{1,6}')
 def extract_case_no(text: str) -> str | None:
@@ -324,9 +321,6 @@ def copy_url_button(url: str, key: str, label: str = "링크 복사"):
       </script>
     """, height=40)
 
-# -----------------------------
-# 링크 가용성 체크 + 대체 검색 링크
-# -----------------------------
 def is_reachable(url: str) -> bool:
     try:
         r = requests.get(url, timeout=8, allow_redirects=True)
@@ -357,11 +351,10 @@ def present_url_with_fallback(main_url: str, kind: str, q: str, label_main="새 
         copy_url_button(fb, key=str(abs(hash(fb))))
 
 # =============================
-# Sidebar: 링크 생성기 (무인증, 기본값=실제 동작 예시)
+# Sidebar: 링크 생성기 (무인증)
 # =============================
 with st.sidebar:
     st.header("🔗 링크 생성기 (무인증)")
-
     DEFAULTS = {
         "법령명": "민법",
         "법령_공포번호": "",
@@ -377,7 +370,6 @@ with st.sidebar:
         "용어ID": "3945293",
         "별표파일ID": "110728887",
     }
-
     target = st.selectbox(
         "대상 선택",
         [
@@ -388,16 +380,12 @@ with st.sidebar:
         ],
         index=0
     )
-
-    url = None
-    out_kind = None
-    out_q = ""
+    url = None; out_kind = None; out_q = ""
 
     if target == "법령(한글주소)":
         name = st.text_input("법령명", value=DEFAULTS["법령명"])
         if st.button("생성", use_container_width=True):
-            url = hangul_by_name("법령", name)
-            out_kind="law"; out_q=name
+            url = hangul_by_name("법령", name); out_kind="law"; out_q=name
 
     elif target == "법령(정밀: 공포/시행/공포일자)":
         name = st.text_input("법령명", value=DEFAULTS["법령명"])
@@ -408,15 +396,13 @@ with st.sidebar:
         st.caption("예시: (08358) / (07428,20050331) / (20060401,07428,20050331)")
         if st.button("생성", use_container_width=True):
             keys = [k for k in [ef, g_no, g_dt] if k] if ef else [k for k in [g_no, g_dt] if k] if (g_dt or g_no) else [g_no]
-            url = hangul_law_with_keys(name, keys)
-            out_kind="law"; out_q=name
+            url = hangul_law_with_keys(name, keys); out_kind="law"; out_q=name
 
     elif target == "법령(조문/부칙/삼단비교)":
         name = st.text_input("법령명", value=DEFAULTS["법령명"])
         sub  = st.text_input("하위 경로", value="제3조")
         if st.button("생성", use_container_width=True):
-            url = hangul_law_article(name, sub)
-            out_kind="law"; out_q=f"{name} {sub}"
+            url = hangul_law_article(name, sub); out_kind="law"; out_q=f"{name} {sub}"
 
     elif target == "행정규칙(한글주소)":
         name = st.text_input("행정규칙명", value=DEFAULTS["행정규칙명"])
@@ -426,12 +412,10 @@ with st.sidebar:
             with c1: issue_no = st.text_input("발령번호", value="")
             with c2: issue_dt = st.text_input("발령일자(YYYYMMDD)", value="")
             if st.button("생성", use_container_width=True):
-                url = hangul_admrul_with_keys(name, issue_no, issue_dt)
-                out_kind="admrul"; out_q=name
+                url = hangul_admrul_with_keys(name, issue_no, issue_dt); out_kind="admrul"; out_q=name
         else:
             if st.button("생성", use_container_width=True):
-                url = hangul_by_name("행정규칙", name)
-                out_kind="admrul"; out_q=name
+                url = hangul_by_name("행정규칙", name); out_kind="admrul"; out_q=name
 
     elif target == "자치법규(한글주소)":
         name = st.text_input("자치법규명", value=DEFAULTS["자치법규명"])
@@ -441,27 +425,23 @@ with st.sidebar:
             with c1: no = st.text_input("공포번호", value="")
             with c2: dt = st.text_input("공포일자(YYYYMMDD)", value="")
             if st.button("생성", use_container_width=True):
-                url = hangul_ordin_with_keys(name, no, dt)
-                out_kind="ordin"; out_q=name
+                url = hangul_ordin_with_keys(name, no, dt); out_kind="ordin"; out_q=name
         else:
             if st.button("생성", use_container_width=True):
-                url = hangul_by_name("자치법규", name)
-                out_kind="ordin"; out_q=name
+                url = hangul_by_name("자치법규", name); out_kind="ordin"; out_q=name
 
     elif target == "조약(한글주소 또는 번호/발효일자)":
         mode = st.radio("방식", ["이름(직접입력)", "번호/발효일자(권장)"], horizontal=True, index=1)
         if mode.startswith("이름"):
             name = st.text_input("조약명", value="한-불 사회보장협정")
             if st.button("생성", use_container_width=True):
-                url = hangul_by_name("조약", name)
-                out_kind="trty"; out_q=name
+                url = hangul_by_name("조약", name); out_kind="trty"; out_q=name
         else:
             c1, c2 = st.columns(2)
             with c1: tno = st.text_input("조약번호", value=DEFAULTS["조약번호"])
             with c2: eff = st.text_input("발효일자(YYYYMMDD)", value=DEFAULTS["조약발효일"])
             if st.button("생성", use_container_width=True):
-                url = hangul_trty_with_keys(tno, eff)
-                out_kind="trty"; out_q=tno
+                url = hangul_trty_with_keys(tno, eff); out_kind="trty"; out_q=tno
 
     elif target == "판례(대표: 법제처 한글주소 + 전체: 대법원 검색)":
         mode = st.radio("입력 방식", ["사건번호로 만들기(권장)", "사건명 직접 입력"], horizontal=False, index=0)
@@ -476,8 +456,8 @@ with st.sidebar:
                 if not name:
                     st.error("사건번호 형식이 올바르지 않습니다. 예) 2010다52349, 2009도1234")
                 else:
-                    law_url = hangul_by_name("판례", name)   # 대표 판례만 열림
-                    scourt_url = build_scourt_link(cno)       # 대법원 검색(항상 동작)
+                    law_url = hangul_by_name("판례", name)
+                    scourt_url = build_scourt_link(cno)
         else:
             name = st.text_input("판례명", value=f"대법원 {DEFAULTS['판례_사건번호']} 판결")
             found_no = extract_case_no(name)
@@ -499,26 +479,22 @@ with st.sidebar:
     elif target == "헌재결정례(한글주소)":
         name_or_no = st.text_input("사건명 또는 사건번호", value=DEFAULTS["헌재사건"])
         if st.button("생성", use_container_width=True):
-            url = hangul_by_name("헌재결정례", name_or_no)
-            out_kind="cc"; out_q=name_or_no
+            url = hangul_by_name("헌재결정례", name_or_no); out_kind="cc"; out_q=name_or_no
 
     elif target == "법령해석례(ID 전용)":
         expc_id = st.text_input("해석례 ID(expcSeq)", value=DEFAULTS["해석례ID"])
         if st.button("생성", use_container_width=True):
-            url = expc_public_by_id(expc_id)
-            out_kind="expc"; out_q=expc_id
+            url = expc_public_by_id(expc_id); out_kind="expc"; out_q=expc_id
 
     elif target == "법령용어(ID 전용)":
         trm = st.text_input("용어 ID(trmSeqs)", value=DEFAULTS["용어ID"])
         if st.button("생성", use_container_width=True):
-            url = lstrm_public_by_id(trm)
-            out_kind="term"; out_q=trm
+            url = lstrm_public_by_id(trm); out_kind="term"; out_q=trm
 
     elif target == "별표·서식 파일(ID 전용)":
         fl = st.text_input("파일 시퀀스(flSeq)", value=DEFAULTS["별표파일ID"])
         if st.button("생성", use_container_width=True):
-            url = licbyl_file_download(fl)
-            out_kind="file"; out_q=fl
+            url = licbyl_file_download(fl); out_kind="file"; out_q=fl
 
     if url:
         st.success("생성된 링크")
@@ -681,24 +657,7 @@ def chat_completion(messages, temperature=0.7, max_tokens=1200):
         return ""
 
 # =============================
-# [PATCH] History: 항상 "아래"에서 역순 렌더
-# =============================
-with history_area:
-    for i, m in reversed(list(enumerate(st.session_state.messages))):
-        with st.chat_message(m["role"]):
-            if m["role"] == "assistant":
-                render_bubble_with_copy(m["content"], key=f"past-{i}")
-                if m.get("law"):
-                    with st.expander("📋 이 턴에서 참고한 법령 요약"):
-                        for j, law in enumerate(m["law"], 1):
-                            st.write(f"**{j}. {law['법령명']}** ({law['법령구분명']})  | 시행 {law['시행일자']}  | 공포 {law['공포일자']}")
-                            if law.get("법령상세링크"):
-                                st.write(f"- 링크: {law['법령상세링크']}")
-            else:
-                st.markdown(m["content"])
-
-# =============================
-# Input & Answer  (📎 첨부 ChatBar)
+# Chat input (아래 sticky), 첨부 처리
 # =============================
 submitted, typed_text, files = chatbar(
     placeholder="법령에 대한 질문을 입력하거나, 관련 문서를 첨부해서 문의해 보세요…",
@@ -706,7 +665,6 @@ submitted, typed_text, files = chatbar(
     max_files=5, max_size_mb=15, key_prefix="lawchat",
 )
 
-# 첨부파일을 텍스트로 추출하여 발췌 생성 (파일당 12,000자 제한)
 report_snippets = []
 if files:
     for f in files:
@@ -725,36 +683,55 @@ if files:
 
 user_q = typed_text if submitted else None
 
-# ------------------------------------------------
+# ===== 입력 직후: 사용자 메시지를 먼저 세션에 저장 =====
+if user_q:
+    ts_user = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts_user})
+
+# =============================
+# === 하나의 채팅창에서 과거→현재 순 렌더 ===
+# =============================
+chat_root = st.container()
+with chat_root:
+    for i, m in enumerate(st.session_state.messages):  # 정방향 렌더
+        with st.chat_message(m["role"]):
+            if m["role"] == "assistant":
+                render_bubble_with_copy(m["content"], key=f"past-{i}")
+                if m.get("law"):
+                    with st.expander("📋 이 턴에서 참고한 법령 요약"):
+                        for j, law in enumerate(m["law"], 1):
+                            st.write(f"**{j}. {law['법령명']}** ({law['법령구분명']})  | 시행 {law['시행일자']}  | 공포 {law['공포일자']}")
+                            if law.get("법령상세링크"):
+                                st.write(f"- 링크: {law['법령상세링크']}")
+            else:
+                st.markdown(m["content"])
+
+# =============================
+# === 맨 아래에서 어시스턴트 스트리밍(있을 때만) ===
+# =============================
 if user_q:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # [PATCH] 현재 턴은 Top live 영역에서만 표시 (히스토리에는 아직 저장하지 않음)
-    with live_area:
-        # 사용자 말풍선
-        with st.chat_message("user"):
-            st.markdown(user_q)
+    # 1) 법제처 검색
+    with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
+        law_data, used_endpoint, err = search_law_data(user_q, num_rows=st.session_state.settings["num_rows"])
+    if used_endpoint:
+        st.caption(f"법제처 API endpoint: `{used_endpoint}`")
+    if err:
+        st.warning(err)
+    law_ctx = format_law_context(law_data)
 
-        # 1) 법제처 검색
-        with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
-            law_data, used_endpoint, err = search_law_data(user_q, num_rows=st.session_state.settings["num_rows"])
-        if used_endpoint:
-            st.caption(f"법제처 API endpoint: `{used_endpoint}`")
-        if err:
-            st.warning(err)
-        law_ctx = format_law_context(law_data)
+    # 첨부 발췌를 컨텍스트에 추가
+    report_ctx = "\n\n[사고보고서 발췌]\n" + "\n\n".join(report_snippets) if report_snippets else ""
 
-        # [PATCH] 첨부 발췌를 컨텍스트에 추가
-        report_ctx = "\n\n[사고보고서 발췌]\n" + "\n\n".join(report_snippets) if report_snippets else ""
+    # 2) 출력 템플릿 자동 선택
+    template_block = choose_output_template(user_q)
 
-        # 2) 출력 템플릿 자동 선택
-        template_block = choose_output_template(user_q)
-
-        # 3) 사용자 프롬프트 구성
-        model_messages = build_history_messages(max_turns=10)
-        model_messages.append({
-            "role": "user",
-            "content": f"""사용자 질문: {user_q}
+    # 3) 모델 프롬프트 구성 (히스토리 포함)
+    model_messages = build_history_messages(max_turns=10)
+    model_messages.append({
+        "role": "user",
+        "content": f"""사용자 질문: {user_q}
 
 관련 법령 정보(분석):
 {law_ctx}{report_ctx}
@@ -785,39 +762,38 @@ if user_q:
 
 {template_block}
 """
-        })
+    })
 
-        # 4) 응답 생성 (스트리밍은 라이브 영역에서만 표시)
-        if client is None:
-            final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx + (("\n\n" + report_ctx) if report_ctx else "")
-            with st.chat_message("assistant"):
-                render_bubble_with_copy(final_text, key=f"ans-{ts}")
-        else:
-            with st.chat_message("assistant"):
-                placeholder = st.empty()
-                full_text, buffer = "", ""
-                try:
-                    placeholder.markdown("_답변 생성 중입니다._")
-                    for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1200):
-                        buffer += piece
-                        if len(buffer) >= 200:
-                            full_text += buffer; buffer = ""
-                            preview = _normalize_text(full_text[-1500:])
-                            placeholder.markdown(preview); time.sleep(0.03)
-                    if buffer:
-                        full_text += buffer
-                        placeholder.markdown(_normalize_text(full_text))
-                except Exception as e:
-                    safe_law_ctx = locals().get("law_ctx", "")
-                    full_text = f"**오류**: {e}" + (f"\n\n{safe_law_ctx}" if safe_law_ctx else "")
+    # 4) 스트리밍 출력: 같은 창의 맨 아래에서 단 한 번
+    with st.chat_message("assistant"):
+        placeholder = st.empty()
+        full_text, buffer = "", ""
+        try:
+            placeholder.markdown("_답변 생성 중입니다._")
+            if client is None:
+                full_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx + (("\n\n" + report_ctx) if report_ctx else "")
+                placeholder.markdown(_normalize_text(full_text))
+            else:
+                for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1200):
+                    buffer += piece
+                    if len(buffer) >= 200:
+                        full_text += buffer; buffer = ""
+                        preview = _normalize_text(full_text[-1500:])
+                        placeholder.markdown(preview); time.sleep(0.03)
+                if buffer:
+                    full_text += buffer
                     placeholder.markdown(_normalize_text(full_text))
+        except Exception as e:
+            safe_law_ctx = locals().get("law_ctx", "")
+            full_text = f"**오류**: {e}" + (f"\n\n{safe_law_ctx}" if safe_law_ctx else "")
+            placeholder.markdown(_normalize_text(full_text))
 
-                placeholder.empty()
-                final_text = _normalize_text(full_text)
-                render_bubble_with_copy(final_text, key=f"ans-{ts}")
+        # 최종 렌더 (말풍선 스타일/복사 버튼)
+        placeholder.empty()
+        final_text = _normalize_text(full_text)
+        render_bubble_with_copy(final_text, key=f"ans-{ts}")
 
-    # [PATCH] 스트리밍이 끝난 뒤에만 히스토리에 저장 → rerun (점프 없이 자연스럽게 정착)
-    st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
-    # final_text, law_data는 위 블록에서 정의됨
-    st.session_state.messages.append({"role": "assistant", "content": final_text, "law": law_data, "ts": ts})
-    st.rerun()
+    # 5) 히스토리에 최종 한 번 저장
+    st.session_state.messages.append({
+        "role": "assistant", "content": final_text, "law": law_data, "ts": ts
+    })
