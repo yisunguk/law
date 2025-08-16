@@ -8,24 +8,23 @@ def chatbar(
     max_files: int = 3,
     max_size_mb: int = 10,
     key_prefix: str = "chatbar",
-    max_width_px: int | None = None,   # ← 상단과 동일한 최대폭 맞춤
-    compact: bool = True,              # ← 입력바 높이 축소
-    show_upload_label: bool = False,   # ← 파일 업로드 라벨 노출 여부
+    max_width_px: int | None = None,   # 상단 컨텐츠와 동일한 최대폭
+    compact: bool = True,              # 입력바 높이 축소
+    show_upload_label: bool = False,   # 업로드 라벨 보이기 여부
 ):
     """
     하단 입력창(st.chat_input) + (선택) 파일 업로드
-    Returns:
-        (submitted: bool, typed_text: str, files: list[UploadedFile])
+    Returns: (submitted: bool, typed_text: str, files: list[UploadedFile])
     """
     page_max = max_width_px or 1020
 
-    # 폭 정렬 + 회색 진행바 제거 + 입력창 컴팩트 스타일
+    # 폭 정렬 + 업로더 진행바 숨김 + 입력창 컴팩트
     st.markdown(
         f"""
         <style>
           :root {{ --page-max:{page_max}px; }}
 
-          /* 파일 업로드/입력창 폭을 페이지 컨텐츠 폭과 동일하게 중앙 정렬 */
+          /* 업로더/입력창을 페이지 폭과 맞춤 */
           div[data-testid="stFileUploader"] {{
             max-width: var(--page-max) !important;
             margin: 0 auto 6px !important;
@@ -35,17 +34,17 @@ def chatbar(
             margin: 0 auto !important;
           }}
 
-          /* 파일 업로드 밑에 보이는 회색 진행바 숨김 */
+          /* 업로더 아래 회색 진행바 숨김 */
           div[role="progressbar"] {{ display: none !important; }}
 
-          /* 입력바를 컴팩트하게(높이↓) */
-          {" .stChatInput textarea, .stChatInput input { padding: 6px 10px !important; min-height: 36px !important; font-size: 0.95rem !important; }" if compact else ""}
+          /* 입력창을 컴팩트하게 */
+          {".stChatInput textarea, .stChatInput input { padding: 6px 10px !important; min-height: 36px !important; font-size: 0.95rem !important; }" if compact else ""}
         </style>
         """,
         unsafe_allow_html=True
     )
 
-    # (선택) 파일 업로드 — 입력바 바로 위에 배치
+    # (선택) 파일 업로드 – 입력바 바로 위에 배치
     files = []
     if accept:
         files = st.file_uploader(
