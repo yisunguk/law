@@ -29,6 +29,10 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# 입력창 초기화 플래그가 켜져 있으면, 위젯 생성 전에 값 비움 (안전)
+if st.session_state.pop("_clear_input", False):
+    st.session_state[f"{KEY_PREFIX}-input"] = ""
+
 st.markdown(f"""
 <style>
 .block-container {{ max-width:{PAGE_MAX_WIDTH}px; margin:0 auto; padding-bottom:{BOTTOM_PADDING_PX}px; }}
@@ -642,18 +646,19 @@ if user_q:
     })
 
 # 4) ChatBar (맨 아래 고정) — 여기서만 한 번 호출
+# 4) ChatBar (맨 아래 고정)
 submitted, typed_text, files = chatbar(
     placeholder="법령에 대한 질문을 입력하거나, 관련 문서를 첨부해서 문의해 보세요…",
     accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
 )
 
-# 제출 즉시: 다음 런에서 처리할 Pending + Nonce 저장, 입력창 비우기
 if submitted:
     text = (typed_text or "").strip()
     if text:
         st.session_state["_pending_user_q"] = text
-        st.session_state["_pending_user_nonce"] = time.time_ns()  # ✅ 이벤트 토큰
-        # 입력창 비우기 (중복 전송 방지 체감 ↑)
-        st.session_state[f"{KEY_PREFIX}-input"] = ""
+        st.session_state["_pending_user_nonce"] = time.time_ns()
+    # 🔹 입력창은 '다음 런 시작 전에' 비우도록 플래그만 켜고 즉시 재실행
+    st.session_state["_clear_input"] = True
+    st.rerun()
 
 st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
