@@ -397,77 +397,102 @@ def format_law_context(law_data: list[dict]) -> str:
     return "\n\n".join(rows)
 
 # =============================
-# Output templating (heuristic)
+# Output routing (classifier)
 # =============================
-_CRIMINAL_HINTS = ("형사","고소","고발","벌금","기소","수사","압수수색","사기","폭행","절도","음주","약취","보이스피싱")
-_CIVIL_HINTS    = ("민사","손해배상","채무","계약","임대차","유치권","가압류","가처분","소송가액","지연손해금","불법행위")
-_ADMIN_LABOR    = ("행정심판","과징금","과태료","허가","인가","취소처분","해임","징계","해고","근로","연차","퇴직금","산재")
+ROUTE_SYS = (
+    "질문을 다음 라벨 중 하나로 분류: [단순, 민사, 형사, 행정노무, 복합]. "
+    "반드시 라벨 한 단어만 출력."
+)
 
-def choose_output_template(q: str) -> str:
-    t = (q or "").lower()
-    has = lambda ks: any(k.lower() in t for k in ks)
-    if has(_CRIMINAL_HINTS):
-        return """[출력 서식 강제]
-## 1) 사건 개요(형사)
-## 2) 적용/관련 법령
-## 3) 쟁점과 해석(피의자/피고인 관점 포함)
-## 4) 절차·증거·유의사항
-## 5) 참고 자료
-> **유의**: 본 답변은 참고용입니다. 최종 효력은 관보·공포문 및 법제처 고시·공시 기준.
+def route_label(q: str) -> str:
+    if not client or not AZURE:
+        # 오프라인 시 휴리스틱 폴백
+        t = (q or "").lower()
+        if any(k in t for k in ("형사","고소","고발","벌금","기소","수사","압수수색","사기","폭행","절도","음주","약취","보이스피싱")): return "형사"
+        if any(k in t for k in ("민사","손해배상","채무","계약","임대차","유치권","가압류","가처분","소송가액","지연손해금","불법행위")): return "민사"
+        if any(k in t for k in ("행정심판","과징금","과태료","허가","인가","취소처분","해임","징계","해고","근로","연차","퇴직금","산재")): return "행정노무"
+        return "단순"
+    msgs = [{"role":"system","content":ROUTE_SYS},{"role":"user","content": q or ""}]
+    try:
+        resp = client.chat.completions.create(
+            model=AZURE["deployment"], messages=msgs, temperature=0.0, max_tokens=10, stream=False
+        )
+        return (resp.choices[0].message.content or "단순").strip()
+    except Exception:
+        return "단순"
+# 템플릿: 간결(섹션 헤더만) — 세부는 시스템 프롬프트가 강제
+TEMPLATES = {
+"형사": """[출력 서식 강제]
+## 결론
+## 사실관계(확정/가정 구분)
+## 적용 법령(조문 직접 인용)
+## 판례 요지
+## 법리분석(구성요건·위법성·책임)
+## 절차·전략
+## 출처 링크
+""",
+"민사": """[출력 서식 강제]
+## 결론
+## 사실관계(확정/가정 구분)
+## 적용 법령(조문 직접 인용)
+## 판례 요지
+## 법리분석(청구원인·항변·증명책임)
+## 절차·전략
+## 출처 링크
+""",
+"행정노무": """[출력 서식 강제]
+## 결론
+## 사실관계(확정/가정 구분)
+## 관련 법령·행정규칙
+## 판례/해석례 요지
+## 법리분석(처분성·적법절차·비례원칙)
+## 구제수단
+## 출처 링크
+""",
+"복합": """[출력 서식 강제]
+## 결론
+## 사실관계(확정/가정 구분)
+## 적용 법령 세트(조문 인용)
+## 판례/해석례 교차 요지
+## 쟁점별 법리분석(주장/반박/평가)
+## 절차·전략
+## 출처 링크
+""",
+"단순": """[출력 서식 강제]
+## 결론
+## 근거(조문/해석례 링크)
+## 다음 확인이 필요한 사실(질문 2~3개)
+## 출처 링크
 """
-    if has(_CIVIL_HINTS):
-        return """[출력 서식 강제]
-## 1) 사건 개요(민사)
-## 2) 적용/관련 법령
-## 3) 쟁점과 해석(원고/피고 관점)
-## 4) 절차·증거·전략
-## 5) 참고 자료
-> **유의**: 본 답변은 참고용입니다. 최종 효력은 관보·공포문 및 법제처 고시·공시 기준.
-"""
-    if has(_ADMIN_LABOR):
-        return """[출력 서식 강제]
-## 1) 사안 개요(노무/행정)
-## 2) 적용/관련 법령
-## 3) 쟁점과 해석(각 당사자 관점)
-## 4) 절차·구제수단
-## 5) 참고 자료
-> **유의**: 본 답변은 참고용입니다. 최종 효력은 관보·공포문 및 법제처 고시·공시 기준.
-"""
-    return """[출력 서식 강제]
-## 1) 질문 요약
-## 2) 적용/관련 법령
-## 3) 해석 및 실무 포인트
-## 4) 참고 자료
-> **유의**: 본 답변은 참고용입니다. 최종 효력은 관보·공포문 및 법제처 고시·공시 기준.
-"""
+}
+
+
+# =============================
+# System prompt (STRICT — 변호사 메모 규칙)
+# =============================
+LEGAL_SYS = (
+"당신은 대한민국 변호사다. 답변은 **법률 자문 메모** 형식으로 작성한다.\n"
+"규칙(모두 강제):\n"
+"1) **결론 한 문장**을 맨 앞에 제시하고, 맨 끝에서 다시 1문장으로 재확인한다.\n"
+"2) 모든 주장/해석 뒤에는 **근거 각주**를 붙인다: `[법령명 제x조]`, `[대법원 yyyy도/다 nnnn, 선고일]`, `[법제처 해석례 expcSeq]`.\n"
+"3) **조문은 1~2문장만 직접 인용**하며 blockquote로 표기한다.\n"
+"4) 사실관계는 **확정/가정**을 구분하여 기술한다.\n"
+"5) **모호한 표현 금지**(예: '~일 수 있다/보인다/가능성이 있다') — 사용 시 바로 뒤에 근거를 붙인다.\n"
+"6) 링크는 **www.law.go.kr** 또는 **대법원 종합법률정보**만 사용한다.\n"
+"7) 섹션 헤더는 템플릿에 따르며, 각 섹션은 **2~4문장 이상**으로 구체적으로 작성한다.\n"
+"8) 말미에 반드시 `출처: 법제처 국가법령정보센터`와 `⚠️ 참고용 고지` 문구를 넣는다.\n"
+)
 
 # =============================
 # Model helpers
 # =============================
 def build_history_messages(max_turns=10):
-    sys = {
-        "role": "system",
-        "content": (
-            "당신은 대한민국의 변호사이자 법률 전문가입니다. "
-            "답변은 실제 변호사 자문서처럼 **체계적·조문/판례 근거 중심**으로 작성합니다. "
-            "형사·민사·행정·노무 사건에서 각 당사자 관점(원고/피고, 피의자/검사)을 균형 있게 제시하세요.\n\n"
-            "### 답변 지침\n"
-            "1) 항상 **한국어 마크다운**으로 작성.\n"
-            "2) 구조: 사건/사안 개요 → 적용/관련 법령 → 쟁점 및 해석(근거: 조문·판례·유권해석) "
-            "→ 절차·전략(증거·관할·제출서류 등) → 참고 자료.\n"
-            "3) 각 섹션은 **2~4문장 이상**으로 구체적으로 기술.\n"
-            "4) 법령 표기는 **정식 명칭+조문 번호**로 병기.\n"
-            "5) 판례는 **법원·사건번호·선고일**을 함께 표기.\n"
-            "6) 링크는 반드시 **www.law.go.kr** 등 공식 출처만 사용.\n"
-            "7) 말미에 ①출처: 법제처 국가법령정보센터 ②참고용 고지 문구를 넣음.\n"
-        ),
-    }
-    msgs = [sys]
+    msgs = [{"role":"system","content": LEGAL_SYS}]
     history = st.session_state.messages[-max_turns*2:]
     msgs.extend({"role": m["role"], "content": m["content"]} for m in history)
     return msgs
 
-def stream_chat_completion(messages, temperature=0.7, max_tokens=1200):
+def stream_chat_completion(messages, temperature=0.2, max_tokens=2000):
     stream = client.chat.completions.create(
         model=AZURE["deployment"], messages=messages,
         temperature=temperature, max_tokens=max_tokens, stream=True,
@@ -481,6 +506,16 @@ def stream_chat_completion(messages, temperature=0.7, max_tokens=1200):
             if txt: yield txt
         except Exception:
             continue
+
+def chat_completion(messages, temperature=0.2, max_tokens=2000) -> str:
+    resp = client.chat.completions.create(
+        model=AZURE["deployment"], messages=messages,
+        temperature=temperature, max_tokens=max_tokens, stream=False,
+    )
+    try:
+        return resp.choices[0].message.content or ""
+    except Exception:
+        return ""
 
 # =============================
 # Sidebar: 링크 생성기 (무인증)
