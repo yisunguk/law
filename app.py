@@ -307,6 +307,28 @@ def render_pinned_question():
     </div>
     """, unsafe_allow_html=True)
 
+
+
+# 🔹 Link correction utility: fix law.go.kr URLs using MOLEG search results
+def fix_links_with_lawdata(markdown: str, law_data: list[dict]) -> str:
+    """답변 내 law.go.kr 링크를 law_data 기준으로 교정"""
+    import re
+    if not markdown or not law_data:
+        return markdown
+
+    name_to_url = {
+        d["법령명"]: (d["법령상세링크"] or f"https://www.law.go.kr/법령/{_henc(d['법령명'])}")
+        for d in law_data if d.get("법령명")
+    }
+
+    pat = re.compile(r'\[([^\]]+)\]\((https?://www\.law\.go\.kr/[^\)]+)\)')
+    def repl(m):
+        text, url = m.group(1), m.group(2)
+        if text in name_to_url:
+            return f'[{text}]({name_to_url[text]})'
+        return m.group(0)
+
+    return pat.sub(repl, markdown)
 # =============================
 # Secrets / Clients / Session
 # =============================
@@ -695,8 +717,7 @@ if user_q:
             full_text = f"**오류**: {e}\n\n{law_ctx}"
             placeholder.markdown(_normalize_text(full_text))
 
-        placeholder.empty()
-        final_text = _normalize_text(full_text)
+        \1        final_text = fix_links_with_lawdata(final_text, law_data)  # 🔹 링크 교정 적용
         render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
 
     st.session_state.messages.append({
