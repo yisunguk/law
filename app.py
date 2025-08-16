@@ -466,6 +466,10 @@ TEMPLATES = {
 """
 }
 
+def choose_output_template(q: str) -> str:
+    """질문 내용을 분류(label)하고 해당 템플릿을 반환"""
+    label = route_label(q)
+    return TEMPLATES.get(label, TEMPLATES["단순"])
 
 # =============================
 # System prompt (STRICT — 변호사 메모 규칙)
