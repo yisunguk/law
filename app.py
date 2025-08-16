@@ -678,7 +678,7 @@ def chat_completion(messages, temperature=0.7, max_tokens=1200):
 # =============================
 # Render History (Markdown + Copy)
 # =============================
-for i, m in enumerate(st.session_state.messages):
+for i, m in reversed(list(enumerate(st.session_state.messages))):
     with st.chat_message(m["role"]):
         if m["role"] == "assistant":
             render_bubble_with_copy(m["content"], key=f"past-{i}")
@@ -724,8 +724,8 @@ user_q = typed_text if submitted else None
 if user_q:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
-    with st.chat_message("user"):
-        st.markdown(user_q)
+    # with st.chat_message("user"):
+    #    st.markdown(user_q)
 
     # 1) 법제처 검색
     with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
@@ -812,3 +812,4 @@ if user_q:
     st.session_state.messages.append({
         "role": "assistant", "content": final_text, "law": law_data, "ts": ts
     })
+    st.rerun()
