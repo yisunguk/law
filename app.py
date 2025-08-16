@@ -21,6 +21,13 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+/* h2, h3 크기 축소 */
+h2, h3 {
+    font-size: 1.1rem !important;
+    font-weight: 600 !important;
+    margin-top: 0.8rem;
+    margin-bottom: 0.4rem;            
+
   .block-container{max-width:1020px;margin:0 auto;}
   .stChatInput{max-width:1020px;margin-left:auto;margin-right:auto;}
 
