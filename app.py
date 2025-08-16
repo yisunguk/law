@@ -16,8 +16,6 @@ from chatbar import chatbar
 from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_txt, sanitize
 from external_content import is_url, make_url_context
 from external_content import extract_first_url
-url_only = extract_first_url(user_q)
-url_ctx = make_url_context(url_only) if url_only else ""
 
 # =============================
 # Config & Style
@@ -719,18 +717,22 @@ with st.container():
 # 3) 방금 입력이 있었다면 맨 아래에서 스트리밍
 if user_q:
     with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
-        law_data, used_endpoint, err = search_law_data(user_q, num_rows=st.session_state.settings["num_rows"])
+        law_data, used_endpoint, err = search_law_data(
+            user_q, num_rows=st.session_state.settings["num_rows"]
+        )
     if used_endpoint: st.caption(f"법제처 API endpoint: `{used_endpoint}`")
     if err: st.warning(err)
+
     law_ctx = format_law_context(law_data)
 
-# ✅ URL이면 외부 본문 컨텍스트 추가
-    url_ctx = make_url_context(user_q) if is_url(user_q) else ""
+    # ✅ 문장+URL/URL 단독 모두 지원: 첫 URL만 추출해 본문 컨텍스트 생성
+    url_only = extract_first_url(user_q)
+    url_ctx = make_url_context(url_only) if url_only else ""
 
     template_block = choose_output_template(user_q)
     model_messages = build_history_messages(max_turns=10) + [{
-    "role": "user",
-    "content": f"""사용자 질문: {user_q}
+        "role": "user",
+        "content": f"""사용자 질문: {user_q}
 
 {url_ctx}
 관련 법령 정보(분석):
@@ -742,8 +744,8 @@ if user_q:
 - 말미에 출처 표기 + 참고용 고지.
 {template_block}
 """
-}]
-
+    }]
+ 
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_text, buffer = "", ""
