@@ -1,4 +1,5 @@
-# app.py — Chat-bubble + Copy (button below) FINAL (Unified No-Auth Sidebar + Autocomplete)
+# app.py — Chat-bubble + Copy (button below) FINAL
+# (Sidebar: No-Autocomplete, Case-Number based 판례 링크 빌더 + Copy)
 import time, json, html, re
 from datetime import datetime
 import urllib.parse as up
@@ -260,90 +261,6 @@ def format_law_context(law_data):
     return "\n\n".join(rows)
 
 # =============================
-# 🔎 목록 API 기반 자동완성/자동보정
-# =============================
-@st.cache_data(show_spinner=False, ttl=300)
-def search_law_titles_via_api(query: str, rows: int = 10):
-    """법령명 자동완성: 법제처 목록 API (lawSearchList)"""
-    if not LAW_API_KEY or not query:
-        return []
-    bases = [
-        "https://apis.data.go.kr/1170000/law/lawSearchList.do",
-        "http://apis.data.go.kr/1170000/law/lawSearchList.do"
-    ]
-    params = {
-        "serviceKey": up.quote_plus(LAW_API_KEY),
-        "target": "law",
-        "query": query,
-        "numOfRows": max(1, min(20, int(rows))),
-        "pageNo": 1,
-    }
-    last_err = None
-    for base in bases:
-        try:
-            r = requests.get(base, params=params, timeout=15)
-            r.raise_for_status()
-            root = ET.fromstring(r.text)
-            out = []
-            for it in root.findall(".//law"):
-                name = (it.findtext("법령명한글", default="") or "").strip()
-                abbr = (it.findtext("법령약칭명", default="") or "").strip()
-                g_no = (it.findtext("공포번호", default="") or "").strip()
-                g_dt = (it.findtext("공포일자", default="") or "").strip()
-                ef_dt = (it.findtext("시행일자", default="") or "").strip()
-                if not name:
-                    continue
-                out.append({
-                    "name": name,
-                    "abbr": abbr,
-                    "공포번호": g_no,
-                    "공포일자": g_dt,
-                    "시행일자": ef_dt,
-                })
-            return out
-        except Exception as e:
-            last_err = e
-            continue
-    st.toast(f"법령 자동완성 API 실패: {last_err}", icon="⚠️")
-    return []
-
-@st.cache_data(show_spinner=False, ttl=300)
-def search_expc_ids_via_api(query: str, rows: int = 10):
-    """법령해석례 ID 자동완성: 법제처 목록 API (expcSearchList)"""
-    if not LAW_API_KEY or not query:
-        return []
-    bases = [
-        "https://apis.data.go.kr/1170000/expc/expcSearchList.do",
-        "http://apis.data.go.kr/1170000/expc/expcSearchList.do"
-    ]
-    params = {
-        "serviceKey": up.quote_plus(LAW_API_KEY),
-        "target": "expc",
-        "query": query,
-        "numOfRows": max(1, min(20, int(rows))),
-        "pageNo": 1,
-    }
-    last_err = None
-    for base in bases:
-        try:
-            r = requests.get(base, params=params, timeout=15)
-            r.raise_for_status()
-            root = ET.fromstring(r.text)
-            out = []
-            for it in root.findall(".//expc"):
-                eid = (it.findtext("법령해석례일련번호", default="") or "").strip()
-                title = (it.findtext("안건명", default="") or it.findtext("제목", default="") or "").strip()
-                if not eid:
-                    continue
-                out.append({"id": eid, "title": title})
-            return out
-        except Exception as e:
-            last_err = e
-            continue
-    st.toast(f"해석례 자동완성 API 실패: {last_err}", icon="⚠️")
-    return []
-
-# =============================
 # ❗ No-Auth Public Link Builders (웹페이지용)
 #  - 한글주소 우선: 법령/행정규칙/자치법규/조약/판례/헌재결정례
 #  - 예외 3종(ID 전용): 해석례(expc), 법령용어(lstrm), 별표파일(flDownload)
@@ -388,9 +305,51 @@ def licbyl_file_download(fl_seq: str) -> str:
     return f"https://www.law.go.kr/LSW/flDownload.do?flSeq={up.quote(fl_seq)}"
 
 # =============================
-# Sidebar: 링크 생성기 (무인증)
-#  - 한글주소 우선 + 예외 3종(ID 전용)
-#  - 자동완성: 법령명, 법령해석례 ID
+# 🔧 판례 사건번호 유효성 검사 & 이름 생성 + URL 복사 버튼
+# =============================
+_CASE_NO_RE = re.compile(r'^(19|20)\d{2}[가-힣]{1,3}\d{1,6}$')
+
+def validate_case_no(case_no: str) -> bool:
+    case_no = (case_no or "").replace(" ", "")
+    return bool(_CASE_NO_RE.match(case_no))
+
+def build_case_name_from_no(case_no: str, court: str = "대법원", disposition: str = "판결") -> str | None:
+    case_no = (case_no or "").replace(" ", "")
+    if not validate_case_no(case_no):
+        return None
+    return f"{court} {case_no} {disposition}"
+
+def copy_url_button(url: str, key: str):
+    """사이드바에서 URL을 한 번에 복사하는 버튼(components 사용)"""
+    if not url: return
+    safe = json.dumps(url)
+    components.html(f"""
+      <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+        <button id="copy-url-{key}" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;cursor:pointer">
+          링크 복사
+        </button>
+        <span id="copied-{key}" style="font-size:12px;color:var(--text-color,#888)"></span>
+      </div>
+      <script>
+        (function(){{
+          const btn = document.getElementById("copy-url-{key}");
+          const msg = document.getElementById("copied-{key}");
+          if(!btn) return;
+          btn.addEventListener("click", async () => {{
+            try {{
+              await navigator.clipboard.writeText({safe});
+              msg.textContent = "복사됨!";
+              setTimeout(()=>msg.textContent="", 1200);
+            }} catch(e) {{
+              msg.textContent = "복사 실패";
+            }}
+          }});
+        }})();
+      </script>
+    """, height=40)
+
+# =============================
+# Sidebar: 링크 생성기 (무인증 / 자동완성 제거 버전)
 # =============================
 with st.sidebar:
     st.header("🔗 링크 생성기 (무인증)")
@@ -400,7 +359,7 @@ with st.sidebar:
         [
             "법령(한글주소)", "법령(정밀: 공포/시행/공포일자)", "법령(조문/부칙/삼단비교)",
             "행정규칙(한글주소)", "자치법규(한글주소)", "조약(한글주소 또는 번호/발효일자)",
-            "판례(한글주소)", "헌재결정례(한글주소)",
+            "판례(한글주소: 사건번호 지원)", "헌재결정례(한글주소)",
             "법령해석례(ID 전용)", "법령용어(ID 전용)", "별표·서식 파일(ID 전용)"
         ],
         index=0
@@ -411,25 +370,6 @@ with st.sidebar:
     # ——— 한글주소 계열 ———
     if target == "법령(한글주소)":
         name = st.text_input("법령명", placeholder="예) 자동차관리법")
-
-        with st.expander("🔎 정식 명칭 검색(자동완성)"):
-            q = st.text_input("검색어", key="law_suggest_q", placeholder="예) 자동차 관리법, 개인정보보호")
-            if st.button("검색", key="law_suggest_btn", use_container_width=True) and q.strip():
-                suggestions = search_law_titles_via_api(q.strip(), rows=10)
-                if suggestions:
-                    labels = [f"{s['name']}  | 공포:{s['공포번호']}({s['공포일자']})  시행:{s['시행일자']}" for s in suggestions]
-                    idx = st.selectbox("결과 선택", range(len(suggestions)), format_func=lambda i: labels[i], key="law_pick")
-                    if st.button("이 값으로 채우기", key="law_fill_btn", use_container_width=True):
-                        pick = suggestions[idx]
-                        st.session_state["law_name_fill"] = pick
-                        name = pick["name"]
-                        st.success("입력란에 반영했습니다. 생성 버튼을 눌러 링크를 만드세요.")
-                else:
-                    st.info("검색 결과가 없습니다. 철자/공식 명칭을 확인하세요.")
-
-        if "law_name_fill" in st.session_state and not (name or "").strip():
-            name = st.session_state["law_name_fill"]["name"]
-
         if st.button("생성", use_container_width=True) and (name or "").strip():
             url = hangul_by_name("법령", name)
 
@@ -440,29 +380,6 @@ with st.sidebar:
         with c2: g_dt = st.text_input("공포일자(YYYYMMDD)", placeholder="예) 20050331")
         with c3: ef   = st.text_input("시행일자(YYYYMMDD, 선택)", placeholder="예) 20060401")
         st.caption("입력 예: (08358) | (07428,20050331) | (20060401,07428,20050331)")
-
-        with st.expander("🔎 정식 명칭+식별자 검색(자동완성)"):
-            q = st.text_input("검색어", key="law_detail_q", placeholder="예) 자동차관리법 2005")
-            if st.button("검색", key="law_detail_btn", use_container_width=True) and q.strip():
-                suggestions = search_law_titles_via_api(q.strip(), rows=10)
-                if suggestions:
-                    labels = [
-                        f"{s['name']}  | 공포:{s['공포번호']}({s['공포일자']})  시행:{s['시행일자']}"
-                        for s in suggestions
-                    ]
-                    idx = st.selectbox("결과 선택", range(len(suggestions)),
-                                       format_func=lambda i: labels[i], key="law_detail_pick")
-                    if st.button("이 값으로 채우기", key="law_detail_fill", use_container_width=True):
-                        pick = suggestions[idx]
-                        st.session_state["law_detail_fill"] = pick
-                        name = pick["name"]
-                        if pick["공포번호"]: g_no = pick["공포번호"]
-                        if pick["공포일자"]: g_dt = pick["공포일자"]
-                        if pick["시행일자"]: ef   = pick["시행일자"]
-                        st.success("입력란에 반영했습니다. 생성 버튼을 눌러 링크를 만드세요.")
-                else:
-                    st.info("검색 결과가 없습니다.")
-
         if st.button("생성", use_container_width=True) and (name or "").strip():
             keys = [k for k in [ef, g_no, g_dt] if k] if ef else [k for k in [g_no, g_dt] if k] if (g_dt or g_no) else [g_no]
             url = hangul_law_with_keys(name, keys)
@@ -512,10 +429,41 @@ with st.sidebar:
             if st.button("생성", use_container_width=True) and tno and eff:
                 url = hangul_trty_with_keys(tno, eff)
 
-    elif target == "판례(한글주소)":
-        name = st.text_input("판례명", placeholder="예) 대법원 2009도1234 판결")
-        if st.button("생성", use_container_width=True) and (name or "").strip():
-            url = hangul_by_name("판례", name)
+    elif target == "판례(한글주소: 사건번호 지원)":
+        mode = st.radio("입력 방식", ["사건번호로 만들기", "사건명 직접 입력"], horizontal=False)
+
+        if mode == "사건번호로 만들기":
+            cno = st.text_input("사건번호", placeholder="예) 2016다12345 / 2009도1234 / 2021마12345")
+            st.caption("형식: 연도 4자리 + 사건유형(한글 1~3자) + 번호 1~6자리")
+
+            # 자주 쓰는 예시 버튼
+            ex1, ex2, ex3 = st.columns(3)
+            if ex1.button("2016다12345", use_container_width=True): cno = "2016다12345"
+            if ex2.button("2009도1234",  use_container_width=True): cno = "2009도1234"
+            if ex3.button("2021마12345", use_container_width=True): cno = "2021마12345"
+
+            colA, colB = st.columns(2)
+            with colA:  court = st.selectbox("법원", ["대법원"], index=0)
+            with colB:  dispo = st.selectbox("선고유형", ["판결", "결정"], index=0)
+
+            if st.button("생성", use_container_width=True):
+                name = build_case_name_from_no(cno, court=court, disposition=dispo)
+                if not name:
+                    st.error("사건번호 형식이 올바르지 않습니다. 예) 2016다12345, 2009도1234")
+                else:
+                    url = hangul_by_name("판례", name)
+
+            # 유효성 상태 즉시 표시
+            if cno:
+                if validate_case_no(cno):
+                    st.success("유효한 사건번호 형식입니다.")
+                else:
+                    st.info("예: 2016다12345, 2009도1234, 2021마12345 (연도4자리+한글1~3자+숫자)")
+
+        else:  # 사건명 직접 입력
+            name = st.text_input("판례명", placeholder="예) 대법원 2009도1234 판결")
+            if st.button("생성", use_container_width=True) and (name or "").strip():
+                url = hangul_by_name("판례", name)
 
     elif target == "헌재결정례(한글주소)":
         name_or_no = st.text_input("사건명 또는 사건번호", placeholder="예) 2022헌마1312")
@@ -525,25 +473,6 @@ with st.sidebar:
     # ——— 예외 3종: ID 전용 무인증 URL ———
     elif target == "법령해석례(ID 전용)":
         expc_id = st.text_input("해석례 ID(expcSeq)", placeholder="예) 313107")
-
-        with st.expander("🔎 해석례 검색(자동완성)"):
-            q = st.text_input("검색어", key="expc_q", placeholder="예) 개인정보, 건축법, 취득세")
-            if st.button("검색", key="expc_btn", use_container_width=True) and q.strip():
-                suggestions = search_expc_ids_via_api(q.strip(), rows=10)
-                if suggestions:
-                    labels = [f"{s['title']}  | ID:{s['id']}" if s['title'] else f"ID:{s['id']}" for s in suggestions]
-                    idx = st.selectbox("결과 선택", range(len(suggestions)), format_func=lambda i: labels[i], key="expc_pick")
-                    if st.button("이 값으로 채우기", key="expc_fill", use_container_width=True):
-                        pick = suggestions[idx]
-                        expc_id = pick["id"]
-                        st.session_state["expc_id_fill"] = expc_id
-                        st.success("입력란에 반영했습니다. 생성 버튼을 눌러 링크를 만드세요.")
-                else:
-                    st.info("검색 결과가 없습니다.")
-
-        if "expc_id_fill" in st.session_state and not (expc_id or "").strip():
-            expc_id = st.session_state["expc_id_fill"]
-
         if st.button("생성", use_container_width=True) and (expc_id or "").strip():
             url = expc_public_by_id(expc_id)
 
@@ -557,10 +486,12 @@ with st.sidebar:
         if st.button("생성", use_container_width=True) and (fl or "").strip():
             url = licbyl_file_download(fl)
 
+    # 결과 표시 + 복사 버튼
     if url:
         st.success("생성된 링크")
         st.code(url, language="text")
         st.link_button("새 탭에서 열기", url, use_container_width=True)
+        copy_url_button(url, key=str(abs(hash(url))))
         st.caption("⚠️ 한글주소는 ‘정확한 명칭’이 필요합니다. 확실한 식별이 필요하면 괄호 식별자(공포번호·일자 등)를 사용하세요.")
 
 # =============================
