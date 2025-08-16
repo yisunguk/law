@@ -85,7 +85,7 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 
 /* Chat message width = container width */
 :root {{
-  --msg-max: 100%;         /* 필요하면 960px 등으로 변경 */
+  --msg-max: {PAGE_MAX_WIDTH}px;         /* 입력창과 동일한 최대 폭 */
 }}
 
 [data-testid="stChatMessage"] .stMarkdown {{
@@ -96,11 +96,12 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
   box-shadow: 0 1px 8px rgba(0,0,0,.12);
 
   /* 입력창과 동일한 폭 */
-  max-width: {PAGE_MAX_WIDTH}px;   /* PAGE_MAX_WIDTH 사용 */
+  max-width: {PAGE_MAX_WIDTH}px;
   margin: 0 auto;
 
   box-sizing: border-box;
 }}
+
 [data-theme="light"] [data-testid="stChatMessage"] .stMarkdown {{
   --bubble-bg:#fff;
   --bubble-fg:#222;
