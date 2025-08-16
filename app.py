@@ -750,6 +750,7 @@ if client is None:
     final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
     with st.chat_message("assistant"):
         render_bubble_with_copy(final_text, key=f"ans-{ts}")
+
 else:
     with st.chat_message("assistant"):
         placeholder = st.empty()
@@ -771,12 +772,14 @@ else:
             full_text = f"**오류**: {e}" + (f"\n\n{safe_law_ctx}" if safe_law_ctx else "")
             placeholder.markdown(_normalize_text(full_text))
 
-        placeholder.empty()                 # 미리보기 지우기
+        placeholder.empty()                  # 미리보기 제거
         final_text = _normalize_text(full_text)
         render_bubble_with_copy(final_text, key=f"ans-{ts}")
 
+# 대화 저장
 st.session_state.messages.append({
     "role": "assistant", "content": final_text, "law": law_data, "ts": ts
 })
+
 
 
