@@ -753,18 +753,19 @@ if client is None:
         render_bubble_with_copy(final_text, key=f"ans-{ts}")
 
 else:
-    # ✅ assistant 메시지를 '한 번만' 엽니다
+    # ✅ assistant 말풍선을 '한 번만' 엽니다
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_text, buffer = "", ""
         try:
-            placeholder.markdown("_답변 생성 중입니다..._")  # 점 3개로 통일 원하면 ...로
+            placeholder.markdown("_답변 생성 중입니다._")
             for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1200):
                 buffer += piece
                 if len(buffer) >= 200:
                     full_text += buffer; buffer = ""
                     preview = _normalize_text(full_text[-1500:])
                     placeholder.markdown(preview)
+                    time.sleep(0.03)
             if buffer:
                 full_text += buffer
                 placeholder.markdown(_normalize_text(full_text))
@@ -772,10 +773,11 @@ else:
             full_text = f"**오류**: {e}\n\n{law_ctx}"
             placeholder.markdown(_normalize_text(full_text))
 
-        # 미리보기 제거 후 같은 블록에서 최종 말풍선 출력
+        # 👇 같은 블록 안에서 미리보기 지우고 최종 말풍선 출력
         placeholder.empty()
         final_text = _normalize_text(full_text)
         render_bubble_with_copy(final_text, key=f"ans-{ts}")
+
 
 
     st.session_state.messages.append({
