@@ -25,46 +25,42 @@ def chatbar(
 
     st.markdown("""
 <style>
-/* 업로더 기본 정리 */
-div[data-testid="stFileUploader"]{background:transparent;border:none;padding:0;margin:0;}
-div[data-testid="stFileUploader"] section{padding:0;border:none;background:transparent;}
-div[data-testid="stFileUploader"] section>div{padding:0;margin:0;}
-div[data-testid="stFileUploader"] label{display:none;}  /* 라벨 숨김 */
+/* 업로더 기본 영역 */
+div[data-testid="stFileUploader"]{
+  background:transparent !important;
+  border:none !important;
+  padding:0 !important;
+  margin:0 !important;
+}
 
-/* 드롭존 상자 제거 */
+/* 드롭존 영역 */
 div[data-testid="stFileUploaderDropzone"]{
-  border:none !important; background:transparent !important;
-  padding:0 !important; margin:0 !important;
+  border:none !important;
+  background:transparent !important;
+  padding:0 !important;
+  margin:0 !important;
 }
 
-/* ▼▼ 핵심: 드롭존의 모든 텍스트를 가리고, small/버튼만 복구 ▼▼ */
-div[data-testid="stFileUploaderDropzone"] *{
-  display:none !important;            /* 일단 전부 숨김 */
-  font-size:0 !important;             /* 혹시 남는 텍스트 대비 */
-  line-height:0 !important;
-  color:transparent !important;
+/* ✅ "Drag and drop files here"는 보이지만 클릭 차단 */
+div[data-testid="stFileUploaderDropzone"] div:first-child{
+  pointer-events:none !important;  /* 클릭 막기 */
 }
 
-/* 안내(small)와 Browse files 버튼만 다시 보이게 */
+/* 안내 문구(small)는 그대로 */
 div[data-testid="stFileUploaderDropzone"] small{
   display:inline !important;
   font-size:12px !important;
-  line-height:1.2 !important;
   color:inherit !important;
 }
+
+/* Browse files 버튼은 정상 작동 */
 div[data-testid="stFileUploaderDropzone"] button{
   display:inline-flex !important;
   font-size:14px !important;
-  line-height:1.2 !important;
   color:inherit !important;
 }
-
-/* 업로드된 파일 기본 프리뷰 숨김(칩 형태 등 별도 UI 쓸 때) */
-div[data-testid="stUploadedFile"]{display:none !important;}
 </style>
 """, unsafe_allow_html=True)
-
-
 
     submitted = False
     text_val = ""
