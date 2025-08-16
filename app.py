@@ -694,15 +694,19 @@ for i, m in enumerate(st.session_state.messages):
 user_q = st.chat_input("법령에 대한 질문을 입력하세요… (Enter로 전송)")
 
 if user_q:
+    # ts 생성과 사용, 그리고 모든 응답 생성/저장 로직을 같은 블록에 둠(방법 2)
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
-    with st.chat_message("user"): st.markdown(user_q)
+    with st.chat_message("user"): 
+        st.markdown(user_q)
 
     # 1) 법제처 검색
     with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
         law_data, used_endpoint, err = search_law_data(user_q, num_rows=st.session_state.settings["num_rows"])
-    if used_endpoint: st.caption(f"법제처 API endpoint: `{used_endpoint}`")
-    if err: st.warning(err)
+    if used_endpoint: 
+        st.caption(f"법제처 API endpoint: `{used_endpoint}`")
+    if err: 
+        st.warning(err)
     law_ctx = format_law_context(law_data)
 
     # 2) 출력 템플릿 자동 선택
@@ -745,41 +749,37 @@ if user_q:
 """
     })
 
-   # 4) 응답 생성
-if client is None:
-    final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
-    with st.chat_message("assistant"):
-        render_bubble_with_copy(final_text, key=f"ans-{ts}")
-
-else:
-    with st.chat_message("assistant"):
-        placeholder = st.empty()
-        full_text, buffer = "", ""
-        try:
-            placeholder.markdown("_답변 생성 중입니다._")
-            for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1200):
-                buffer += piece
-                if len(buffer) >= 200:
-                    full_text += buffer; buffer = ""
-                    preview = _normalize_text(full_text[-1500:])
-                    placeholder.markdown(preview)
-                    time.sleep(0.03)
-            if buffer:
-                full_text += buffer
+    # 4) 응답 생성  (← 문제였던 부분을 if user_q: 내부로 이동)
+    if client is None:
+        final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
+        with st.chat_message("assistant"):
+            render_bubble_with_copy(final_text, key=f"ans-{ts}")
+    else:
+        with st.chat_message("assistant"):
+            placeholder = st.empty()
+            full_text, buffer = "", ""
+            try:
+                placeholder.markdown("_답변 생성 중입니다._")
+                for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1200):
+                    buffer += piece
+                    if len(buffer) >= 200:
+                        full_text += buffer; buffer = ""
+                        preview = _normalize_text(full_text[-1500:])
+                        placeholder.markdown(preview)
+                        time.sleep(0.03)
+                if buffer:
+                    full_text += buffer
+                    placeholder.markdown(_normalize_text(full_text))
+            except Exception as e:
+                safe_law_ctx = locals().get("law_ctx", "")
+                full_text = f"**오류**: {e}" + (f"\n\n{safe_law_ctx}" if safe_law_ctx else "")
                 placeholder.markdown(_normalize_text(full_text))
-        except Exception as e:
-            safe_law_ctx = locals().get("law_ctx", "")
-            full_text = f"**오류**: {e}" + (f"\n\n{safe_law_ctx}" if safe_law_ctx else "")
-            placeholder.markdown(_normalize_text(full_text))
 
-        placeholder.empty()                  # 미리보기 제거
-        final_text = _normalize_text(full_text)
-        render_bubble_with_copy(final_text, key=f"ans-{ts}")
+            placeholder.empty()                  # 미리보기 제거
+            final_text = _normalize_text(full_text)
+            render_bubble_with_copy(final_text, key=f"ans-{ts}")
 
-# 대화 저장
-st.session_state.messages.append({
-    "role": "assistant", "content": final_text, "law": law_data, "ts": ts
-})
-
-
-
+    # 대화 저장 (← 이것도 내부로 유지)
+    st.session_state.messages.append({
+        "role": "assistant", "content": final_text, "law": law_data, "ts": ts
+    })
