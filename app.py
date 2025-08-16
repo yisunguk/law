@@ -744,7 +744,7 @@ if user_q:
             placeholder.markdown("_답변 생성 중입니다._")
             if client is None:
                 full_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
-                placeholder.markdown(_normalize_text(full_text))
+               
             else:
                 # 1) Draft streaming
                 for piece in stream_chat_completion(base_msgs, temperature=0.2, max_tokens=2000):
@@ -775,9 +775,16 @@ if user_q:
             full_text = f"**오류**: {e}\n\n{law_ctx}"
             placeholder.markdown(_normalize_text(full_text))
 
-        final_text = _normalize_text(full_text)
-        final_text = fix_links_with_lawdata(final_text, law_data)
-        render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
+          # (검증 끝난 직후) 최종 텍스트 계산 후
+            final_text = _normalize_text(full_text)
+            final_text = fix_links_with_lawdata(final_text, law_data)
+
+          # ✅ 이 줄 추가: 이전 placeholder 내용 제거
+            placeholder.empty()
+
+          # 그리고 딱 한 번만 말풍선으로 렌더
+            render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
+
 
     st.session_state.messages.append({
         "role": "assistant", "content": final_text, "law": law_data, "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
