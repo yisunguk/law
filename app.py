@@ -112,7 +112,7 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
-}}
+}
 
 </style>
 """, unsafe_allow_html=True)
