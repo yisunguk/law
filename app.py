@@ -640,7 +640,7 @@ else:
                 placeholder.markdown(_normalize_text(full_text))
 
         except Exception as err:
-            full_text = f"**오류**: {err}\n\n{law_ctx}"
+            full_text = f"**error**: {err}\n\n{law_ctx}"
             placeholder.markdown(_normalize_text(full_text))
 
         finally:
