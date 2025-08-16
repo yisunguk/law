@@ -350,6 +350,39 @@ def copy_url_button(url: str, key: str, label: str = "링크 복사"):
       </script>
     """, height=40)
 
+
+# -----------------------------
+# 링크 가용성 체크 + 대체 검색 링크
+# -----------------------------
+def is_reachable(url: str) -> bool:
+    try:
+        r = requests.get(url, timeout=8, allow_redirects=True)
+        return 200 <= r.status_code < 400
+    except Exception:
+        return False
+
+def build_fallback_search(kind: str, q: str) -> str:
+    qq = up.quote((q or "").strip())
+    if kind in ("law", "admrul", "ordin", "trty"):
+        return f"https://www.law.go.kr/LSW/lsSc.do?query={qq}"
+    if kind == "prec":
+        return f"https://glaw.scourt.go.kr/wsjo/panre/sjo050.do?saNo={qq}"
+    if kind == "cc":
+        return f"https://www.law.go.kr/LSW/lsSc.do?query={qq}"
+    return f"https://www.law.go.kr/LSW/lsSc.do?query={qq}"
+
+def present_url_with_fallback(main_url: str, kind: str, q: str, label_main="새 탭에서 열기"):
+    if main_url and is_reachable(main_url):
+        st.code(main_url, language="text")
+        st.link_button(label_main, main_url, use_container_width=True)
+        copy_url_button(main_url, key=str(abs(hash(main_url))))
+    else:
+        fb = build_fallback_search(kind, q)
+        st.warning("직접 링크가 열리지 않아 **대체 검색 링크**를 제공합니다.")
+        st.code(fb, language="text")
+        st.link_button("대체 검색 링크 열기", fb, use_container_width=True)
+        copy_url_button(fb, key=str(abs(hash(fb))))
+
 # =============================
 # Sidebar: 링크 생성기 (무인증, 기본값=실제 동작 예시)
 # =============================
@@ -357,7 +390,7 @@ with st.sidebar:
     st.header("🔗 링크 생성기 (무인증)")
 
     DEFAULTS = {
-        "법령명": "개인정보보호법",
+        "법령명": "민법",
         "법령_공포번호": "",
         "법령_공포일자": "",
         "법령_시행일자": "",
@@ -384,11 +417,14 @@ with st.sidebar:
     )
 
     url = None
+    out_kind = None
+    out_q = ""
 
     if target == "법령(한글주소)":
         name = st.text_input("법령명", value=DEFAULTS["법령명"])
         if st.button("생성", use_container_width=True):
             url = hangul_by_name("법령", name)
+            out_kind="law"; out_q=name
 
     elif target == "법령(정밀: 공포/시행/공포일자)":
         name = st.text_input("법령명", value=DEFAULTS["법령명"])
@@ -400,12 +436,14 @@ with st.sidebar:
         if st.button("생성", use_container_width=True):
             keys = [k for k in [ef, g_no, g_dt] if k] if ef else [k for k in [g_no, g_dt] if k] if (g_dt or g_no) else [g_no]
             url = hangul_law_with_keys(name, keys)
+            out_kind="law"; out_q=name
 
     elif target == "법령(조문/부칙/삼단비교)":
         name = st.text_input("법령명", value=DEFAULTS["법령명"])
         sub  = st.text_input("하위 경로", value="제3조")
         if st.button("생성", use_container_width=True):
             url = hangul_law_article(name, sub)
+            out_kind="law"; out_q=f"{name} {sub}"
 
     elif target == "행정규칙(한글주소)":
         name = st.text_input("행정규칙명", value=DEFAULTS["행정규칙명"])
@@ -416,9 +454,11 @@ with st.sidebar:
             with c2: issue_dt = st.text_input("발령일자(YYYYMMDD)", value="")
             if st.button("생성", use_container_width=True):
                 url = hangul_admrul_with_keys(name, issue_no, issue_dt)
+                out_kind="admrul"; out_q=name
         else:
             if st.button("생성", use_container_width=True):
                 url = hangul_by_name("행정규칙", name)
+                out_kind="admrul"; out_q=name
 
     elif target == "자치법규(한글주소)":
         name = st.text_input("자치법규명", value=DEFAULTS["자치법규명"])
@@ -429,9 +469,11 @@ with st.sidebar:
             with c2: dt = st.text_input("공포일자(YYYYMMDD)", value="")
             if st.button("생성", use_container_width=True):
                 url = hangul_ordin_with_keys(name, no, dt)
+                out_kind="ordin"; out_q=name
         else:
             if st.button("생성", use_container_width=True):
                 url = hangul_by_name("자치법규", name)
+                out_kind="ordin"; out_q=name
 
     elif target == "조약(한글주소 또는 번호/발효일자)":
         mode = st.radio("방식", ["이름(직접입력)", "번호/발효일자(권장)"], horizontal=True, index=1)
@@ -439,12 +481,14 @@ with st.sidebar:
             name = st.text_input("조약명", value="한-불 사회보장협정")
             if st.button("생성", use_container_width=True):
                 url = hangul_by_name("조약", name)
+                out_kind="trty"; out_q=name
         else:
             c1, c2 = st.columns(2)
             with c1: tno = st.text_input("조약번호", value=DEFAULTS["조약번호"])
             with c2: eff = st.text_input("발효일자(YYYYMMDD)", value=DEFAULTS["조약발효일"])
             if st.button("생성", use_container_width=True):
                 url = hangul_trty_with_keys(tno, eff)
+                out_kind="trty"; out_q=tno
 
     elif target == "판례(대표: 법제처 한글주소 + 전체: 대법원 검색)":
         mode = st.radio("입력 방식", ["사건번호로 만들기(권장)", "사건명 직접 입력"], horizontal=False, index=0)
@@ -471,14 +515,13 @@ with st.sidebar:
                 law_url = hangul_by_name("판례", name)
                 if found_no: scourt_url = build_scourt_link(found_no)
 
+        
         if law_url or scourt_url:
             st.subheader("생성된 링크")
             if law_url:
                 st.write("• 법제처 한글주소(대표 판례)")
-                st.code(law_url, language="text")
-                st.link_button("새 탭에서 열기", law_url, use_container_width=True)
-                copy_url_button(law_url, key=str(abs(hash(law_url))), label="법제처 링크 복사")
-                st.caption("※ 등록된 대표 판례만 열립니다. 404가 뜨면 아래 대법원 검색 링크를 이용하세요.")
+                present_url_with_fallback(law_url, kind="prec", q=(cno if mode.startswith("사건번호") else (name or "")))
+                st.caption("※ 등록된 대표 판례만 직접 열립니다. 실패 시 아래 대체(대법원) 링크를 사용하세요.")
             if scourt_url:
                 st.write("• 대법원 종합법률정보(전체 판례 검색)")
                 st.code(scourt_url, language="text")
@@ -489,27 +532,29 @@ with st.sidebar:
         name_or_no = st.text_input("사건명 또는 사건번호", value=DEFAULTS["헌재사건"])
         if st.button("생성", use_container_width=True):
             url = hangul_by_name("헌재결정례", name_or_no)
+            out_kind="cc"; out_q=name_or_no
 
     elif target == "법령해석례(ID 전용)":
         expc_id = st.text_input("해석례 ID(expcSeq)", value=DEFAULTS["해석례ID"])
         if st.button("생성", use_container_width=True):
             url = expc_public_by_id(expc_id)
+            out_kind="expc"; out_q=expc_id
 
     elif target == "법령용어(ID 전용)":
         trm = st.text_input("용어 ID(trmSeqs)", value=DEFAULTS["용어ID"])
         if st.button("생성", use_container_width=True):
             url = lstrm_public_by_id(trm)
+            out_kind="term"; out_q=trm
 
     elif target == "별표·서식 파일(ID 전용)":
         fl = st.text_input("파일 시퀀스(flSeq)", value=DEFAULTS["별표파일ID"])
         if st.button("생성", use_container_width=True):
             url = licbyl_file_download(fl)
+            out_kind="file"; out_q=fl
 
     if url:
         st.success("생성된 링크")
-        st.code(url, language="text")
-        st.link_button("새 탭에서 열기", url, use_container_width=True)
-        copy_url_button(url, key=str(abs(hash(url))))
+        present_url_with_fallback(url, kind=(out_kind or "law"), q=(out_q or ""))
         st.caption("⚠️ 한글주소는 ‘정확한 명칭’이 필요합니다. 확실한 식별이 필요하면 괄호 식별자(공포번호·일자 등)를 사용하세요.")
 
 # =============================
