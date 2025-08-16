@@ -1,89 +1,79 @@
-# chatbar.py
-# -*- coding: utf-8 -*-
-"""
-Streamlit ChatBar (clean, no "+"):
-- Browse files 버튼 + Limit 안내만 표시
-- Drag&Drop 문구/박스 삭제
-- "+" 아이콘 삭제
-"""
-from __future__ import annotations
-from typing import List, Optional
+# chatbar.py — Optimized bottom-fixed chat input with file upload
 import streamlit as st
 
-DEFAULT_ACCEPT = ["pdf", "docx", "txt"]
-
 def chatbar(
-    placeholder: str = "메시지를 입력하세요…",
-    button_label: str = "보내기",
-    accept: Optional[List[str]] = None,
+    placeholder: str = "메시지를 입력하세요...",
+    accept: list[str] | None = None,
+    max_files: int = 3,
+    max_size_mb: int = 10,
     key_prefix: str = "chatbar",
-    max_files: int = 5,
-    max_size_mb: int = 15,
 ):
-    if accept is None:
-        accept = DEFAULT_ACCEPT
+    """
+    하단 고정 ChatBar: 입력창 + 파일 업로드
+    Returns:
+        (submitted: bool, typed_text: str, files: list[UploadedFile])
+    """
 
+    # --- CSS: ChatBar 고정 스타일 ---
     st.markdown(
-        """
+        f"""
         <style>
-        .cb2-wrap { position: sticky; bottom: 0; z-index: 50; padding-top: 6px; }
-        .cb2 { display:flex; align-items:center; gap:10px;
-               border:1px solid var(--cb2-bd,#404040);
-               border-radius: 999px; padding: 8px 10px; }
-        [data-theme="light"] .cb2 { --cb2-bd:#e5e5e5; }
-
-        /* textarea 최소화 */
-        .cb2 textarea { border:none !important; outline:none !important; background:transparent !important;
-                        resize:none !important; height:40px; max-height:96px; }
-
-        /* 업로더 스타일 정리 */
-        div[data-testid="stFileUploader"] {background: transparent; border:none; padding:0; margin:0;}
-        div[data-testid="stFileUploader"] section {padding:0; border:none; background: transparent;}
-        div[data-testid="stFileUploader"] section > div {padding:0; margin:0;}
-        div[data-testid="stFileUploader"] label {display:none;}  /* label 숨김 */
-
-        /* drag&drop 박스 제거 */
-        div[data-testid="stFileUploaderDropzone"] {
-          border:none !important; background:transparent !important;
-          padding:0 !important; margin:0 !important;
-        }
-        div[data-testid="stFileUploaderDropzone"] > div:first-child {
-          display:none !important; /* "Drag and drop..." 문구 숨김 */
-        }
-
-        /* 업로드된 파일 프리뷰 제거 */
-        div[data-testid="stUploadedFile"] {display:none !important;}
+        .stChatInput {{
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 0.75rem 1rem;
+            background-color: var(--background-color);
+            box-shadow: 0 -2px 8px rgba(0,0,0,0.08);
+            z-index: 9999;
+        }}
+        .stChatInput textarea {{
+            min-height: 3rem !important;
+        }}
         </style>
         """,
         unsafe_allow_html=True,
     )
 
     submitted = False
-    text_val = ""
+    typed_text = ""
     files = []
 
+    # --- 입력 영역 ---
     with st.container():
-        st.markdown('<div class="cb2-wrap">', unsafe_allow_html=True)
-        with st.form(key=f"{key_prefix}-form", clear_on_submit=True):
-            col_l, col_m, col_r = st.columns([0.2, 0.6, 0.2])
-            with col_l:
-                files = st.file_uploader(
-                    "첨부",
-                    type=accept,
-                    accept_multiple_files=True,
-                    key=f"{key_prefix}-uploader",
-                    label_visibility="collapsed",
-                )
-            with col_m:
-                text_val = st.text_area(
-                    "메시지",
-                    placeholder=placeholder,
-                    key=f"{key_prefix}-text",
-                    label_visibility="collapsed",
-                    height=40,
-                )
-            with col_r:
-                submitted = st.form_submit_button(button_label, use_container_width=True, type="primary")
-        st.markdown('</div>', unsafe_allow_html=True)
+        c1, c2 = st.columns([6, 1])
 
-    return submitted, (text_val or '').strip(), files
+        with c1:
+            typed_text = st.text_area(
+                label="chat-input",
+                placeholder=placeholder,
+                key=f"{key_prefix}-input",
+                label_visibility="collapsed",
+            )
+
+        with c2:
+            submitted = st.button("전송", key=f"{key_prefix}-send", use_container_width=True)
+
+        # 파일 업로드 (선택)
+        if accept:
+            files = st.file_uploader(
+                "파일 첨부",
+                type=accept,
+                accept_multiple_files=True,
+                key=f"{key_prefix}-files",
+                label_visibility="collapsed",
+            ) or []
+
+            # 용량 제한 확인
+            max_bytes = max_size_mb * 1024 * 1024
+            oversized = [f for f in files if f.size > max_bytes]
+            if oversized:
+                st.warning(f"⚠️ {len(oversized)}개 파일이 {max_size_mb}MB 제한을 초과하여 제외됩니다.")
+                files = [f for f in files if f not in oversized]
+
+            if len(files) > max_files:
+                st.warning(f"⚠️ 파일은 최대 {max_files}개까지만 업로드 가능합니다.")
+                files = files[:max_files]
+
+    return submitted, (typed_text or "").strip(), files
