@@ -35,9 +35,17 @@ if st.session_state.pop("_clear_input", False):
 
 st.markdown(f"""
 <style>
-.block-container {{ max-width:{PAGE_MAX_WIDTH}px; margin:0 auto; padding-bottom:{BOTTOM_PADDING_PX}px; }}
-.stChatInput    {{ max-width:{PAGE_MAX_WIDTH}px; margin-left:auto; margin-right:auto; }}
-section.main    {{ padding-bottom:0; }}
+.block-container {{
+  max-width:{PAGE_MAX_WIDTH}px; 
+  margin:0 auto; 
+  padding-bottom:{BOTTOM_PADDING_PX}px; 
+}}
+.stChatInput {{
+  max-width:{PAGE_MAX_WIDTH}px; 
+  margin-left:auto; 
+  margin-right:auto; 
+}}
+section.main {{ padding-bottom:0; }}
 
 /* Header */
 .header {{
@@ -51,37 +59,82 @@ section.main    {{ padding-bottom:0; }}
 }}
 [data-theme="dark"] .header {{ border-color: rgba(255,255,255,.12); }}
 
-h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem 0 0.4rem; }}
+h2, h3 {{
+  font-size:1.1rem !important; 
+  font-weight:600 !important; 
+  margin:0.8rem 0 0.4rem; 
+}}
 
 .stMarkdown > div {{
-  background:var(--bubble-bg,#1f1f1f); color:var(--bubble-fg,#f5f5f5);
-  border-radius:14px; padding:14px 16px; box-shadow:0 1px 8px rgba(0,0,0,.12);
+  background:var(--bubble-bg,#1f1f1f); 
+  color:var(--bubble-fg,#f5f5f5);
+  border-radius:14px; 
+  padding:14px 16px; 
+  box-shadow:0 1px 8px rgba(0,0,0,.12);
 }}
 [data-theme="light"] .stMarkdown > div {{
-  --bubble-bg:#fff; --bubble-fg:#222; box-shadow:0 1px 8px rgba(0,0,0,.06);
+  --bubble-bg:#fff; 
+  --bubble-fg:#222; 
+  box-shadow:0 1px 8px rgba(0,0,0,.06);
 }}
 .stMarkdown ul, .stMarkdown ol {{ margin-left:1.1rem; }}
-.stMarkdown blockquote {{ margin:8px 0; padding-left:12px; border-left:3px solid rgba(255,255,255,.25); }}
-
-.copy-row{{ display:flex; justify-content:flex-end; margin:6px 4px 0 0; }}
-.copy-btn{{
-  display:inline-flex; align-items:center; gap:6px; padding:6px 10px;
-  border:1px solid rgba(255,255,255,.15); border-radius:10px; background:rgba(0,0,0,.25);
-  backdrop-filter:blur(4px); cursor:pointer; font-size:12px; color:inherit;
+.stMarkdown blockquote {{ 
+  margin:8px 0; 
+  padding-left:12px; 
+  border-left:3px solid rgba(255,255,255,.25); 
 }}
-[data-theme="light"] .copy-btn{{ background:rgba(255,255,255,.9); border-color:#ddd; }}
+
+.copy-row{{ 
+  display:flex; 
+  justify-content:flex-end; 
+  margin:6px 4px 0 0; 
+}}
+.copy-btn{{
+  display:inline-flex; 
+  align-items:center; 
+  gap:6px; 
+  padding:6px 10px;
+  border:1px solid rgba(255,255,255,.15); 
+  border-radius:10px; 
+  background:rgba(0,0,0,.25);
+  backdrop-filter:blur(4px); 
+  cursor:pointer; 
+  font-size:12px; 
+  color:inherit;
+}}
+[data-theme="light"] .copy-btn{{ 
+  background:rgba(255,255,255,.9); 
+  border-color:#ddd; 
+}}
 .copy-btn svg{{ pointer-events:none }}
 
 /* --- Pinned Question (상단 고정) --- */
 .pinned-q{{
-  position: sticky; top: 0; z-index: 900;
-  margin: 8px 0 12px; padding: 10px 14px;
-  border-radius: 12px; border: 1px solid rgba(255,255,255,.15);
-  background: rgba(0,0,0,.35); backdrop-filter: blur(6px);
+  position: sticky; 
+  top: 0; 
+  z-index: 900;
+  margin: 8px 0 12px; 
+  padding: 10px 14px;
+  border-radius: 12px; 
+  border: 1px solid rgba(255,255,255,.15);
+  background: rgba(0,0,0,.35); 
+  backdrop-filter: blur(6px);
 }}
-[data-theme="light"] .pinned-q{{ background: rgba(255,255,255,.85); border-color:#e5e5e5; }}
-.pinned-q .label{{ font-size:12px; opacity:.8; margin-bottom:4px; }}
-.pinned-q .text{{ font-weight:600; line-height:1.4; max-height:7.5rem; overflow:auto; }}
+[data-theme="light"] .pinned-q{{ 
+  background: rgba(255,255,255,.85); 
+  border-color:#e5e5e5; 
+}}
+.pinned-q .label{{ 
+  font-size:12px; 
+  opacity:.8; 
+  margin-bottom:4px; 
+}}
+.pinned-q .text{{ 
+  font-weight:600; 
+  line-height:1.4; 
+  max-height:7.5rem; 
+  overflow:auto; 
+}}
 
 /* Chat message width = container width */
 :root {{
@@ -89,14 +142,14 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 }}
 
 /* Chat message wrapper 배경 제거 */
-[data-testid="stChatMessage"] {
+[data-testid="stChatMessage"] {{
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
-}
+}}
 
 /* Chat message 본문 마크다운 배경 제거 */
-[data-testid="stChatMessage"] .stMarkdown {
+[data-testid="stChatMessage"] .stMarkdown {{
   background: transparent !important;
   color: inherit !important;
   border: none !important;
@@ -106,17 +159,16 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
   max-width: {PAGE_MAX_WIDTH}px;
   margin: 0 auto;
   box-sizing: border-box;
-}
+}}
 
-[data-theme="light"] [data-testid="stChatMessage"] .stMarkdown {
+[data-theme="light"] [data-testid="stChatMessage"] .stMarkdown {{
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
-}
-
-
+}}
 </style>
 """, unsafe_allow_html=True)
+
 
 st.markdown(
     """
