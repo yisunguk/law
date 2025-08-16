@@ -1,7 +1,7 @@
-# app.py — Single-window chat with bottom streaming + robust dedupe
+# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
-import io, os, re, json, time
+import io, os, re, json, time, html
 from datetime import datetime
 import urllib.parse as up
 import xml.etree.ElementTree as ET
@@ -63,6 +63,17 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 }}
 [data-theme="light"] .copy-btn{{ background:rgba(255,255,255,.9); border-color:#ddd; }}
 .copy-btn svg{{ pointer-events:none }}
+
+/* --- Pinned Question (상단 고정) --- */
+.pinned-q{{
+  position: sticky; top: 0; z-index: 900;
+  margin: 8px 0 12px; padding: 10px 14px;
+  border-radius: 12px; border: 1px solid rgba(255,255,255,.15);
+  background: rgba(0,0,0,.35); backdrop-filter: blur(6px);
+}}
+[data-theme="light"] .pinned-q{{ background: rgba(255,255,255,.85); border-color:#e5e5e5; }}
+.pinned-q .label{{ font-size:12px; opacity:.8; margin-bottom:4px; }}
+.pinned-q .text{{ font-weight:600; line-height:1.4; max-height:7.5rem; overflow:auto; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -251,6 +262,26 @@ def present_url_with_fallback(main_url: str, kind: str, q: str, label_main="새 
         st.code(fb, language="text")
         st.link_button("대체 검색 링크 열기", fb, use_container_width=True)
         copy_url_button(fb, key=str(abs(hash(fb))))
+
+# ===== Pinned Question helper =====
+def _esc(s: str) -> str:
+    return html.escape(s or "").replace("\n", "<br>")
+
+def render_pinned_question():
+    """가장 최근 사용자 질문을 상단에 고정 표시"""
+    last_q = None
+    for m in reversed(st.session_state.get("messages", [])):
+        if m.get("role") == "user":
+            last_q = m.get("content", "")
+            break
+    if not last_q:
+        return
+    st.markdown(f"""
+    <div class="pinned-q">
+      <div class="label">최근 질문</div>
+      <div class="text">{_esc(last_q)}</div>
+    </div>
+    """, unsafe_allow_html=True)
 
 # =============================
 # Secrets / Clients / Session
@@ -578,6 +609,9 @@ def _push_user_from_pending() -> str | None:
 # 1) 직전 제출(이벤트)이 있는 경우, 먼저 히스토리에 1회만 반영
 user_q = _push_user_from_pending()
 
+# 🔝 1-1) 최근 질문 상단 고정 바 렌더 (히스토리/스트리밍 전에 호출)
+render_pinned_question()
+
 # 2) 히스토리 정방향 렌더
 with st.container():
     for i, m in enumerate(st.session_state.messages):
@@ -645,7 +679,6 @@ if user_q:
         "role": "assistant", "content": final_text, "law": law_data, "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
 
-# 4) ChatBar (맨 아래 고정) — 여기서만 한 번 호출
 # 4) ChatBar (맨 아래 고정)
 submitted, typed_text, files = chatbar(
     placeholder="법령에 대한 질문을 입력하거나, 관련 문서를 첨부해서 문의해 보세요…",
@@ -657,7 +690,7 @@ if submitted:
     if text:
         st.session_state["_pending_user_q"] = text
         st.session_state["_pending_user_nonce"] = time.time_ns()
-    # 🔹 입력창은 '다음 런 시작 전에' 비우도록 플래그만 켜고 즉시 재실행
+    # 입력창은 '다음 런 시작 전에' 비우도록 플래그만 켜고 즉시 재실행
     st.session_state["_clear_input"] = True
     st.rerun()
 
