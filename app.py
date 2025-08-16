@@ -322,8 +322,28 @@ def copy_url_button(url: str, key: str, label: str = "링크 복사"):
 # =============================
 # Sidebar: 링크 생성기 (무인증)
 # =============================
+# =============================
+# Sidebar: 링크 생성기 (무인증, 기본값=실제 동작 예시)
+# =============================
 with st.sidebar:
     st.header("🔗 링크 생성기 (무인증)")
+
+    # ✅ 실제로 열리는 기본 예시들
+    DEFAULTS = {
+        "법령명": "개인정보보호법",                          # https://www.law.go.kr/법령/개인정보보호법
+        "법령_공포번호": "",                                # 비워둬도 '법령명'만으로 동작
+        "법령_공포일자": "",
+        "법령_시행일자": "",
+        "행정규칙명": "수입통관사무처리에관한고시",         # https://www.law.go.kr/행정규칙/수입통관사무처리에관한고시
+        "자치법규명": "서울특별시경관조례",                 # https://www.law.go.kr/자치법규/서울특별시경관조례
+        "조약번호": "2193",                                 # https://www.law.go.kr/조약/(2193,20140701)
+        "조약발효일": "20140701",
+        "판례_사건번호": "2010다52349",                     # 대법원 검색은 항상 동작
+        "헌재사건": "2022헌마1312",                         # https://www.law.go.kr/헌재결정례/2022헌마1312
+        "해석례ID": "313107",                               # https://www.law.go.kr/LSW/expcInfoP.do?expcSeq=313107
+        "용어ID": "3945293",                                # https://www.law.go.kr/LSW/lsTrmInfoR.do?trmSeqs=3945293
+        "별표파일ID": "110728887",                          # https://www.law.go.kr/LSW/flDownload.do?flSeq=110728887
+    }
 
     target = st.selectbox(
         "대상 선택",
@@ -340,105 +360,92 @@ with st.sidebar:
 
     # ——— 한글주소 계열 ———
     if target == "법령(한글주소)":
-        name = st.text_input("법령명", placeholder="예) 자동차관리법")
-        if st.button("생성", use_container_width=True) and (name or "").strip():
+        name = st.text_input("법령명", value=DEFAULTS["법령명"])
+        if st.button("생성", use_container_width=True):
             url = hangul_by_name("법령", name)
 
     elif target == "법령(정밀: 공포/시행/공포일자)":
-        name = st.text_input("법령명", placeholder="예) 자동차관리법")
+        name = st.text_input("법령명", value=DEFAULTS["법령명"])
         c1, c2, c3 = st.columns(3)
-        with c1: g_no = st.text_input("공포번호", placeholder="예) 08358")
-        with c2: g_dt = st.text_input("공포일자(YYYYMMDD)", placeholder="예) 20050331")
-        with c3: ef   = st.text_input("시행일자(YYYYMMDD, 선택)", placeholder="예) 20060401")
-        st.caption("입력 예: (08358) | (07428,20050331) | (20060401,07428,20050331)")
-        if st.button("생성", use_container_width=True) and (name or "").strip():
+        with c1: g_no = st.text_input("공포번호", value=DEFAULTS["법령_공포번호"])
+        with c2: g_dt = st.text_input("공포일자(YYYYMMDD)", value=DEFAULTS["법령_공포일자"])
+        with c3: ef   = st.text_input("시행일자(YYYYMMDD, 선택)", value=DEFAULTS["법령_시행일자"])
+        st.caption("예시: (08358) / (07428,20050331) / (20060401,07428,20050331)")
+        if st.button("생성", use_container_width=True):
             keys = [k for k in [ef, g_no, g_dt] if k] if ef else [k for k in [g_no, g_dt] if k] if (g_dt or g_no) else [g_no]
             url = hangul_law_with_keys(name, keys)
 
     elif target == "법령(조문/부칙/삼단비교)":
-        name = st.text_input("법령명", placeholder="예) 자동차관리법")
-        sub  = st.text_input("하위 경로", placeholder="예) 제3조 / 부칙 / 삼단비교")
-        if st.button("생성", use_container_width=True) and (name or "").strip() and (sub or "").strip():
+        name = st.text_input("법령명", value=DEFAULTS["법령명"])
+        sub  = st.text_input("하위 경로", value="제3조")  # 바로 열리는 조문 예시
+        if st.button("생성", use_container_width=True):
             url = hangul_law_article(name, sub)
 
     elif target == "행정규칙(한글주소)":
-        name = st.text_input("행정규칙명", placeholder="예) 수입통관사무처리에관한고시")
+        name = st.text_input("행정규칙명", value=DEFAULTS["행정규칙명"])
         use_keys = st.checkbox("발령번호/발령일자로 특정", value=False)
         if use_keys:
             c1, c2 = st.columns(2)
-            with c1: issue_no = st.text_input("발령번호", placeholder="예) 582")
-            with c2: issue_dt = st.text_input("발령일자(YYYYMMDD)", placeholder="예) 20210122")
-            if st.button("생성", use_container_width=True) and (name or "").strip() and issue_no and issue_dt:
+            with c1: issue_no = st.text_input("발령번호", value="")
+            with c2: issue_dt = st.text_input("발령일자(YYYYMMDD)", value="")
+            if st.button("생성", use_container_width=True):
                 url = hangul_admrul_with_keys(name, issue_no, issue_dt)
         else:
-            if st.button("생성", use_container_width=True) and (name or "").strip():
+            if st.button("생성", use_container_width=True):
                 url = hangul_by_name("행정규칙", name)
 
     elif target == "자치법규(한글주소)":
-        name = st.text_input("자치법규명", placeholder="예) 서울특별시경관조례")
+        name = st.text_input("자치법규명", value=DEFAULTS["자치법규명"])
         use_keys = st.checkbox("공포번호/공포일자로 특정", value=False)
         if use_keys:
             c1, c2 = st.columns(2)
-            with c1: no = st.text_input("공포번호", placeholder="예) 2120")
-            with c2: dt = st.text_input("공포일자(YYYYMMDD)", placeholder="예) 20150102")
-            if st.button("생성", use_container_width=True) and (name or "").strip() and no and dt:
+            with c1: no = st.text_input("공포번호", value="")
+            with c2: dt = st.text_input("공포일자(YYYYMMDD)", value="")
+            if st.button("생성", use_container_width=True):
                 url = hangul_ordin_with_keys(name, no, dt)
         else:
-            if st.button("생성", use_container_width=True) and (name or "").strip():
+            if st.button("생성", use_container_width=True):
                 url = hangul_by_name("자치법규", name)
 
     elif target == "조약(한글주소 또는 번호/발효일자)":
-        mode = st.radio("방식", ["이름", "번호/발효일자"], horizontal=True)
-        if mode == "이름":
-            name = st.text_input("조약명", placeholder="예) 대한민국과 ○○국 간의 사회보장협정")
-            if st.button("생성", use_container_width=True) and (name or "").strip():
+        mode = st.radio("방식", ["이름(직접입력)", "번호/발효일자(권장)"], horizontal=True, index=1)
+        if mode.startswith("이름"):
+            name = st.text_input("조약명", value="한-불 사회보장협정")  # 예시(이름은 사이트마다 표기가 달라 실패할 수 있음)
+            if st.button("생성", use_container_width=True):
                 url = hangul_by_name("조약", name)
         else:
             c1, c2 = st.columns(2)
-            with c1: tno = st.text_input("조약번호", placeholder="예) 2193")
-            with c2: eff = st.text_input("발효일자(YYYYMMDD)", placeholder="예) 20140701")
-            if st.button("생성", use_container_width=True) and tno and eff:
+            with c1: tno = st.text_input("조약번호", value=DEFAULTS["조약번호"])
+            with c2: eff = st.text_input("발효일자(YYYYMMDD)", value=DEFAULTS["조약발효일"])
+            if st.button("생성", use_container_width=True):
                 url = hangul_trty_with_keys(tno, eff)
 
     elif target == "판례(대표: 법제처 한글주소 + 전체: 대법원 검색)":
-        mode = st.radio("입력 방식", ["사건번호로 만들기", "사건명 직접 입력"], horizontal=False)
+        mode = st.radio("입력 방식", ["사건번호로 만들기(권장)", "사건명 직접 입력"], horizontal=False, index=0)
 
         law_url = None
         scourt_url = None
 
-        if mode == "사건번호로 만들기":
-            cno = st.text_input("사건번호", placeholder="예) 2010다52349 / 2009도1234 / 2021마12345")
-            st.caption("형식: 연도 4자리 + 사건유형(한글 1~3자) + 번호 1~6자리")
-
-            ex1, ex2, ex3 = st.columns(3)
-            if ex1.button("2010다52349", use_container_width=True): cno = "2010다52349"
-            if ex2.button("2009도1234",  use_container_width=True): cno = "2009도1234"
-            if ex3.button("2021마12345", use_container_width=True): cno = "2021마12345"
-
+        if mode.startswith("사건번호"):
+            cno = st.text_input("사건번호", value=DEFAULTS["판례_사건번호"])
             colA, colB = st.columns(2)
             with colA:  court = st.selectbox("법원", ["대법원"], index=0)
             with colB:  dispo = st.selectbox("선고유형", ["판결", "결정"], index=0)
-
-            if st.button("링크 생성", use_container_width=True):
+            if st.button("생성", use_container_width=True):
                 name = build_case_name_from_no(cno, court=court, disposition=dispo)
                 if not name:
                     st.error("사건번호 형식이 올바르지 않습니다. 예) 2010다52349, 2009도1234")
                 else:
-                    law_url = hangul_by_name("판례", name)        # 대표 판례가 등록된 경우에만 열림
-                    scourt_url = build_scourt_link(cno)            # 대법원 공식 검색(항상 동작)
-
-            if cno:
-                st.success("유효한 사건번호입니다.") if validate_case_no(cno) \
-                    else st.info("예: 2010다52349 (연도4자리+한글1~3자+숫자)")
-
-        else:  # 사건명 직접 입력
-            name = st.text_input("판례명", placeholder="예) 대법원 2010다52349 판결")
+                    law_url = hangul_by_name("판례", name)   # 대표 판례만 열림
+                    scourt_url = build_scourt_link(cno)       # 대법원 검색(항상 동작)
+        else:
+            name = st.text_input("판례명", value=f"대법원 {DEFAULTS['판례_사건번호']} 판결")
             found_no = extract_case_no(name)
-            if st.button("링크 생성", use_container_width=True) and (name or "").strip():
+            if st.button("생성", use_container_width=True):
                 law_url = hangul_by_name("판례", name)
-                if found_no: scourt_url = build_scourt_link(found_no)
+                if found_no:
+                    scourt_url = build_scourt_link(found_no)
 
-        # 결과 표시 (둘 다 보여주기)
         if law_url or scourt_url:
             st.subheader("생성된 링크")
             if law_url:
@@ -454,24 +461,24 @@ with st.sidebar:
                 copy_url_button(scourt_url, key=str(abs(hash(scourt_url))), label="대법원 링크 복사")
 
     elif target == "헌재결정례(한글주소)":
-        name_or_no = st.text_input("사건명 또는 사건번호", placeholder="예) 2022헌마1312")
-        if st.button("생성", use_container_width=True) and (name_or_no or "").strip():
+        name_or_no = st.text_input("사건명 또는 사건번호", value=DEFAULTS["헌재사건"])
+        if st.button("생성", use_container_width=True):
             url = hangul_by_name("헌재결정례", name_or_no)
 
     # ——— 예외 3종: ID 전용 무인증 URL ———
     elif target == "법령해석례(ID 전용)":
-        expc_id = st.text_input("해석례 ID(expcSeq)", placeholder="예) 313107")
-        if st.button("생성", use_container_width=True) and (expc_id or "").strip():
+        expc_id = st.text_input("해석례 ID(expcSeq)", value=DEFAULTS["해석례ID"])
+        if st.button("생성", use_container_width=True):
             url = expc_public_by_id(expc_id)
 
     elif target == "법령용어(ID 전용)":
-        trm = st.text_input("용어 ID(trmSeqs)", placeholder="예) 3945293")
-        if st.button("생성", use_container_width=True) and (trm or "").strip():
+        trm = st.text_input("용어 ID(trmSeqs)", value=DEFAULTS["용어ID"])
+        if st.button("생성", use_container_width=True):
             url = lstrm_public_by_id(trm)
 
     elif target == "별표·서식 파일(ID 전용)":
-        fl = st.text_input("파일 시퀀스(flSeq)", placeholder="예) 110728887")
-        if st.button("생성", use_container_width=True) and (fl or "").strip():
+        fl = st.text_input("파일 시퀀스(flSeq)", value=DEFAULTS["별표파일ID"])
+        if st.button("생성", use_container_width=True):
             url = licbyl_file_download(fl)
 
     # 단일 URL 생성 케이스 출력
