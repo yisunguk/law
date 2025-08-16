@@ -416,6 +416,72 @@ with st.sidebar:
     
     st.markdown("---")
     
+    # 법제처 조회 기능
+    st.markdown("## 🔍 법제처 조회")
+    
+    # 검색어 입력
+    search_keyword = st.text_input(
+        "검색어 입력",
+        placeholder="예: 민법, 형법, 상법...",
+        key="sidebar_search",
+        help="검색하고 싶은 법령명을 입력하세요"
+    )
+    
+    # 검색 결과 수 선택
+    search_rows = st.selectbox(
+        "검색 결과 수",
+        options=[5, 10, 15, 20],
+        index=0,
+        key="sidebar_rows"
+    )
+    
+    # 검색 버튼
+    if st.button("🔍 검색하기", use_container_width=True, key="sidebar_search_btn"):
+        if search_keyword.strip():
+            with st.spinner("법령 검색 중..."):
+                search_results = law_search(search_keyword.strip(), search_rows)
+                if search_results:
+                    st.success(f"✅ {len(search_results)}개의 법령을 찾았습니다!")
+                    
+                    # 검색 결과를 세션에 저장하여 메인 채팅에 표시
+                    st.session_state.last_search_results = search_results
+                    st.session_state.last_search_query = search_keyword.strip()
+                    
+                    # 검색 결과를 채팅에 추가
+                    search_summary = f"🔍 **'{search_keyword.strip()}' 검색 결과**\n\n" + "\n".join(search_results)
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": search_summary, 
+                        "ts": time.time()
+                    })
+                    save_message(st.session_state.thread_id, {
+                        "role": "assistant", 
+                        "content": search_summary, 
+                        "ts": time.time()
+                    })
+                    st.rerun()
+                else:
+                    st.warning("검색 결과가 없습니다.")
+        else:
+            st.warning("검색어를 입력해주세요.")
+    
+    # 최근 검색 결과 표시
+    if hasattr(st.session_state, 'last_search_results') and st.session_state.last_search_results:
+        st.markdown("### 📋 최근 검색 결과")
+        st.info(f"**'{st.session_state.last_search_query}'** 검색 결과")
+        for i, result in enumerate(st.session_state.last_search_results[:5]):  # 최근 5개만 표시
+            st.markdown(f"• {result}")
+        
+        # 검색 결과 지우기
+        if st.button("🗑️ 검색 결과 지우기", use_container_width=True, key="clear_search"):
+            if 'last_search_results' in st.session_state:
+                del st.session_state.last_search_results
+            if 'last_search_query' in st.session_state:
+                del st.session_state.last_search_query
+            st.rerun()
+    
+    st.markdown("---")
+    
     # 대화 히스토리
     st.markdown("### 📚 대화 히스토리")
     
