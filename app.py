@@ -34,42 +34,77 @@ h2, h3 {
     font-weight: 600 !important;
     margin-top: 0.8rem;
     margin-bottom: 0.4rem;            
+}
 
-  .block-container{max-width:1020px;margin:0 auto;}
-  .stChatInput{max-width:1020px;margin-left:auto;margin-right:auto;}
+/* 메인 컨테이너 레이아웃 */
+.block-container {
+    max-width: 1020px;
+    margin: 0 auto;
+    padding-bottom: 120px !important;   /* 고정 입력창 높이만큼 여백 확보 */
+}
 
-  .header{
-    text-align:center;padding:1rem;border-radius:12px;
-    background:linear-gradient(135deg,#8b5cf6,#a78bfa);color:#fff;margin:0 0 1rem 0
-  }
+/* 기본 채팅 입력창 폭 정렬 */
+.stChatInput {
+    max-width: 1020px;
+    margin-left: auto;
+    margin-right: auto;
+}
 
-  /* 말풍선 느낌을 Markdown 블록에 부여 */
-  .stMarkdown > div {
-    background:var(--bubble-bg,#1f1f1f);
-    color:var(--bubble-fg,#f5f5f5);
-    border-radius:14px;
-    padding:14px 16px;
-    box-shadow:0 1px 8px rgba(0,0,0,.12);
-  }
-  [data-theme="light"] .stMarkdown > div {
-    --bubble-bg:#ffffff; --bubble-fg:#222222;
+/* 상단 헤더 스타일 */
+.header {
+    text-align: center;
+    padding: 1rem;
+    border-radius: 12px;
+    background: linear-gradient(135deg,#8b5cf6,#a78bfa);
+    color: #fff;
+    margin: 0 0 1rem 0;
+}
+
+/* 말풍선 느낌을 Markdown 블록에 부여 */
+.stMarkdown > div {
+    background: var(--bubble-bg,#1f1f1f);
+    color: var(--bubble-fg,#f5f5f5);
+    border-radius: 14px;
+    padding: 14px 16px;
+    box-shadow: 0 1px 8px rgba(0,0,0,.12);
+}
+[data-theme="light"] .stMarkdown > div {
+    --bubble-bg:#ffffff;
+    --bubble-fg:#222222;
     box-shadow:0 1px 8px rgba(0,0,0,.06);
-  }
-  .stMarkdown ul, .stMarkdown ol { margin-left:1.1rem; }
-  .stMarkdown blockquote{
-    margin:8px 0; padding-left:12px; border-left:3px solid rgba(255,255,255,.25);
-  }
+}
 
-  /* 말풍선 아래 줄의 복사 버튼 */
-  .copy-row{ display:flex;justify-content:flex-end;margin:6px 4px 0 0; }
-  .copy-btn{
-    display:inline-flex;align-items:center;gap:6px;
-    padding:6px 10px;border:1px solid rgba(255,255,255,.15);
-    border-radius:10px;background:rgba(0,0,0,.25);
-    backdrop-filter:blur(4px);cursor:pointer;font-size:12px;color:inherit;
-  }
-  [data-theme="light"] .copy-btn{background:rgba(255,255,255,.9);border-color:#ddd;}
-  .copy-btn svg{pointer-events:none}
+.stMarkdown ul, .stMarkdown ol { margin-left:1.1rem; }
+.stMarkdown blockquote {
+    margin:8px 0;
+    padding-left:12px;
+    border-left:3px solid rgba(255,255,255,.25);
+}
+
+/* 말풍선 아래 줄의 복사 버튼 */
+.copy-row {
+    display: flex;
+    justify-content: flex-end;
+    margin: 6px 4px 0 0;
+}
+.copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border: 1px solid rgba(255,255,255,.15);
+    border-radius: 10px;
+    background: rgba(0,0,0,.25);
+    backdrop-filter: blur(4px);
+    cursor: pointer;
+    font-size: 12px;
+    color: inherit;
+}
+[data-theme="light"] .copy-btn {
+    background: rgba(255,255,255,.9);
+    border-color: #ddd;
+}
+.copy-btn svg { pointer-events:none }
 </style>
 """, unsafe_allow_html=True)
 
