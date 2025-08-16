@@ -616,11 +616,11 @@ if user_q:
     })
 
     # 4) 응답 생성
-if client is None:
-    final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
+    if client is None:
+       final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
     with st.chat_message("assistant"):
         render_bubble_with_copy(final_text, key=f"ans-{ts}")
-else:
+    else:
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_text, buffer = "", ""      # ← try 전에 선언 (안전)
