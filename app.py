@@ -309,9 +309,9 @@ def render_pinned_question():
 
 
 
-# 🔹 Link correction utility: fix law.go.kr URLs using MOLEG search results
+# Link correction utility: fix law.go.kr URLs using MOLEG search results
 def fix_links_with_lawdata(markdown: str, law_data: list[dict]) -> str:
-    """답변 내 law.go.kr 링크를 law_data 기준으로 교정"""
+    """Replace law.go.kr URLs in the answer with official detail links from law_data."""
     import re
     if not markdown or not law_data:
         return markdown
@@ -717,7 +717,9 @@ if user_q:
             full_text = f"**오류**: {e}\n\n{law_ctx}"
             placeholder.markdown(_normalize_text(full_text))
 
-        \1        final_text = fix_links_with_lawdata(final_text, law_data)  # 🔹 링크 교정 적용
+        placeholder.empty()
+        final_text = _normalize_text(full_text)
+        final_text = fix_links_with_lawdata(final_text, law_data)  # link correction applied
         render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
 
     st.session_state.messages.append({
