@@ -13,6 +13,7 @@ from openai import AzureOpenAI
 
 # ===== Local modules =====
 from chatbar import chatbar
+# (첨부 파일을 나중에 확장할 수 있도록 import만 유지)
 from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_txt, sanitize
 
 # =============================
@@ -398,9 +399,6 @@ with st.sidebar:
         "용어ID": "3945293",
         "별표파일ID": "110728887",
     }
-    # — 이하: 원본 로직과 동일 (필요 메서드 재사용)
-    # 간결화를 위해 중복 분기 유지
-
     target = st.selectbox(
         "대상 선택",
         [
@@ -563,8 +561,7 @@ if user_q:
     if used_endpoint: st.caption(f"법제처 API endpoint: `{used_endpoint}`")
     if err: st.warning(err)
     law_ctx = format_law_context(law_data)
-    # 첨부 요약 (ChatBar에서 올린 파일은 다음 rerun에 반영)
-    report_ctx = ""
+    report_ctx = ""  # 파일 컨텍스트를 붙일 땐 여기 추가
 
     template_block = choose_output_template(user_q)
     model_messages = build_history_messages(max_turns=10) + [{
@@ -612,13 +609,12 @@ if user_q:
 # =============================
 # ChatBar (맨 아래 고정) — 여기서만 한 번 호출
 # =============================
-# ChatBar의 제출을 즉시 messages에 넣지 않고, _pending_user_q로 넘겨 다음 rerun에서 반영
 submitted, typed_text, files = chatbar(
     placeholder="법령에 대한 질문을 입력하거나, 관련 문서를 첨부해서 문의해 보세요…",
     accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix="lawchat",
 )
 
-# 첨부파일은 다음 턴에서 분석하도록 저장(필요 시 확장)
+# 제출 즉시 messages에 넣지 않고, 다음 rerun에서 반영
 if submitted:
     st.session_state["_pending_user_q"] = (typed_text or "").strip()
 
