@@ -1,4 +1,4 @@
-# chatbar.py — Bottom-fixed chat input with file upload (Enter = Send)
+# chatbar.py — Bottom chat input (Enter=Send) + optional file upload
 from __future__ import annotations
 import streamlit as st
 
@@ -10,42 +10,31 @@ def chatbar(
     key_prefix: str = "chatbar",
 ):
     """
-    하단 고정 ChatBar: 입력창(st.chat_input) + 파일 업로드
+    하단 고정 입력창(st.chat_input) + 파일 업로드
     Returns:
         (submitted: bool, typed_text: str, files: list[UploadedFile])
     """
-    # 선택: 살짝 그림자만 (필수 아님)
-    st.markdown(
-        """
-        <style>
-          .stChatInput {
-            position: fixed; bottom: 0; left: 0; right: 0;
-            padding: 0.75rem 1rem; z-index: 9999;
-            background-color: var(--background-color);
-            box-shadow: 0 -2px 8px rgba(0,0,0,0.08);
-          }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
+    # ⚠️ 여기서는 .stChatInput 위치/스타일을 건드리지 않습니다.
+    # (app.py에서 이미 padding-bottom / max-width 등을 설정함)
 
-    # 1) 입력: Enter = 전송
+    # 파일 업로드(선택, 본문 위에 표시됨)
+    files = []
+    if accept:
+        files = st.file_uploader(
+            "파일 첨부",
+            type=accept,
+            accept_multiple_files=True,
+            key=f"{key_prefix}-files",
+            label_visibility="visible",
+        ) or []
+
+        # 개수/용량 제한
+        max_bytes = max_size_mb * 1024 * 1024
+        files = [f for f in files if f.size <= max_bytes]
+        if len(files) > max_files:
+            files = files[:max_files]
+
+    # 하단 고정 입력창: Enter = 전송
     msg = st.chat_input(placeholder, key=f"{key_prefix}-input")
-
-    # 2) 파일 업로드(선택)
-    files = st.file_uploader(
-        "파일 첨부",
-        type=(accept or None),
-        accept_multiple_files=True,
-        key=f"{key_prefix}-files",
-        label_visibility="collapsed",
-    ) or []
-
-    # 개수/용량 제한
-    max_bytes = max_size_mb * 1024 * 1024
-    files = [f for f in files if f.size <= max_bytes]
-    if len(files) > max_files:
-        files = files[:max_files]
-
     submitted = (msg is not None)
     return submitted, (msg or "").strip(), files
