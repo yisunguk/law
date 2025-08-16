@@ -695,15 +695,11 @@ for i, m in enumerate(st.session_state.messages):
 # Input & Answer  (📎 첨부 지원으로 교체)
 # =============================
 # [PATCH] 기존: user_q = st.chat_input("...")  →  첨부 가능 ChatBar로 교체
-st.markdown('<div id="sticky-chatbar"><div class="inner">', unsafe_allow_html=True)
-
 submitted, typed_text, files = chatbar(
     placeholder="법령에 대한 질문을 입력하거나, 관련 문서를 첨부해서 문의해 보세요…",
     accept=["pdf", "docx", "txt"],
         max_files=5, max_size_mb=15, key_prefix="lawchat",
 )
-
-st.markdown('</div></div>', unsafe_allow_html=True)
 
 # 첨부파일을 텍스트로 추출하여 발췌 생성 (파일당 12,000자 제한)
 report_snippets = []
@@ -816,37 +812,3 @@ if user_q:
     st.session_state.messages.append({
         "role": "assistant", "content": final_text, "law": law_data, "ts": ts
     })
-
-
-
-# === [Sticky Chatbar Styles] ===
-st.markdown("""
-<style>
-  /* 메인 컨테이너에 하단 여백을 넣어 고정 바에 내용이 가리지 않게 함 */
-  .block-container { padding-bottom: 140px !important; }
-
-  /* 하단 고정 채팅바 */
-  #sticky-chatbar {
-      position: fixed;
-      left: 0; right: 0; bottom: 0;
-      z-index: 1000;
-      background: var(--st-chatbar-bg, rgba(255,255,255,.92));
-      backdrop-filter: blur(6px);
-      border-top: 1px solid rgba(0,0,0,.08);
-      padding: 10px 12px;
-  }
-  [data-theme="dark"] #sticky-chatbar {
-      --st-chatbar-bg: rgba(0,0,0,.55);
-      border-top-color: rgba(255,255,255,.12);
-  }
-
-  /* 고정바 안쪽 너비를 본문과 정렬 */
-  #sticky-chatbar > .inner {
-      max-width: 1020px; margin: 0 auto;
-  }
-
-  /* (선택) chatbar 컴포넌트 내부여백 보정 */
-  #sticky-chatbar .stFileUploader, 
-  #sticky-chatbar [data-testid="stTextInput"] { margin-bottom: 0 !important; }
-</style>
-""", unsafe_allow_html=True)
