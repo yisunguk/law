@@ -1,4 +1,4 @@
-# chatbar.py — Bottom-fixed chat input with file upload (no side-effects except UI)
+# chatbar.py — Bottom-fixed chat input with file upload (safe)
 import streamlit as st
 
 def chatbar(
@@ -60,8 +60,5 @@ def chatbar(
             if len(files) > max_files:
                 files = files[:max_files]
 
-    # UX: 전송 클릭 시 즉시 입력창 내용 비우기 (app.py에서도 안전장치 있음)
-    if submitted:
-        st.session_state[f"{key_prefix}-input"] = ""
-
+    # ⛔ 여기서 st.session_state[...] = "" 로 입력창을 비우지 않습니다.
     return submitted, (typed_text or "").strip(), files
