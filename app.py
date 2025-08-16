@@ -797,3 +797,6 @@ if user_q:
     st.session_state.messages.append({
         "role": "assistant", "content": final_text, "law": law_data, "ts": ts
     })
+    # app.py — 히스토리/스트리밍 렌더 이후 아무 곳(가장 아래 권장)
+    st.markdown('<div style="height: 96px"></div>', unsafe_allow_html=True)
+
