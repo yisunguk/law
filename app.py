@@ -85,28 +85,27 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 
 /* Chat message width = container width */
 :root {{
-  --msg-max: {PAGE_MAX_WIDTH}px;         /* 입력창과 동일한 최대 폭 */
+  --msg-max: {PAGE_MAX_WIDTH}px;  /* 입력창과 동일한 최대 폭 */
 }}
 
 [data-testid="stChatMessage"] .stMarkdown {{
-  background: var(--bubble-bg,#1f1f1f);
-  color: var(--bubble-fg,#f5f5f5);
-  border-radius: 14px;
-  padding: 14px 16px;
-  box-shadow: 0 1px 8px rgba(0,0,0,.12);
+  background: transparent !important;  /* 🔹 배경 제거 */
+  color: inherit !important;           /* 테마 기본 글자색 사용 */
+  border: none !important;             /* 테두리 제거 */
+  box-shadow: none !important;         /* 그림자 제거 */
+  padding: 0 !important;               /* 여백 최소화 */
 
-  /* 입력창과 동일한 폭 */
   max-width: {PAGE_MAX_WIDTH}px;
   margin: 0 auto;
-
   box-sizing: border-box;
 }}
 
 [data-theme="light"] [data-testid="stChatMessage"] .stMarkdown {{
-  --bubble-bg:#fff;
-  --bubble-fg:#222;
-  box-shadow: 0 1px 8px rgba(0,0,0,.06);
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }}
+
 
 
 
