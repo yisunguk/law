@@ -779,8 +779,15 @@ if user_q:
 # 4) ChatBar (맨 아래 고정)
 submitted, typed_text, files = chatbar(
     placeholder="법령에 대한 질문을 입력하거나, 관련 문서를 첨부해서 문의해 보세요…",
-    accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
+    accept=["pdf", "docx", "txt"],
+    max_files=5,
+    max_size_mb=15,
+    key_prefix=KEY_PREFIX,
+    max_width_px=PAGE_MAX_WIDTH,   # ← 상단 컨텐츠 폭과 동일
+    compact=True,                  # ← 입력바 높이 축소
+    show_upload_label=False,       # ← '파일 첨부' 라벨 숨김(공간 절약)
 )
+
 
 if submitted:
     text = (typed_text or "").strip()
