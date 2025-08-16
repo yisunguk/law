@@ -1,4 +1,5 @@
 # app.py — Final: Markdown Bubble + Copy, Sidebar No-Auth Links, Auto Template (형사/민사/일반)
+# + ChatBar(📎) 첨부 지원 통합본
 import time, json, html, re
 from datetime import datetime
 import urllib.parse as up
@@ -8,6 +9,12 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 from openai import AzureOpenAI
+
+# ===== [PATCH] 첨부 입력을 위한 추가 import =====
+from chatbar import chatbar
+from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_txt, sanitize
+import io, os
+# ==============================================
 
 # =============================
 # Page & Global Styles
@@ -89,22 +96,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-
 # =============================
 # Text Normalization
 # =============================
 def _normalize_text(s: str) -> str:
-    """
-    - 개행 표준화
-    - 앞/뒤 빈 줄 제거
-    - 연속 빈 줄 최대 1개
-    - '번호만 있는 줄'을 다음 줄 제목과 합침 (1./I./iii))
-    """
     s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
     lines = [ln.rstrip() for ln in s.split("\n")]
     while lines and not lines[0].strip(): lines.pop(0)
     while lines and not lines[-1].strip(): lines.pop()
-
     merged, i = [], 0
     num_pat = re.compile(r'^\s*((\d+)|([IVXLC]+)|([ivxlc]+))\s*[\.\)]\s*$')
     while i < len(lines):
@@ -117,10 +116,8 @@ def _normalize_text(s: str) -> str:
                 number = (m.group(2) or m.group(3) or m.group(4)).upper()
                 title = lines[j].lstrip()
                 merged.append(f"{number}. {title}")
-                i = j + 1
-                continue
+                i = j + 1; continue
         merged.append(cur); i += 1
-
     out, prev_blank = [], False
     for ln in merged:
         if ln.strip() == "":
@@ -134,10 +131,8 @@ def _normalize_text(s: str) -> str:
 # Bubble Renderer (Markdown + Copy)
 # =============================
 def render_bubble_with_copy(message: str, key: str):
-    """마크다운으로 렌더 + 복사 버튼"""
     message = _normalize_text(message)
     st.markdown(message)
-
     safe_raw_json = json.dumps(message)
     components.html(f"""
     <div class="copy-row">
@@ -267,58 +262,32 @@ def format_law_context(law_data):
 # No-Auth Public Link Builders
 # =============================
 _HBASE = "https://www.law.go.kr"
-
-def _henc(s: str) -> str:
-    return up.quote((s or "").strip())
-
-def hangul_by_name(domain: str, name: str) -> str:
-    return f"{_HBASE}/{_henc(domain)}/{_henc(name)}"
-
-def hangul_law_with_keys(name: str, keys):
-    body = ",".join(_henc(k) for k in keys if k)
-    return f"{_HBASE}/법령/{_henc(name)}/({body})"
-
-def hangul_law_article(name: str, subpath: str) -> str:
-    return f"{_HBASE}/법령/{_henc(name)}/{_henc(subpath)}"
-
-def hangul_admrul_with_keys(name: str, issue_no: str, issue_date: str) -> str:
-    return f"{_HBASE}/행정규칙/{_henc(name)}/({_henc(issue_no)},{_henc(issue_date)})"
-
-def hangul_ordin_with_keys(name: str, no: str, date: str) -> str:
-    return f"{_HBASE}/자치법규/{_henc(name)}/({_henc(no)},{_henc(date)})"
-
-def hangul_trty_with_keys(no: str, eff_date: str) -> str:
-    return f"{_HBASE}/조약/({_henc(no)},{_henc(eff_date)})"
-
-def expc_public_by_id(expc_id: str) -> str:
-    return f"https://www.law.go.kr/LSW/expcInfoP.do?expcSeq={up.quote(expc_id)}"
-
-def lstrm_public_by_id(trm_seqs: str) -> str:
-    return f"https://www.law.go.kr/LSW/lsTrmInfoR.do?trmSeqs={up.quote(trm_seqs)}"
-
-def licbyl_file_download(fl_seq: str) -> str:
-    return f"https://www.law.go.kr/LSW/flDownload.do?flSeq={up.quote(fl_seq)}"
+def _henc(s: str) -> str: return up.quote((s or "").strip())
+def hangul_by_name(domain: str, name: str) -> str: return f"{_HBASE}/{_henc(domain)}/{_henc(name)}"
+def hangul_law_with_keys(name: str, keys): return f"{_HBASE}/법령/{_henc(name)}/({','.join(_henc(k) for k in keys if k)})"
+def hangul_law_article(name: str, subpath: str) -> str: return f"{_HBASE}/법령/{_henc(name)}/{_henc(subpath)}"
+def hangul_admrul_with_keys(name: str, issue_no: str, issue_date: str) -> str: return f"{_HBASE}/행정규칙/{_henc(name)}/({_henc(issue_no)},{_henc(issue_date)})"
+def hangul_ordin_with_keys(name: str, no: str, date: str) -> str: return f"{_HBASE}/자치법규/{_henc(name)}/({_henc(no)},{_henc(date)})"
+def hangul_trty_with_keys(no: str, eff_date: str) -> str: return f"{_HBASE}/조약/({_henc(no)},{_henc(eff_date)})"
+def expc_public_by_id(expc_id: str) -> str: return f"https://www.law.go.kr/LSW/expcInfoP.do?expcSeq={up.quote(expc_id)}"
+def lstrm_public_by_id(trm_seqs: str) -> str: return f"https://www.law.go.kr/LSW/lsTrmInfoR.do?trmSeqs={up.quote(trm_seqs)}"
+def licbyl_file_download(fl_seq: str) -> str: return f"https://www.law.go.kr/LSW/flDownload.do?flSeq={up.quote(fl_seq)}"
 
 # =============================
 # 판례: 사건번호 유효성 + 이름 생성 + Scourt 링크
 # =============================
 _CASE_NO_RE = re.compile(r'(19|20)\d{2}[가-힣]{1,3}\d{1,6}')
-
 def extract_case_no(text: str) -> str | None:
     if not text: return None
     m = _CASE_NO_RE.search(text.replace(" ", ""))
     return m.group(0) if m else None
-
 def validate_case_no(case_no: str) -> bool:
     case_no = (case_no or "").replace(" ", "")
     return bool(_CASE_NO_RE.fullmatch(case_no))
-
 def build_case_name_from_no(case_no: str, court: str = "대법원", disposition: str = "판결") -> str | None:
     case_no = (case_no or "").replace(" ", "")
-    if not validate_case_no(case_no):
-        return None
+    if not validate_case_no(case_no): return None
     return f"{court} {case_no} {disposition}"
-
 def build_scourt_link(case_no: str) -> str:
     return f"https://glaw.scourt.go.kr/wsjo/panre/sjo050.do?saNo={up.quote(case_no)}"
 
@@ -349,7 +318,6 @@ def copy_url_button(url: str, key: str, label: str = "링크 복사"):
         }})();
       </script>
     """, height=40)
-
 
 # -----------------------------
 # 링크 가용성 체크 + 대체 검색 링크
@@ -492,10 +460,7 @@ with st.sidebar:
 
     elif target == "판례(대표: 법제처 한글주소 + 전체: 대법원 검색)":
         mode = st.radio("입력 방식", ["사건번호로 만들기(권장)", "사건명 직접 입력"], horizontal=False, index=0)
-
-        law_url = None
-        scourt_url = None
-
+        law_url = None; scourt_url = None
         if mode.startswith("사건번호"):
             cno = st.text_input("사건번호", value=DEFAULTS["판례_사건번호"])
             colA, colB = st.columns(2)
@@ -514,8 +479,6 @@ with st.sidebar:
             if st.button("링크 생성", use_container_width=True):
                 law_url = hangul_by_name("판례", name)
                 if found_no: scourt_url = build_scourt_link(found_no)
-
-        
         if law_url or scourt_url:
             st.subheader("생성된 링크")
             if law_url:
@@ -567,9 +530,7 @@ _ADMIN_LABOR    = ("행정심판", "과징금", "과태료", "허가", "인가",
 def choose_output_template(q: str) -> str:
     text = (q or "").lower()
     def has_any(words): return any(w.lower() in text for w in words)
-
     if has_any(_CRIMINAL_HINTS):
-        # 형사사건
         return """[출력 서식 강제]
 - 아래 형식을 지키고 각 항목은 1~3문장으로 간결하게 정리하세요. 마크다운 사용.
 ## 1) 사건 개요(형사)
@@ -591,7 +552,6 @@ def choose_output_template(q: str) -> str:
 > **유의**: 본 답변은 참고용입니다. 최종 효력은 관보·공포문 및 법제처 고시·공시를 확인하세요.
 """
     if has_any(_CIVIL_HINTS):
-        # 민사사건
         return """[출력 서식 강제]
 - 아래 형식을 지키고 각 항목은 1~3문장으로 간결하게 정리하세요. 마크다운 사용.
 ## 1) 사건 개요(민사)
@@ -613,7 +573,6 @@ def choose_output_template(q: str) -> str:
 > **유의**: 본 답변은 참고용입니다. 최종 효력은 관보·공포문 및 법제처 고시·공시를 확인하세요.
 """
     if has_any(_ADMIN_LABOR):
-        # 노무·행정
         return """[출력 서식 강제]
 - 아래 형식을 지키고 각 항목은 1~3문장으로 간결하게 정리하세요. 마크다운 사용.
 ## 1) 사안 개요(노무/행정)
@@ -634,7 +593,6 @@ def choose_output_template(q: str) -> str:
 - [법령 전문 보기](https://www.law.go.kr/법령/정식명칭) 등
 > **유의**: 본 답변은 참고용입니다. 최종 효력은 관보·공포문 및 법제처 고시·공시를 확인하세요.
 """
-    # 일반 질의 기본 템플릿
     return """[출력 서식 강제]
 - 아래 형식을 지키고 각 항목은 1~3문장으로 간결하게 정리하세요. 마크다운 사용.
 ## 1) 질문 요약
@@ -734,15 +692,39 @@ for i, m in enumerate(st.session_state.messages):
             st.markdown(m["content"])
 
 # =============================
-# Input & Answer
+# Input & Answer  (📎 첨부 지원으로 교체)
 # =============================
-user_q = st.chat_input("법령에 대한 질문을 입력하세요… (Enter로 전송)")
+# [PATCH] 기존: user_q = st.chat_input("...")  →  첨부 가능 ChatBar로 교체
+submitted, typed_text, files = chatbar(
+    placeholder="법령에 대한 질문을 입력하고, + 버튼(📎)으로 문서를 첨부하세요…",
+    accept=["pdf", "docx", "txt"],
+    key_prefix="lawchat",
+)
+
+# 첨부파일을 텍스트로 추출하여 발췌 생성 (파일당 12,000자 제한)
+report_snippets = []
+if files:
+    for f in files:
+        name = f.name
+        data = f.read()
+        ext = os.path.splitext(name)[1].lower()
+        if ext == ".pdf":
+            txt = extract_text_from_pdf(io.BytesIO(data))
+        elif ext == ".docx":
+            txt = extract_text_from_docx(io.BytesIO(data))
+        elif ext == ".txt":
+            txt = read_txt(io.BytesIO(data))
+        else:
+            txt = f"(미지원 파일 형식: {ext})"
+        report_snippets.append(f"# [첨부] {name}\n{sanitize(txt)[:12000]}")
+
+user_q = typed_text if submitted else None
+# ------------------------------------------------
 
 if user_q:
-    # ts 생성과 사용, 그리고 모든 응답 생성/저장 로직을 같은 블록에 둠(방법 2)
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     st.session_state.messages.append({"role": "user", "content": user_q, "ts": ts})
-    with st.chat_message("user"): 
+    with st.chat_message("user"):
         st.markdown(user_q)
 
     # 1) 법제처 검색
@@ -754,6 +736,9 @@ if user_q:
         st.warning(err)
     law_ctx = format_law_context(law_data)
 
+    # [PATCH] 첨부 발췌를 컨텍스트에 추가
+    report_ctx = "\n\n[사고보고서 발췌]\n" + "\n\n".join(report_snippets) if report_snippets else ""
+
     # 2) 출력 템플릿 자동 선택
     template_block = choose_output_template(user_q)
 
@@ -764,7 +749,7 @@ if user_q:
         "content": f"""사용자 질문: {user_q}
 
 관련 법령 정보(분석):
-{law_ctx}
+{law_ctx}{report_ctx}
 
 [역할]
 당신은 “대한민국 법령정보 챗봇”입니다.
@@ -794,9 +779,9 @@ if user_q:
 """
     })
 
-    # 4) 응답 생성  (← 문제였던 부분을 if user_q: 내부로 이동)
+    # 4) 응답 생성
     if client is None:
-        final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
+        final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx + (("\n\n" + report_ctx) if report_ctx else "")
         with st.chat_message("assistant"):
             render_bubble_with_copy(final_text, key=f"ans-{ts}")
     else:
@@ -810,8 +795,7 @@ if user_q:
                     if len(buffer) >= 200:
                         full_text += buffer; buffer = ""
                         preview = _normalize_text(full_text[-1500:])
-                        placeholder.markdown(preview)
-                        time.sleep(0.03)
+                        placeholder.markdown(preview); time.sleep(0.03)
                 if buffer:
                     full_text += buffer
                     placeholder.markdown(_normalize_text(full_text))
@@ -820,11 +804,11 @@ if user_q:
                 full_text = f"**오류**: {e}" + (f"\n\n{safe_law_ctx}" if safe_law_ctx else "")
                 placeholder.markdown(_normalize_text(full_text))
 
-            placeholder.empty()                  # 미리보기 제거
+            placeholder.empty()
             final_text = _normalize_text(full_text)
             render_bubble_with_copy(final_text, key=f"ans-{ts}")
 
-    # 대화 저장 (← 이것도 내부로 유지)
+    # 5) 대화 저장
     st.session_state.messages.append({
         "role": "assistant", "content": final_text, "law": law_data, "ts": ts
     })
