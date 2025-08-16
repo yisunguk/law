@@ -1,10 +1,11 @@
-# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
+# app.py — Pro legal memo mode: router + ranked attachments + 2-pass verify + strict prompt
 from __future__ import annotations
 
-import io, os, re, json, time, html
+import io, os, re, json, time, html, math
 from datetime import datetime
 import urllib.parse as up
 import xml.etree.ElementTree as ET
+from collections import Counter
 
 import requests
 import streamlit as st
@@ -12,15 +13,14 @@ import streamlit.components.v1 as components
 from openai import AzureOpenAI
 
 from chatbar import chatbar
-# (첨부 파싱은 나중 확장용으로 import 유지)
 from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_txt, sanitize
 
 # =============================
 # Config & Style
 # =============================
 PAGE_MAX_WIDTH = 1020
-BOTTOM_PADDING_PX = 120   # 고정 ChatBar와 겹침 방지용
-KEY_PREFIX = "lawchat"    # chatbar key prefix
+BOTTOM_PADDING_PX = 120
+KEY_PREFIX = "lawchat"
 
 st.set_page_config(
     page_title="법제처 AI 챗봇",
@@ -29,146 +29,50 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# 입력창 초기화 플래그가 켜져 있으면, 위젯 생성 전에 값 비움 (안전)
 if st.session_state.pop("_clear_input", False):
     st.session_state[f"{KEY_PREFIX}-input"] = ""
 
 st.markdown(f"""
 <style>
-.block-container {{
-  max-width:{PAGE_MAX_WIDTH}px; 
-  margin:0 auto; 
-  padding-bottom:{BOTTOM_PADDING_PX}px; 
-}}
-.stChatInput {{
-  max-width:{PAGE_MAX_WIDTH}px; 
-  margin-left:auto; 
-  margin-right:auto; 
-}}
+.block-container {{ max-width:{PAGE_MAX_WIDTH}px; margin:0 auto; padding-bottom:{BOTTOM_PADDING_PX}px; }}
+.stChatInput {{ max-width:{PAGE_MAX_WIDTH}px; margin-left:auto; margin-right:auto; }}
 section.main {{ padding-bottom:0; }}
 
-/* Header */
 .header {{
-  text-align:center;
-  padding:1rem;
-  border-radius:12px;
-  background: transparent;   /* ← 보라 그라데이션 제거 */
-  color: inherit;             /* ← 테마 기본 텍스트색 사용 */
-  margin:0 0 1rem 0;
-  border: 1px solid rgba(127,127,127,.20); /* 필요 없으면 이 줄 삭제 */
+  text-align:center; padding:1rem; border-radius:12px; background:transparent; color:inherit; margin:0 0 1rem 0;
+  border: 1px solid rgba(127,127,127,.20);
 }}
 [data-theme="dark"] .header {{ border-color: rgba(255,255,255,.12); }}
 
-h2, h3 {{
-  font-size:1.1rem !important; 
-  font-weight:600 !important; 
-  margin:0.8rem 0 0.4rem; 
-}}
-
+h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem 0 0.4rem; }}
 .stMarkdown > div {{
-  background:var(--bubble-bg,#1f1f1f); 
-  color:var(--bubble-fg,#f5f5f5);
-  border-radius:14px; 
-  padding:14px 16px; 
-  box-shadow:0 1px 8px rgba(0,0,0,.12);
+  background:var(--bubble-bg,#1f1f1f); color:var(--bubble-fg,#f5f5f5);
+  border-radius:14px; padding:14px 16px; box-shadow:0 1px 8px rgba(0,0,0,.12);
 }}
-[data-theme="light"] .stMarkdown > div {{
-  --bubble-bg:#fff; 
-  --bubble-fg:#222; 
-  box-shadow:0 1px 8px rgba(0,0,0,.06);
-}}
+[data-theme="light"] .stMarkdown > div {{ --bubble-bg:#fff; --bubble-fg:#222; box-shadow:0 1px 8px rgba(0,0,0,.06); }}
 .stMarkdown ul, .stMarkdown ol {{ margin-left:1.1rem; }}
-.stMarkdown blockquote {{ 
-  margin:8px 0; 
-  padding-left:12px; 
-  border-left:3px solid rgba(255,255,255,.25); 
-}}
+.stMarkdown blockquote {{ margin:8px 0; padding-left:12px; border-left:3px solid rgba(255,255,255,.25); }}
 
-.copy-row{{ 
-  display:flex; 
-  justify-content:flex-end; 
-  margin:6px 4px 0 0; 
-}}
-.copy-btn{{
-  display:inline-flex; 
-  align-items:center; 
-  gap:6px; 
-  padding:6px 10px;
-  border:1px solid rgba(255,255,255,.15); 
-  border-radius:10px; 
-  background:rgba(0,0,0,.25);
-  backdrop-filter:blur(4px); 
-  cursor:pointer; 
-  font-size:12px; 
-  color:inherit;
-}}
-[data-theme="light"] .copy-btn{{ 
-  background:rgba(255,255,255,.9); 
-  border-color:#ddd; 
-}}
+.copy-row{{ display:flex; justify-content:flex-end; margin:6px 4px 0 0; }}
+.copy-btn{{ display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid rgba(255,255,255,.15);
+  border-radius:10px; background:rgba(0,0,0,.25); backdrop-filter:blur(4px); cursor:pointer; font-size:12px; color:inherit; }}
+[data-theme="light"] .copy-btn{{ background:rgba(255,255,255,.9); border-color:#ddd; }}
 .copy-btn svg{{ pointer-events:none }}
 
-/* --- Pinned Question (상단 고정) --- */
-.pinned-q{{
-  position: sticky; 
-  top: 0; 
-  z-index: 900;
-  margin: 8px 0 12px; 
-  padding: 10px 14px;
-  border-radius: 12px; 
-  border: 1px solid rgba(255,255,255,.15);
-  background: rgba(0,0,0,.35); 
-  backdrop-filter: blur(6px);
-}}
-[data-theme="light"] .pinned-q{{ 
-  background: rgba(255,255,255,.85); 
-  border-color:#e5e5e5; 
-}}
-.pinned-q .label{{ 
-  font-size:12px; 
-  opacity:.8; 
-  margin-bottom:4px; 
-}}
-.pinned-q .text{{ 
-  font-weight:600; 
-  line-height:1.4; 
-  max-height:7.5rem; 
-  overflow:auto; 
-}}
+.pinned-q{{ position: sticky; top: 0; z-index: 900; margin: 8px 0 12px; padding: 10px 14px; border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.15); background: rgba(0,0,0,.35); backdrop-filter: blur(6px); }}
+[data-theme="light"] .pinned-q{{ background: rgba(255,255,255,.85); border-color:#e5e5e5; }}
+.pinned-q .label{{ font-size:12px; opacity:.8; margin-bottom:4px; }}
+.pinned-q .text{{ font-weight:600; line-height:1.4; max-height:7.5rem; overflow:auto; }}
 
-/* Chat message width = container width */
-:root {{
-  --msg-max: {PAGE_MAX_WIDTH}px;  /* 입력창과 동일한 최대 폭 */
-}}
-
-/* Chat message wrapper 배경 제거 */
-[data-testid="stChatMessage"] {{
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-}}
-
-/* Chat message 본문 마크다운 배경 제거 */
+:root {{ --msg-max: {PAGE_MAX_WIDTH}px; }}
+[data-testid="stChatMessage"] {{ background: transparent !important; border:none !important; box-shadow:none !important; }}
 [data-testid="stChatMessage"] .stMarkdown {{
-  background: transparent !important;
-  color: inherit !important;
-  border: none !important;
-  box-shadow: none !important;
-  padding: 0 !important;
-
-  max-width: {PAGE_MAX_WIDTH}px;
-  margin: 0 auto;
-  box-sizing: border-box;
-}}
-
-[data-theme="light"] [data-testid="stChatMessage"] .stMarkdown {{
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
+  background: transparent !important; color: inherit !important; border:none !important; box-shadow:none !important; padding:0 !important;
+  max-width: {PAGE_MAX_WIDTH}px; margin: 0 auto; box-sizing: border-box;
 }}
 </style>
 """, unsafe_allow_html=True)
-
 
 st.markdown(
     """
@@ -204,7 +108,6 @@ def _normalize_text(s: str) -> str:
     lines = [ln.rstrip() for ln in s.split("\n")]
     while lines and not lines[0].strip(): lines.pop(0)
     while lines and not lines[-1].strip(): lines.pop()
-    # 번호 한 줄-제목 한 줄 형태 병합
     merged, i = [], 0
     num_pat = re.compile(r'^\s*((\d+)|([IVXLC]+)|([ivxlc]+))\s*[\.\)]\s*$')
     while i < len(lines):
@@ -356,19 +259,16 @@ def present_url_with_fallback(main_url: str, kind: str, q: str, label_main="새 
         st.link_button("대체 검색 링크 열기", fb, use_container_width=True)
         copy_url_button(fb, key=str(abs(hash(fb))))
 
-# ===== Pinned Question helper =====
 def _esc(s: str) -> str:
     return html.escape(s or "").replace("\n", "<br>")
 
 def render_pinned_question():
-    """가장 최근 사용자 질문을 상단에 고정 표시"""
     last_q = None
     for m in reversed(st.session_state.get("messages", [])):
         if m.get("role") == "user":
             last_q = m.get("content", "")
             break
-    if not last_q:
-        return
+    if not last_q: return
     st.markdown(f"""
     <div class="pinned-q">
       <div class="label">최근 질문</div>
@@ -376,33 +276,25 @@ def render_pinned_question():
     </div>
     """, unsafe_allow_html=True)
 
-
-
-# Link correction utility: fix law.go.kr URLs using MOLEG search results
+# Replace law.go.kr URLs in the answer with official detail links from law_data
 def fix_links_with_lawdata(markdown: str, law_data: list[dict]) -> str:
-    """Replace law.go.kr URLs in the answer with official detail links from law_data."""
-    import re
-    if not markdown or not law_data:
-        return markdown
-
+    if not markdown or not law_data: return markdown
     name_to_url = {
         d["법령명"]: (d["법령상세링크"] or f"https://www.law.go.kr/법령/{_henc(d['법령명'])}")
         for d in law_data if d.get("법령명")
     }
-
     pat = re.compile(r'\[([^\]]+)\]\((https?://www\.law\.go\.kr/[^\)]+)\)')
     def repl(m):
         text, url = m.group(1), m.group(2)
         if text in name_to_url:
             return f'[{text}]({name_to_url[text]})'
         return m.group(0)
-
     return pat.sub(repl, markdown)
+
 # =============================
 # Secrets / Clients / Session
 # =============================
 LAW_API_KEY, AZURE = load_secrets()
-
 client = None
 if AZURE:
     try:
@@ -416,7 +308,8 @@ if AZURE:
 
 if "messages" not in st.session_state: st.session_state.messages = []
 if "settings" not in st.session_state: st.session_state.settings = {"num_rows": 5, "include_search": True, "safe_mode": False}
-if "_last_user_nonce" not in st.session_state: st.session_state["_last_user_nonce"] = None  # ✅ 중복 방지용
+if "_last_user_nonce" not in st.session_state: st.session_state["_last_user_nonce"] = None
+if "report_ctx" not in st.session_state: st.session_state["report_ctx"] = ""  # 첨부 요약 컨텍스트 저장
 
 # =============================
 # MOLEG API (Law Search)
@@ -466,77 +359,146 @@ def format_law_context(law_data: list[dict]) -> str:
     return "\n\n".join(rows)
 
 # =============================
-# Output templating (heuristic)
+# Attachment ranking helpers
 # =============================
-_CRIMINAL_HINTS = ("형사","고소","고발","벌금","기소","수사","압수수색","사기","폭행","절도","음주","약취","보이스피싱")
-_CIVIL_HINTS    = ("민사","손해배상","채무","계약","임대차","유치권","가압류","가처분","소송가액","지연손해금","불법행위")
-_ADMIN_LABOR    = ("행정심판","과징금","과태료","허가","인가","취소처분","해임","징계","해고","근로","연차","퇴직금","산재")
+def _split_paragraphs(t: str) -> list[str]:
+    paras = [p.strip() for p in (t or "").split("\n\n") if p.strip()]
+    flat = []
+    for p in paras:
+        if len(p) > 1200:
+            chunks = re.split(r'(?<=[.!?。…])\s+', p)
+            buf = ""
+            for c in chunks:
+                if len(buf)+len(c) <= 800:
+                    buf += (" " if buf else "") + c
+                else:
+                    flat.append(buf); buf = c
+            if buf: flat.append(buf)
+        else:
+            flat.append(p)
+    return flat
 
-def choose_output_template(q: str) -> str:
-    t = (q or "").lower()
-    has = lambda ks: any(k.lower() in t for k in ks)
-    if has(_CRIMINAL_HINTS):
-        return """[출력 서식 강제]
-## 1) 사건 개요(형사)
-## 2) 적용/관련 법령
-## 3) 쟁점과 해석(피의자/피고인 관점 포함)
-## 4) 절차·증거·유의사항
-## 5) 참고 자료
-> **유의**: 본 답변은 참고용입니다. 최종 효력은 관보·공포문 및 법제처 고시·공시 기준.
+def _tokenize_ko(s: str) -> list[str]:
+    s = re.sub(r"[^0-9A-Za-z가-힣\s]", " ", s)
+    return [w for w in s.lower().split() if w]
+
+def _score(q_tokens: Counter, p_tokens: Counter) -> float:
+    score = 0.0
+    for t, qf in q_tokens.items():
+        if not t or len(t) < 2: continue
+        tf = p_tokens.get(t, 0)
+        if tf > 0:
+            score += (1 + math.log(1+tf)) * (1 + math.log(1+qf))
+    return score
+
+def rank_snippets_by_query(q: str, fulltext: str, topk: int = 12) -> str:
+    paras = _split_paragraphs(fulltext)
+    q_tok = Counter(_tokenize_ko(q or ""))
+    scored = []
+    for p in paras:
+        p_tok = Counter(_tokenize_ko(p))
+        scored.append((_score(q_tok, p_tok), p))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    keep = [p for sc, p in scored[:topk] if sc > 0]
+    return "\n\n".join(keep) if keep else "\n\n".join(paras[:min(len(paras), 6)])
+
+# =============================
+# Output routing (classifier)
+# =============================
+ROUTE_SYS = (
+    "질문을 다음 라벨 중 하나로 분류: [단순, 민사, 형사, 행정노무, 복합]. "
+    "반드시 라벨 한 단어만 출력."
+)
+
+def route_label(q: str) -> str:
+    if not client or not AZURE:
+        # 오프라인 시 휴리스틱 폴백
+        t = (q or "").lower()
+        if any(k in t for k in ("형사","고소","고발","벌금","기소","수사","압수수색","사기","폭행","절도","음주","약취","보이스피싱")): return "형사"
+        if any(k in t for k in ("민사","손해배상","채무","계약","임대차","유치권","가압류","가처분","소송가액","지연손해금","불법행위")): return "민사"
+        if any(k in t for k in ("행정심판","과징금","과태료","허가","인가","취소처분","해임","징계","해고","근로","연차","퇴직금","산재")): return "행정노무"
+        return "단순"
+    msgs = [{"role":"system","content":ROUTE_SYS},{"role":"user","content": q or ""}]
+    try:
+        resp = client.chat.completions.create(
+            model=AZURE["deployment"], messages=msgs, temperature=0.0, max_tokens=10, stream=False
+        )
+        return (resp.choices[0].message.content or "단순").strip()
+    except Exception:
+        return "단순"
+
+# 템플릿: 간결(섹션 헤더만) — 세부는 시스템 프롬프트가 강제
+TEMPLATES = {
+"형사": """[출력 서식 강제]
+## 결론
+## 사실관계(확정/가정 구분)
+## 적용 법령(조문 직접 인용)
+## 판례 요지
+## 법리분석(구성요건·위법성·책임)
+## 절차·전략
+## 참고 자료
+""",
+"민사": """[출력 서식 강제]
+## 결론
+## 사실관계(확정/가정 구분)
+## 적용 법령(조문 직접 인용)
+## 판례 요지
+## 법리분석(청구원인·항변·증명책임)
+## 절차·전략
+## 참고 자료
+""",
+"행정노무": """[출력 서식 강제]
+## 결론
+## 사실관계(확정/가정 구분)
+## 관련 법령·행정규칙
+## 판례/해석례 요지
+## 법리분석(처분성·적법절차·비례원칙)
+## 구제수단
+## 참고 자료
+""",
+"복합": """[출력 서식 강제]
+## 결론
+## 사실관계(확정/가정 구분)
+## 적용 법령 세트(조문 인용)
+## 판례/해석례 교차 요지
+## 쟁점별 법리분석(주장/반박/평가)
+## 절차·전략
+## 참고 자료
+""",
+"단순": """[출력 서식 강제]
+## 결론
+## 근거(조문/해석례 링크)
+## 다음 확인이 필요한 사실(질문 2~3개)
+## 참고 자료
 """
-    if has(_CIVIL_HINTS):
-        return """[출력 서식 강제]
-## 1) 사건 개요(민사)
-## 2) 적용/관련 법령
-## 3) 쟁점과 해석(원고/피고 관점)
-## 4) 절차·증거·전략
-## 5) 참고 자료
-> **유의**: 본 답변은 참고용입니다. 최종 효력은 관보·공포문 및 법제처 고시·공시 기준.
-"""
-    if has(_ADMIN_LABOR):
-        return """[출력 서식 강제]
-## 1) 사안 개요(노무/행정)
-## 2) 적용/관련 법령
-## 3) 쟁점과 해석(각 당사자 관점)
-## 4) 절차·구제수단
-## 5) 참고 자료
-> **유의**: 본 답변은 참고용입니다. 최종 효력은 관보·공포문 및 법제처 고시·공시 기준.
-"""
-    return """[출력 서식 강제]
-## 1) 질문 요약
-## 2) 적용/관련 법령
-## 3) 해석 및 실무 포인트
-## 4) 참고 자료
-> **유의**: 본 답변은 참고용입니다. 최종 효력은 관보·공포문 및 법제처 고시·공시 기준.
-"""
+}
+
+# =============================
+# System prompt (STRICT — 변호사 메모 규칙)
+# =============================
+LEGAL_SYS = (
+"당신은 대한민국 변호사다. 답변은 **법률 자문 메모** 형식으로 작성한다.\n"
+"규칙(모두 강제):\n"
+"1) **결론 한 문장**을 맨 앞에 제시하고, 맨 끝에서 다시 1문장으로 재확인한다.\n"
+"2) 모든 주장/해석 뒤에는 **근거 각주**를 붙인다: `[법령명 제x조]`, `[대법원 yyyy도/다 nnnn, 선고일]`, `[법제처 해석례 expcSeq]`.\n"
+"3) **조문은 1~2문장만 직접 인용**하며 blockquote로 표기한다.\n"
+"4) 사실관계는 **확정/가정**을 구분하여 기술한다.\n"
+"5) **모호한 표현 금지**(예: '~일 수 있다/보인다/가능성이 있다') — 사용 시 바로 뒤에 근거를 붙인다.\n"
+"6) 링크는 **www.law.go.kr** 또는 **대법원 종합법률정보**만 사용한다.\n"
+"7) 섹션 헤더는 템플릿에 따르며, 각 섹션은 **2~4문장 이상**으로 구체적으로 작성한다.\n"
+"8) 말미에 반드시 `출처: 법제처 국가법령정보센터`와 `⚠️ 참고용 고지` 문구를 넣는다.\n"
+)
 
 # =============================
 # Model helpers
 # =============================
 def build_history_messages(max_turns=10):
-    sys = {
-        "role": "system",
-        "content": (
-            "당신은 대한민국의 변호사이자 법률 전문가입니다. "
-            "답변은 실제 변호사 자문서처럼 **체계적·조문/판례 근거 중심**으로 작성합니다. "
-            "형사·민사·행정·노무 사건에서 각 당사자 관점(원고/피고, 피의자/검사)을 균형 있게 제시하세요.\n\n"
-            "### 답변 지침\n"
-            "1) 항상 **한국어 마크다운**으로 작성.\n"
-            "2) 구조: 사건/사안 개요 → 적용/관련 법령 → 쟁점 및 해석(근거: 조문·판례·유권해석) "
-            "→ 절차·전략(증거·관할·제출서류 등) → 참고 자료.\n"
-            "3) 각 섹션은 **2~4문장 이상**으로 구체적으로 기술.\n"
-            "4) 법령 표기는 **정식 명칭+조문 번호**로 병기.\n"
-            "5) 판례는 **법원·사건번호·선고일**을 함께 표기.\n"
-            "6) 링크는 반드시 **www.law.go.kr** 등 공식 출처만 사용.\n"
-            "7) 말미에 ①출처: 법제처 국가법령정보센터 ②참고용 고지 문구를 넣음.\n"
-        ),
-    }
-    msgs = [sys]
+    msgs = [{"role":"system","content": LEGAL_SYS}]
     history = st.session_state.messages[-max_turns*2:]
     msgs.extend({"role": m["role"], "content": m["content"]} for m in history)
     return msgs
 
-def stream_chat_completion(messages, temperature=0.7, max_tokens=1200):
+def stream_chat_completion(messages, temperature=0.2, max_tokens=2000):
     stream = client.chat.completions.create(
         model=AZURE["deployment"], messages=messages,
         temperature=temperature, max_tokens=max_tokens, stream=True,
@@ -551,8 +513,18 @@ def stream_chat_completion(messages, temperature=0.7, max_tokens=1200):
         except Exception:
             continue
 
+def chat_completion(messages, temperature=0.2, max_tokens=2000) -> str:
+    resp = client.chat.completions.create(
+        model=AZURE["deployment"], messages=messages,
+        temperature=temperature, max_tokens=max_tokens, stream=False,
+    )
+    try:
+        return resp.choices[0].message.content or ""
+    except Exception:
+        return ""
+
 # =============================
-# Sidebar: 링크 생성기 (무인증)
+# Sidebar: 링크 생성기 (무인증) — (원본 유지)
 # =============================
 with st.sidebar:
     st.header("🔗 링크 생성기 (무인증)")
@@ -700,19 +672,13 @@ with st.sidebar:
         st.caption("⚠️ 한글주소는 ‘정확한 명칭’이 필요합니다. 괄호 식별자(공포번호·일자 등) 사용 권장.")
 
 # =============================
-# Chat flow
+# Chat flow helpers
 # =============================
-
 def _push_user_from_pending() -> str | None:
-    """_pending_user_q 가 있으면, Nonce로 중복을 막고 1회만 messages에 추가."""
     q = st.session_state.pop("_pending_user_q", None)
     nonce = st.session_state.pop("_pending_user_nonce", None)
-    if not q:
-        return None
-    # 같은 이벤트(Nonce) 재처리 방지
-    if nonce and st.session_state.get("_last_user_nonce") == nonce:
-        return None
-    # 동일 내용이 방금 직전에 이미 들어간 경우도 방지
+    if not q: return None
+    if nonce and st.session_state.get("_last_user_nonce") == nonce: return None
     msgs = st.session_state.messages
     if msgs and msgs[-1].get("role") == "user" and msgs[-1].get("content") == q:
         st.session_state["_last_user_nonce"] = nonce
@@ -721,13 +687,23 @@ def _push_user_from_pending() -> str | None:
     st.session_state["_last_user_nonce"] = nonce
     return q
 
-# 1) 직전 제출(이벤트)이 있는 경우, 먼저 히스토리에 1회만 반영
-user_q = _push_user_from_pending()
+def _build_user_context(user_q: str, law_ctx: str) -> str:
+    report_ctx = st.session_state.get("report_ctx", "")
+    return f"""사용자 질문: {user_q}
 
-# 🔝 1-1) 최근 질문 상단 고정 바 렌더 (히스토리/스트리밍 전에 호출)
+관련 법령 정보(분석):
+{law_ctx}
+
+[첨부 요약]
+{report_ctx if report_ctx else '(없음)'}
+"""
+
+# =============================
+# History render
+# =============================
+user_q = _push_user_from_pending()
 render_pinned_question()
 
-# 2) 히스토리 정방향 렌더
 with st.container():
     for i, m in enumerate(st.session_state.messages):
         with st.chat_message(m["role"]):
@@ -742,28 +718,24 @@ with st.container():
             else:
                 st.markdown(m["content"])
 
-# 3) 방금 입력이 있었다면 맨 아래에서 스트리밍
+# =============================
+# Answer generation (stream + verify pass)
+# =============================
 if user_q:
     with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
         law_data, used_endpoint, err = search_law_data(user_q, num_rows=st.session_state.settings["num_rows"])
     if used_endpoint: st.caption(f"법제처 API endpoint: `{used_endpoint}`")
     if err: st.warning(err)
+
     law_ctx = format_law_context(law_data)
-    template_block = choose_output_template(user_q)
-    model_messages = build_history_messages(max_turns=10) + [{
+    label = route_label(user_q)
+    template_block = TEMPLATES.get(label, TEMPLATES["단순"])
+
+    base_msgs = build_history_messages(max_turns=10)
+    base_msgs.append({
         "role": "user",
-        "content": f"""사용자 질문: {user_q}
-
-관련 법령 정보(분석):
-{law_ctx}
-
-[운영 지침]
-- 답변에 법령명·공포/시행일·소관부처 등 메타데이터 포함.
-- 링크는 반드시 www.law.go.kr 사용.
-- 말미에 출처 표기 + 참고용 고지.
-{template_block}
-"""
-    }]
+        "content": _build_user_context(user_q, law_ctx) + "\n[템플릿]\n" + template_block + "\n(섹션 헤더는 유지)\n"
+    })
 
     with st.chat_message("assistant"):
         placeholder = st.empty()
@@ -774,7 +746,8 @@ if user_q:
                 full_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
                 placeholder.markdown(_normalize_text(full_text))
             else:
-                for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1200):
+                # 1) Draft streaming
+                for piece in stream_chat_completion(base_msgs, temperature=0.2, max_tokens=2000):
                     buffer += piece
                     if len(buffer) >= 200:
                         full_text += buffer; buffer = ""
@@ -782,31 +755,67 @@ if user_q:
                 if buffer:
                     full_text += buffer
                     placeholder.markdown(_normalize_text(full_text))
+
+                # 2) Verify pass (short, non-stream) — 근거/표현/구조 점검
+                draft_text = _normalize_text(full_text)
+                verify_msgs = build_history_messages(max_turns=6)
+                verify_msgs.append({"role":"system","content":
+                    "너는 법률 문서 리뷰어다. 아래 초안을 다음 기준으로 교정한다: "
+                    "①각 주장에 근거 각주가 있는지, ②누락된 핵심 조문/판례/해석례가 있는지, "
+                    "③모호한 표현을 근거와 함께 수정, ④결론을 맨 앞·맨 뒤에 1문장씩 두도록 재배치. "
+                    "직접 인용은 1~2문장 blockquote 유지. 섹션 헤더는 유지하라."
+                })
+                verify_msgs.append({"role":"user","content":
+                    f"초안:\n\n{draft_text}\n\n[법령검색컨텍스트]\n{law_ctx}\n\n[첨부요약]\n{st.session_state.get('report_ctx','')}"
+                })
+                reviewed = chat_completion(verify_msgs, temperature=0.1, max_tokens=1800)
+                full_text = reviewed or draft_text
+                placeholder.markdown(_normalize_text(full_text))
         except Exception as e:
             full_text = f"**오류**: {e}\n\n{law_ctx}"
             placeholder.markdown(_normalize_text(full_text))
 
-        placeholder.empty()
         final_text = _normalize_text(full_text)
-        final_text = fix_links_with_lawdata(final_text, law_data)  # link correction applied
+        final_text = fix_links_with_lawdata(final_text, law_data)
         render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
 
     st.session_state.messages.append({
         "role": "assistant", "content": final_text, "law": law_data, "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
 
-# 4) ChatBar (맨 아래 고정)
+# =============================
+# ChatBar (bottom) — with attachment ranking
+# =============================
 submitted, typed_text, files = chatbar(
     placeholder="법령에 대한 질문을 입력하거나, 관련 문서를 첨부해서 문의해 보세요…",
     accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
 )
+
+# 첨부를 지금 턴에서 요약·랭킹해서 세션에 저장(다음 턴 모델 입력에 사용)
+if files:
+    snippets = []
+    for f in files:
+        name = f.name
+        data = f.read()
+        ext = os.path.splitext(name)[1].lower()
+        if ext == ".pdf":
+            txt = extract_text_from_pdf(io.BytesIO(data))
+        elif ext == ".docx":
+            txt = extract_text_from_docx(io.BytesIO(data))
+        elif ext == ".txt":
+            txt = read_txt(io.BytesIO(data))
+        else:
+            txt = f"(미지원 파일 형식: {ext})"
+        ranked = rank_snippets_by_query(typed_text or "", txt, topk=12)
+        ranked = sanitize(ranked)[:5000]
+        snippets.append(f"# [첨부]{name}\n{ranked}")
+    st.session_state["report_ctx"] = "\n\n".join(snippets)
 
 if submitted:
     text = (typed_text or "").strip()
     if text:
         st.session_state["_pending_user_q"] = text
         st.session_state["_pending_user_nonce"] = time.time_ns()
-    # 입력창은 '다음 런 시작 전에' 비우도록 플래그만 켜고 즉시 재실행
     st.session_state["_clear_input"] = True
     st.rerun()
 
