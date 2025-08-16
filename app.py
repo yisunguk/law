@@ -95,6 +95,13 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
   box-shadow: none !important;
 }
 
+/* Chat message wrapper 배경 제거 */
+[data-testid="stChatMessage"] {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
 /* Chat message 본문 마크다운 배경 제거 */
 [data-testid="stChatMessage"] .stMarkdown {
   background: transparent !important;
@@ -113,6 +120,7 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
   border: none !important;
   box-shadow: none !important;
 }
+
 
 </style>
 """, unsafe_allow_html=True)
