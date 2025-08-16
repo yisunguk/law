@@ -745,15 +745,14 @@ if user_q:
 """
     })
 
-    # 4) 응답 생성
+   # 4) 응답 생성
 if client is None:
     final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
-    # 기존: with st.container():
     with st.chat_message("assistant"):
         render_bubble_with_copy(final_text, key=f"ans-{ts}")
 
 else:
-    # ✅ assistant 말풍선을 '한 번만' 엽니다
+    # 👇 assistant 말풍선을 '한 번만' 열고, 그 안에서 스트리밍/마무리까지 처리
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_text, buffer = "", ""
@@ -770,16 +769,18 @@ else:
                 full_text += buffer
                 placeholder.markdown(_normalize_text(full_text))
         except Exception as e:
-            full_text = f"**오류**: {e}\n\n{law_ctx}"
+            # ✅ law_ctx가 아직 없을 수 있으므로 안전 처리
+            safe_law_ctx = locals().get("law_ctx", "")
+            full_text = f"**오류**: {e}" + (f"\n\n{safe_law_ctx}" if safe_law_ctx else "")
             placeholder.markdown(_normalize_text(full_text))
 
-        # 👇 같은 블록 안에서 미리보기 지우고 최종 말풍선 출력
+        # 미리보기 제거 후 같은 블록에서 최종 말풍선 출력
         placeholder.empty()
         final_text = _normalize_text(full_text)
         render_bubble_with_copy(final_text, key=f"ans-{ts}")
 
+# 히스토리 저장
+st.session_state.messages.append({
+    "role": "assistant", "content": final_text, "law": law_data, "ts": ts
+})
 
-
-    st.session_state.messages.append({
-        "role": "assistant", "content": final_text, "law": law_data, "ts": ts
-    })
