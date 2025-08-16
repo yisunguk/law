@@ -696,9 +696,9 @@ for i, m in enumerate(st.session_state.messages):
 # =============================
 # [PATCH] 기존: user_q = st.chat_input("...")  →  첨부 가능 ChatBar로 교체
 submitted, typed_text, files = chatbar(
-    placeholder="법령에 대한 질문을 입력하고, + 버튼(📎)으로 문서를 첨부하세요…",
+    placeholder="법령에 대한 질문을 입력하고, + 버튼으로 문서를 첨부하세요…",
     accept=["pdf", "docx", "txt"],
-    key_prefix="lawchat",
+        max_files=5, max_size_mb=15, key_prefix="lawchat",
 )
 
 # 첨부파일을 텍스트로 추출하여 발췌 생성 (파일당 12,000자 제한)
