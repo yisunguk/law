@@ -616,11 +616,11 @@ if user_q:
     })
 
     # 4) 응답 생성
-    if client is None:
-       final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
+if client is None:
+    final_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
     with st.chat_message("assistant"):
         render_bubble_with_copy(final_text, key=f"ans-{ts}")
-    else:
+else:
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_text, buffer = "", ""      # ← try 전에 선언 (안전)
@@ -639,20 +639,17 @@ if user_q:
                 full_text += buffer
                 placeholder.markdown(_normalize_text(full_text))
 
-        except Exception as err:         # ← 들여쓰기 주의
-            # 이 줄과 아래 두 줄 모두 except 블록 '안'에 있어야 합니다.
+        except Exception as err:
             full_text = f"**오류**: {err}\n\n{law_ctx}"
             placeholder.markdown(_normalize_text(full_text))
 
         finally:
-            # 스트리밍 미리보기 제거는 같은 with 블록 안에서
             placeholder.empty()
 
     # 최종 말풍선 1개만 출력
     final_text = _normalize_text(full_text)
     with st.chat_message("assistant"):
         render_bubble_with_copy(final_text, key=f"ans-{ts}")
-
 
 # (선택) 히스토리 저장은 마지막에 1번만
 st.session_state.messages.append({
