@@ -14,6 +14,7 @@ from openai import AzureOpenAI
 from chatbar import chatbar
 # (첨부 파싱은 나중 확장용으로 import 유지)
 from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_txt, sanitize
+from external_content import is_url, make_url_context
 
 # =============================
 # Config & Style
@@ -719,11 +720,16 @@ if user_q:
     if used_endpoint: st.caption(f"법제처 API endpoint: `{used_endpoint}`")
     if err: st.warning(err)
     law_ctx = format_law_context(law_data)
+
+# ✅ URL이면 외부 본문 컨텍스트 추가
+    url_ctx = make_url_context(user_q) if is_url(user_q) else ""
+
     template_block = choose_output_template(user_q)
     model_messages = build_history_messages(max_turns=10) + [{
-        "role": "user",
-        "content": f"""사용자 질문: {user_q}
+    "role": "user",
+    "content": f"""사용자 질문: {user_q}
 
+{url_ctx}
 관련 법령 정보(분석):
 {law_ctx}
 
@@ -733,7 +739,7 @@ if user_q:
 - 말미에 출처 표기 + 참고용 고지.
 {template_block}
 """
-    }]
+}]
 
     with st.chat_message("assistant"):
         placeholder = st.empty()
