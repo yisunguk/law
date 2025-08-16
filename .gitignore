@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual env
+venv/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# 환경변수/설정 파일 (민감정보)
+.env
+*.env
+secrets.toml
+
+# Local caches / temp
+.law_cache/
+*.log
+
+# OS files
+Thumbs.db
+.DS_Store
