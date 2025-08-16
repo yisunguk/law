@@ -36,32 +36,29 @@ def chatbar(
         accept = ["pdf","docx","txt","png","jpg","jpeg"]
 
     st.markdown(
-        """
-        <style>
-        .cb2-wrap { position: sticky; bottom: 0; z-index: 50; padding: 8px 0 0; }
-        .cb2 { display:flex; align-items:center; gap:10px; background: var(--cb2-bg,#1f1f1f);
-               border:1px solid var(--cb2-bd,#404040); border-radius: 999px; padding: 8px 10px; }
-        [data-theme="light"] .cb2 { --cb2-bg: #fff; --cb2-bd:#e5e5e5; }
-        .cb2 .left { width: 40px; min-width: 40px; display:flex; align-items:center; justify-content:center; }
-        .cb2 .clip { width: 28px; height: 28px; display:flex; align-items:center; justify-content:center;
-                     border-radius: 999px; border:1px solid var(--cb2-bd,#404040); cursor:pointer; }
-        .cb2 .clip:hover { background: rgba(255,255,255,.06); }
-        .cb2 .mid { flex:1; display:flex; align-items:center; }
-        .cb2 .mid textarea { border:none !important; outline:none !important; background:transparent !important;
-                             resize:none !important; height:38px; max-height: 90px; }
-        .cb2 .right { min-width: 96px; }
-        .chips { margin: 6px 4px 0; }
-        .chip { display:inline-flex; align-items:center; gap:6px; padding: 2px 8px; margin: 4px 6px 0 0;
-                border-radius:999px; border:1px solid var(--cb2-bd,#404040); font-size:12px; }
-        .chip .size { opacity: .7; }
-        div[data-testid="stFileUploader"] { border:none; background:transparent; padding:0; margin:0; }
-        div[data-testid="stFileUploader"] section { padding:0; border:none; background:transparent; }
-        div[data-testid="stFileUploader"] section > div { padding:0; margin:0; }
-        div[data-testid="stFileUploader"] label { display:none; }
-        div[data-testid="stFileUploaderDropzone"] { border:none; background:transparent; padding:0; margin:0; }
-        </style>
-        """,
-        unsafe_allow_html=True,
+    """
+    <style>
+    /* --- 업로더를 Browse files 버튼 + 안내 텍스트만 남기기 --- */
+    div[data-testid="stFileUploader"] {background: transparent; border: none; padding: 0; margin: 0;}
+    div[data-testid="stFileUploader"] section {padding: 0; border:none; background: transparent;}
+    div[data-testid="stFileUploader"] section > div {padding:0; margin:0;}
+    div[data-testid="stFileUploader"] label {display:none;}  /* 라벨 숨김 */
+
+    /* 드롭존(테두리 + Drag&Drop 문구) 제거 */
+    div[data-testid="stFileUploaderDropzone"] {
+      border: none !important;
+      background: transparent !important;
+      padding: 0 !important;
+      margin: 0 !important;
+    }
+    div[data-testid="stFileUploaderDropzone"] > div:first-child {
+      display: none !important;  /* "Drag and drop files here" 문구만 제거 */
+    }
+
+    /* 용량/파일 형식 안내는 그대로 두므로 small, p는 숨기지 않음 */
+    </style>
+    """,
+    unsafe_allow_html=True,
     )
 
     submitted = False
