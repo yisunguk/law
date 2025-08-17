@@ -168,12 +168,14 @@ def _normalize_text(s: str) -> str:
     return "\n".join(out)
 
 def render_bubble_with_copy(message: str, key: str):
+    """대화 말풍선 + 복사 버튼. f-string 충돌을 피하기 위해 placeholder 치환 방식 사용"""
     message = _normalize_text(message)
     st.markdown(message)
     safe_raw_json = json.dumps(message)
-    components.html(f"""
+
+    html_tpl = '''
     <div class="copy-row">
-      <button id="copy-{key}" class="copy-btn">
+      <button id="copy-__KEY__" class="copy-btn">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
           <path d="M9 9h9v12H9z" stroke="currentColor"/>
           <path d="M6 3h9v3" stroke="currentColor"/>
@@ -183,38 +185,42 @@ def render_bubble_with_copy(message: str, key: str):
       </button>
     </div>
     <script>
-    (function(){{
-      const btn = document.getElementById("copy-{key}");
+    (function(){
+      const btn = document.getElementById("copy-__KEY__");
       if (!btn) return;
-      btn.addEventListener("click", async () => {{
-        try {{
-          await navigator.clipboard.writeText({safe_raw_json});
+      btn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(__SAFE__);
           const old = btn.innerHTML; btn.innerHTML = "복사됨!";
           setTimeout(()=>btn.innerHTML = old, 1200);
-        }} catch(e) {{ alert("복사 실패: " + e); }}
-      }});
-    }})();
+        } catch(e) { alert("복사 실패: " + e); }
+      });
+    })();
     </script>
-    """, height=40)
+    '''
+    html_out = html_tpl.replace("__KEY__", str(key)).replace("__SAFE__", safe_raw_json)
+    components.html(html_out, height=40)
+
+
 
 def copy_url_button(url: str, key: str, label: str = "링크 복사"):
     if not url: return
     safe = json.dumps(url)
-    components.html(f"""
+    html_tpl = '''
       <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
-        <button id="copy-url-{key}" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;cursor:pointer">
-          {label}
+        <button id="copy-url-__KEY__" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;cursor:pointer">
+          __LABEL__
         </button>
-        <span id="copied-{key}" style="font-size:12px;color:var(--text-color,#888)"></span>
+        <span id="copied-__KEY__" style="font-size:12px;color:var(--text-color,#888)"></span>
       </div>
       <script>
         (function(){
-          const btn = document.getElementById("copy-url-{key}");
-          const msg = document.getElementById("copied-{key}");
+          const btn = document.getElementById("copy-url-__KEY__");
+          const msg = document.getElementById("copied-__KEY__");
           if(!btn) return;
           btn.addEventListener("click", async () => {
             try {
-              await navigator.clipboard.writeText({safe});
+              await navigator.clipboard.writeText(__SAFE__);
               msg.textContent = "복사됨!";
               setTimeout(()=>msg.textContent="", 1200);
             } catch(e) {
@@ -223,7 +229,14 @@ def copy_url_button(url: str, key: str, label: str = "링크 복사"):
           });
         })();
       </script>
-    """, height=40)
+    '''
+    html_out = (html_tpl
+                .replace("__KEY__", str(key))
+                .replace("__SAFE__", safe)
+                .replace("__LABEL__", html.escape(label)))
+    components.html(html_out, height=40)
+
+
 
 def load_secrets():
     try:
