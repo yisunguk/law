@@ -371,7 +371,7 @@ if "settings" not in st.session_state:
     ,
         "use_gpt_query_expansion": True,
     }
-if "_last_user_nonce" not in st.session_state: st.session_state["_last_user_nonce"] = None  # ✅ 중복 방지용
+if "_last_user_nonce" not in st.session_state: st.session_state["_last_user_nonce"] = None  
 
 # =============================
 # MOLEG API (Law Search)
