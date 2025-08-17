@@ -1,191 +1,883 @@
-import os
-import re
-import difflib
+# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
+from __future__ import annotations
+
+import io, os, re, json, time, html
+from datetime import datetime
 import urllib.parse as up
 import xml.etree.ElementTree as ET
+
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
+from openai import AzureOpenAI
 
-# ──────────────────────────────────────────────────────────────
-# 설정
-# ──────────────────────────────────────────────────────────────
-LAW_API_KEY = (
-    st.secrets.get("LAW_API_KEY")
-    if hasattr(st, "secrets") and "LAW_API_KEY" in st.secrets
-    else os.getenv("LAW_API_KEY", "YOUR_API_KEY")
+from chatbar import chatbar
+# (첨부 파싱은 나중 확장용으로 import 유지)
+from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_txt, sanitize
+from external_content import is_url, make_url_context
+from external_content import extract_first_url
+
+# =============================
+# Config & Style
+# =============================
+PAGE_MAX_WIDTH = 1020
+BOTTOM_PADDING_PX = 120   # 고정 ChatBar와 겹침 방지용
+KEY_PREFIX = "lawchat"    # chatbar key prefix
+
+st.set_page_config(
+    page_title="법제처 AI 챗봇",
+    page_icon="⚖️",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-API_ENDPOINTS = (
-    "https://apis.data.go.kr/1170000/law/lawSearchList.do",
-    "http://apis.data.go.kr/1170000/law/lawSearchList.do",
+# 입력창 초기화 플래그가 켜져 있으면, 위젯 생성 전에 값 비움 (안전)
+if st.session_state.pop("_clear_input", False):
+    st.session_state[f"{KEY_PREFIX}-input"] = ""
+
+st.markdown(f"""
+<style>
+.block-container {{ max-width:{PAGE_MAX_WIDTH}px; margin:0 auto; padding-bottom:{BOTTOM_PADDING_PX}px; }}
+.stChatInput    {{ max-width:{PAGE_MAX_WIDTH}px; margin-left:auto; margin-right:auto; }}
+section.main    {{ padding-bottom:0; }}
+
+/* Header */
+.header {{
+  text-align:center;
+  padding:1rem;
+  border-radius:12px;
+  background: transparent;   /* ← 보라 그라데이션 제거 */
+  color: inherit;             /* ← 테마 기본 텍스트색 사용 */
+  margin:0 0 1rem 0;
+  border: 1px solid rgba(127,127,127,.20); /* 필요 없으면 이 줄 삭제 */
+}}
+[data-theme="dark"] .header {{ border-color: rgba(255,255,255,.12); }}
+
+h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem 0 0.4rem; }}
+
+.stMarkdown > div {{
+  background:var(--bubble-bg,#1f1f1f); color:var(--bubble-fg,#f5f5f5);
+  border-radius:14px; padding:14px 16px; box-shadow:0 1px 8px rgba(0,0,0,.12);
+}}
+[data-theme="light"] .stMarkdown > div {{
+  --bubble-bg:#fff; --bubble-fg:#222; box-shadow:0 1px 8px rgba(0,0,0,.06);
+}}
+.stMarkdown ul, .stMarkdown ol {{ margin-left:1.1rem; }}
+.stMarkdown blockquote {{ margin:8px 0; padding-left:12px; border-left:3px solid rgba(255,255,255,.25); }}
+
+.copy-row{{ display:flex; justify-content:flex-end; margin:6px 4px 0 0; }}
+.copy-btn{{
+  display:inline-flex; align-items:center; gap:6px; padding:6px 10px;
+  border:1px solid rgba(255,255,255,.15); border-radius:10px; background:rgba(0,0,0,.25);
+  backdrop-filter:blur(4px); cursor:pointer; font-size:12px; color:inherit;
+}}
+[data-theme="light"] .copy-btn{{ background:rgba(255,255,255,.9); border-color:#ddd; }}
+.copy-btn svg{{ pointer-events:none }}
+
+/* --- Pinned Question (상단 고정) --- */
+.pinned-q{{
+  position: sticky; top: 0; z-index: 900;
+  margin: 8px 0 12px; padding: 10px 14px;
+  border-radius: 12px; border: 1px solid rgba(255,255,255,.15);
+  background: rgba(0,0,0,.35); backdrop-filter: blur(6px);
+}}
+[data-theme="light"] .pinned-q{{ background: rgba(255,255,255,.85); border-color:#e5e5e5; }}
+.pinned-q .label{{ font-size:12px; opacity:.8; margin-bottom:4px; }}
+.pinned-q .text{{ font-weight:600; line-height:1.4; max-height:7.5rem; overflow:auto; }}
+
+/* Chat message width = container width */
+:root {{
+  --msg-max: 100%;
+}}
+
+[data-testid="stChatMessage"] {{
+  max-width: var(--msg-max) !important;
+  width: 100% !important;
+}}
+
+[data-testid="stChatMessage"] .stMarkdown,
+[data-testid="stChatMessage"] .stMarkdown > div {{
+  width: 100% !important;
+}}
+
+/* --- Animated law slide card --- */
+.law-slide {{
+  border:1px solid rgba(127,127,127,.25);
+  border-radius:12px; padding:12px 14px; margin:8px 0;
+}}
+[data-theme="light"] .law-slide {{ border-color:#e5e5e5; }}
+
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown(
+    """
+    <div class="header">
+        <h2>⚖️ 법제처 인공지능 법률 상담 플랫폼</h2>
+        <div>법제처 공식 데이터를 AI가 분석해 답변을 제공합니다</div>
+        <div>당신의 문제를 입력하면 법률 자문서를 출력해 줍니다. 당신의 문제를 입력해 보세요</div>
+        <hr style="margin:1rem 0;border:0;border-top:1px solid rgba(255,255,255,0.4)">
+        <div style="text-align:left;font-size:0.9rem;line-height:1.4">
+            📌 <b>제공 범위</b><br>
+            1. 국가 법령(법률·시행령·시행규칙 등)<br>
+            2. 행정규칙 (예규·고시·훈령·지침)<br>
+            3. 자치법규 (조례·규칙 등)<br>
+            4. 조약 (양자·다자)<br>
+            5. 법령 해석례 (법제처 유권해석)<br>
+            6. 헌법재판소 결정례 (위헌·합헌·각하 등)<br>
+            7. 별표·서식<br>
+            8. 법령 용어 사전
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
-MAX_ROWS_PER_CALL = 50
-st.set_page_config(page_title="법제처 검색(Fuzzy 통합)", page_icon="⚖️", layout="centered")
+# =============================
+# Utilities
+# =============================
+_CASE_NO_RE = re.compile(r'(19|20)\d{2}[가-힣]{1,3}\d{1,6}')
+_HBASE = "https://www.law.go.kr"
 
-# ──────────────────────────────────────────────────────────────
-# 사이드바 설정
-# ──────────────────────────────────────────────────────────────
-st.sidebar.title("⚙️ 설정")
-num_rows_sidebar = st.sidebar.slider("검색 결과 개수", min_value=5, max_value=30, value=10, step=1)
-threshold_sidebar = st.sidebar.slider("Fuzzy 매칭 임계값", min_value=0.5, max_value=0.9, value=0.62, step=0.01)
+def _normalize_text(s: str) -> str:
+    s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [ln.rstrip() for ln in s.split("\n")]
+    while lines and not lines[0].strip(): lines.pop(0)
+    while lines and not lines[-1].strip(): lines.pop()
+    # 번호 한 줄-제목 한 줄 형태 병합
+    merged, i = [], 0
+    num_pat = re.compile(r'^\s*((\d+)|([IVXLC]+)|([ivxlc]+))\s*[\.\)]\s*$')
+    while i < len(lines):
+        cur = lines[i]; m = num_pat.match(cur)
+        if m:
+            j = i + 1
+            while j < len(lines) and not lines[j].strip(): j += 1
+            if j < len(lines):
+                number = (m.group(2) or m.group(3) or m.group(4)).upper()
+                title = lines[j].lstrip()
+                merged.append(f"{number}. {title}")
+                i = j + 1; continue
+        merged.append(cur); i += 1
+    out, prev_blank = [], False
+    for ln in merged:
+        if ln.strip() == "":
+            if not prev_blank: out.append("")
+            prev_blank = True
+        else:
+            prev_blank = False; out.append(ln)
+    return "\n".join(out)
 
-# ──────────────────────────────────────────────────────────────
-# 유틸
-# ──────────────────────────────────────────────────────────────
-def _norm_kor(s: str) -> str:
-    return re.sub(r"[\s\-\_·,./()\[\]{}:;!?\"'`~]", "", (s or "").strip()).lower()
+def render_bubble_with_copy(message: str, key: str):
+    """대화 말풍선 + 복사 버튼. f-string 충돌을 피하기 위해 placeholder 치환 방식 사용"""
+    message = _normalize_text(message)
+    st.markdown(message)
+    safe_raw_json = json.dumps(message)
 
-def _extract_hangul_tokens(s: str) -> list[str]:
-    return re.findall(r"[가-힣]{2,}", s or "")
+    html_tpl = '''
+    <div class="copy-row">
+      <button id="copy-__KEY__" class="copy-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <path d="M9 9h9v12H9z" stroke="currentColor"/>
+          <path d="M6 3h9v3" stroke="currentColor"/>
+          <path d="M6 6h3v3" stroke="currentColor"/>
+        </svg>
+        복사
+      </button>
+    </div>
+    <script>
+    (function(){
+      const btn = document.getElementById("copy-__KEY__");
+      if (!btn) return;
+      btn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(__SAFE__);
+          const old = btn.innerHTML; btn.innerHTML = "복사됨!";
+          setTimeout(()=>btn.innerHTML = old, 1200);
+        } catch(e) { alert("복사 실패: " + e); }
+      });
+    })();
+    </script>
+    '''
+    html_out = html_tpl.replace("__KEY__", str(key)).replace("__SAFE__", safe_raw_json)
+    components.html(html_out, height=40)
 
-def _parse_law_items(xml_text: str) -> list[dict]:
-    root = ET.fromstring(xml_text)
-    items = []
-    for law in root.findall(".//law"):
-        items.append({
-            "법령명": law.findtext("법령명한글", default=""),
-            "법령약칭명": law.findtext("법령약칭명", default=""),
-            "소관부처명": law.findtext("소관부처명", default=""),
-            "법령구분명": law.findtext("법령구분명", default=""),
-            "시행일자": law.findtext("시행일자", default=""),
-            "공포일자": law.findtext("공포일자", default=""),
-            "법령상세링크": law.findtext("법령상세링크", default=""),
-        })
-    return items
+def copy_url_button(url: str, key: str, label: str = "링크 복사"):
+    if not url: return
+    safe = json.dumps(url)
+    html_tpl = '''
+      <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+        <button id="copy-url-__KEY__" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;cursor:pointer">
+          __LABEL__
+        </button>
+        <span id="copied-__KEY__" style="font-size:12px;color:var(--text-color,#888)"></span>
+      </div>
+      <script>
+        (function(){
+          const btn = document.getElementById("copy-url-__KEY__");
+          const msg = document.getElementById("copied-__KEY__");
+          if(!btn) return;
+          btn.addEventListener("click", async () => {
+            try {
+              await navigator.clipboard.writeText(__SAFE__);
+              msg.textContent = "복사됨!";
+              setTimeout(()=>msg.textContent="", 1200);
+            } catch(e) {
+              msg.textContent = "복사 실패";
+            }
+          });
+        })();
+      </script>
+    '''
+    html_out = (html_tpl
+                .replace("__KEY__", str(key))
+                .replace("__SAFE__", safe)
+                .replace("__LABEL__", html.escape(label)))
+    components.html(html_out, height=40)
 
-# ──────────────────────────────────────────────────────────────
-# API 검색
-# ──────────────────────────────────────────────────────────────
+def load_secrets():
+    try:
+        law_key = st.secrets["LAW_API_KEY"]
+    except Exception:
+        law_key = None
+        st.error("`LAW_API_KEY`가 없습니다. Streamlit → App settings → Secrets에 추가하세요.")
+    try:
+        az = st.secrets["azure_openai"]
+        _ = (az["api_key"], az["endpoint"], az["deployment"], az["api_version"])
+    except Exception:
+        az = None
+        st.warning("Azure OpenAI 설정이 없으므로 기본 안내만 제공합니다.")
+    return law_key, az
+
+def _henc(s: str) -> str: return up.quote((s or "").strip())
+def hangul_by_name(domain: str, name: str) -> str: return f"{_HBASE}/{_henc(domain)}/{_henc(name)}"
+def hangul_law_with_keys(name: str, keys): return f"{_HBASE}/법령/{_henc(name)}/({','.join(_henc(k) for k in keys if k)})"
+def hangul_law_article(name: str, subpath: str) -> str: return f"{_HBASE}/법령/{_henc(name)}/{_henc(subpath)}"
+def hangul_admrul_with_keys(name: str, issue_no: str, issue_date: str) -> str: return f"{_HBASE}/행정규칙/{_henc(name)}/({_henc(issue_no)},{_henc(issue_date)})"
+def hangul_ordin_with_keys(name: str, no: str, date: str) -> str: return f"{_HBASE}/자치법규/{_henc(name)}/({_henc(no)},{_henc(date)})"
+def hangul_trty_with_keys(no: str, eff_date: str) -> str: return f"{_HBASE}/조약/({_henc(no)},{_henc(eff_date)})"
+def expc_public_by_id(expc_id: str) -> str: return f"https://www.law.go.kr/LSW/expcInfoP.do?expcSeq={up.quote(expc_id)}"
+def lstrm_public_by_id(trm_seqs: str) -> str: return f"https://www.law.go.kr/LSW/lsTrmInfoR.do?trmSeqs={up.quote(trm_seqs)}"
+def licbyl_file_download(fl_seq: str) -> str: return f"https://www.law.go.kr/LSW/flDownload.do?flSeq={up.quote(fl_seq)}"
+
+def extract_case_no(text: str) -> str | None:
+    if not text: return None
+    m = _CASE_NO_RE.search(text.replace(" ", ""))
+    return m.group(0) if m else None
+
+def validate_case_no(case_no: str) -> bool:
+    case_no = (case_no or "").replace(" ", "")
+    return bool(_CASE_NO_RE.fullmatch(case_no))
+
+def build_case_name_from_no(case_no: str, court: str = "대법원", disposition: str = "판결") -> str | None:
+    case_no = (case_no or "").replace(" ", "")
+    if not validate_case_no(case_no): return None
+    return f"{court} {case_no} {disposition}"
+
+def build_scourt_link(case_no: str) -> str:
+    return f"https://glaw.scourt.go.kr/wsjo/panre/sjo050.do?saNo={up.quote(case_no)}"
+
+def is_reachable(url: str) -> bool:
+    try:
+        r = requests.get(url, timeout=8, allow_redirects=True)
+        return 200 <= r.status_code < 400
+    except Exception:
+        return False
+
+def build_fallback_search(kind: str, q: str) -> str:
+    qq = up.quote((q or "").strip())
+    if kind in ("law", "admrul", "ordin", "trty"):
+        return f"https://www.law.go.kr/LSW/lsSc.do?query={qq}"
+    if kind == "prec":
+        return f"https://glaw.scourt.go.kr/wsjo/panre/sjo050.do?saNo={qq}"
+    if kind == "cc":
+        return f"https://www.law.go.kr/LSW/lsSc.do?query={qq}"
+    return f"https://www.law.go.kr/LSW/lsSc.do?query={qq}"
+
+def present_url_with_fallback(main_url: str, kind: str, q: str, label_main="새 탭에서 열기"):
+    if main_url and is_reachable(main_url):
+        st.code(main_url, language="text")
+        st.link_button(label_main, main_url, use_container_width=True)
+        copy_url_button(main_url, key=str(abs(hash(main_url))))
+    else:
+        fb = build_fallback_search(kind, q)
+        st.warning("직접 링크가 열리지 않아 **대체 검색 링크**를 제공합니다.")
+        st.code(fb, language="text")
+        st.link_button("대체 검색 링크 열기", fb, use_container_width=True)
+        copy_url_button(fb, key=str(abs(hash(fb))))
+
+# ===== Pinned Question helper =====
+
+def _esc(s: str) -> str:
+    return html.escape(s or "").replace("\n", "<br>")
+
+def render_pinned_question():
+    """가장 최근 사용자 질문을 상단에 고정 표시"""
+    last_q = None
+    for m in reversed(st.session_state.get("messages", [])):
+        if m.get("role") == "user":
+            last_q = m.get("content", "")
+            break
+    if not last_q:
+        return
+    st.markdown(f"""
+    <div class="pinned-q">
+      <div class="label">최근 질문</div>
+      <div class="text">{_esc(last_q)}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Link correction utility
+def fix_links_with_lawdata(markdown: str, law_data: list[dict]) -> str:
+    """Replace law.go.kr URLs in the answer with official detail links from law_data."""
+    import re
+    if not markdown or not law_data:
+        return markdown
+    name_to_url = {
+        d["법령명"]: (d["법령상세링크"] or f"https://www.law.go.kr/법령/{_henc(d['법령명'])}")
+        for d in law_data if d.get("법령명")
+    }
+    pat = re.compile(r'\[([^\]]+)\]\((https?://www\.law\.go\.kr/[^\)]+)\)')
+    def repl(m):
+        text, url = m.group(1), m.group(2)
+        if text in name_to_url:
+            return f'[{text}]({name_to_url[text]})'
+        return m.group(0)
+    return pat.sub(repl, markdown)
+
+# =============================
+# Secrets / Clients / Session
+# =============================
+LAW_API_KEY, AZURE = load_secrets()
+
+client = None
+if AZURE:
+    try:
+        client = AzureOpenAI(
+            api_key=AZURE["api_key"],
+            api_version=AZURE["api_version"],
+            azure_endpoint=AZURE["endpoint"],
+        )
+    except Exception as e:
+        st.error(f"Azure OpenAI 초기화 실패: {e}")
+
+if "messages" not in st.session_state: st.session_state.messages = []
+if "settings" not in st.session_state:
+    st.session_state.settings = {
+        "num_rows": 10,         # ▶ 기본 10개
+        "include_search": True,
+        "safe_mode": False,
+        "animate": True,        # ▶ 검색결과 애니메이션 표시 기본 ON
+        "animate_delay": 0.9,   # ▶ 개당 표시 간격(초)
+    }
+if "_last_user_nonce" not in st.session_state: st.session_state["_last_user_nonce"] = None  # ✅ 중복 방지용
+
+# =============================
+# MOLEG API (Law Search)
+# =============================
 @st.cache_data(show_spinner=False, ttl=300)
 def search_law_data(query: str, num_rows: int = 10):
-    if not LAW_API_KEY or LAW_API_KEY == "YOUR_API_KEY":
-        return [], None, "LAW_API_KEY 미설정 또는 기본값입니다. Secrets/환경변수를 확인하세요."
-
+    if not LAW_API_KEY:
+        return [], None, "LAW_API_KEY 미설정"
     params = {
         "serviceKey": up.quote_plus(LAW_API_KEY),
         "target": "law",
         "query": query,
-        "numOfRows": max(1, min(MAX_ROWS_PER_CALL, int(num_rows))),
+        "numOfRows": max(1, min(10, int(num_rows))),
         "pageNo": 1,
     }
-
     last_err = None
-    for url in API_ENDPOINTS:
+    for url in ("https://apis.data.go.kr/1170000/law/lawSearchList.do",
+                "http://apis.data.go.kr/1170000/law/lawSearchList.do"):
         try:
             res = requests.get(url, params=params, timeout=15)
             res.raise_for_status()
-            laws = _parse_law_items(res.text)
+            root = ET.fromstring(res.text)
+            laws = [{
+                "법령명": law.findtext("법령명한글", default=""),
+                "법령약칭명": law.findtext("법령약칭명", default=""),
+                "소관부처명": law.findtext("소관부처명", default=""),
+                "법령구분명": law.findtext("법령구분명", default=""),
+                "시행일자": law.findtext("시행일자", default=""),
+                "공포일자": law.findtext("공포일자", default=""),
+                "법령상세링크": law.findtext("법령상세링크", default=""),
+            } for law in root.findall(".//law")]
             return laws, url, None
         except Exception as e:
             last_err = e
     return [], None, f"법제처 API 연결 실패: {last_err}"
 
-# ──────────────────────────────────────────────────────────────
-# Fuzzy 매칭
-# ──────────────────────────────────────────────────────────────
-@st.cache_data(show_spinner=False, ttl=180)
-def gather_candidate_lawnames(user_query: str, max_tokens: int = 6) -> list[dict]:
-    tokens = _extract_hangul_tokens(user_query)
-    tokens = tokens[:max_tokens] if tokens else []
-    q = re.sub(r"\\s+", "", user_query or "")
-    extra = []
-    if len(q) >= 3:
-        extra.append(q[:3])
-    if len(q) >= 4:
-        extra.append(q[-4:])
-    for t in extra:
-        if t not in tokens:
-            tokens.append(t)
-
-    pool: dict[str, dict] = {}
-    for t in tokens:
-        laws, _, _ = search_law_data(t, num_rows=MAX_ROWS_PER_CALL)
-        for it in laws:
-            name = it.get("법령명", "")
-            if name and name not in pool:
-                pool[name] = it
-            nick = it.get("법령약칭명") or ""
-            if nick and nick not in pool:
-                tmp = dict(it)
-                tmp["법령명"] = nick
-                pool[nick] = tmp
-    return list(pool.values())
-
-def fuzzy_pick_official_name(user_query: str, candidates: list[dict], threshold: float) -> str | None:
-    if not candidates:
-        return None
-
-    norm_q = _norm_kor(user_query)
-    name_to_official: dict[str, str] = {}
-    names: list[str] = []
-    for c in candidates:
-        official = c.get("법령명") or ""
-        nick = c.get("법령약칭명") or ""
-        if official:
-            names.append(official)
-            name_to_official[official] = official
-        if nick:
-            names.append(nick)
-            name_to_official[nick] = official or nick
-
-    close = difflib.get_close_matches(user_query, names, n=8, cutoff=0.0)
-
-    scored = []
-    for nm in set(names + close):
-        ratio = difflib.SequenceMatcher(None, norm_q, _norm_kor(nm)).ratio()
-        inc = 0.05 if (norm_q in _norm_kor(nm) or _norm_kor(nm) in norm_q) else 0.0
-        scored.append((ratio + inc, nm))
-    scored.sort(reverse=True)
-
-    best_score, best_name = (scored[0] if scored else (0.0, None))
-    if best_name and best_score >= threshold:
-        return name_to_official.get(best_name, best_name)
-    return None
-
-def search_with_fuzzy(user_query: str, final_rows: int = 10, threshold: float = 0.62):
-    laws, endpoint, err = search_law_data(user_query, num_rows=final_rows)
+# ▶ 키워드→대표 법령 매핑으로 2차 검색 시도 (항상 API를 통해 재검색)
+def find_law_with_fallback(user_query: str, num_rows: int = 10):
+    # 1차: 원문 질의 그대로 검색
+    laws, endpoint, err = search_law_data(user_query, num_rows=num_rows)
     if laws:
-        return laws, endpoint, err, {"mode": "primary", "used_query": user_query}
+        return laws, endpoint, err, "primary"
 
-    pool = gather_candidate_lawnames(user_query)
-    guess = fuzzy_pick_official_name(user_query, pool, threshold)
-    if guess:
-        laws2, endpoint2, err2 = search_law_data(guess, num_rows=final_rows)
-        if laws2:
-            return laws2, endpoint2, err2, {"mode": "fuzzy", "used_query": guess}
+    # 2차: 자주 쓰는 키워드를 대표 법령명으로 매핑하여 재검색
+    keyword_map = {
+        "정당방위": "형법",
+        "전세": "주택임대차보호법",
+        "상가임대차": "상가건물 임대차보호법",
+        "근로계약": "근로기준법",
+        "해고": "근로기준법",
+        "개인정보": "개인정보 보호법",
+        "산재": "산업재해보상보험법",
+        "이혼": "민법",
+    }
+    text = (user_query or "")
+    for k, law_name in keyword_map.items():
+        if k in text:
+            laws2, ep2, err2 = search_law_data(law_name, num_rows=num_rows)
+            if laws2:
+                return laws2, ep2, err2, f"fallback:{law_name}"
 
-    return [], endpoint, err, {"mode": "none", "used_query": None}
+    # 끝까지 못 찾으면 0건 유지
+    return [], endpoint, err, "none"
 
-# ──────────────────────────────────────────────────────────────
-# UI
-# ──────────────────────────────────────────────────────────────
-st.title("⚖️ 법제처 검색 (Fuzzy 통합)")
-st.caption("정확한 법령명이 아니어도, 비슷한 명칭을 자동으로 찾아 재검색합니다.")
+def format_law_context(law_data: list[dict]) -> str:
+    if not law_data: return "관련 법령 검색 결과가 없습니다."
+    rows = []
+    for i, law in enumerate(law_data, 1):
+        rows.append(
+            f"{i}. {law['법령명']} ({law['법령구분명']})\n"
+            f"   - 소관부처: {law['소관부처명']}\n"
+            f"   - 시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}\n"
+            f"   - 링크: {law['법령상세링크'] or '없음'}"
+        )
+    return "\n\n".join(rows)
 
-q = st.text_input("법령(또는 별칭/키워드)을 입력하세요", placeholder="예: 중대재해처벌법, 정당방위, 전세, 산안법…")
-
-if q:
-    with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
-        items, used_ep, err, info = search_with_fuzzy(q, final_rows=num_rows_sidebar, threshold=threshold_sidebar)
-
-    if used_ep:
-        print(f"[DEBUG] endpoint={used_ep}, mode={info.get('mode')}, used_query={info.get('used_query')}")
-
-    if err and "미설정" in str(err):
-        st.error(err)
-
-    if items:
-        if info.get("mode") == "fuzzy":
-            st.info(f"입력값과 가장 가까운 정식 법령명으로 재검색했습니다 → **{info.get('used_query')}**")
-        st.success(f"총 {len(items)}건의 관련 법령 검색 결과")
-        for i, law in enumerate(items, 1):
+# ▶▶ NEW: 애니메이션 카드 출력
+def animate_law_results(law_data: list[dict], delay: float = 1.0):
+    if not law_data:
+        st.info("관련 법령 검색 결과가 없습니다.")
+        return
+    n = len(law_data)
+    prog = st.progress(0.0, text="관련 법령 미리보기")
+    placeholder = st.empty()
+    for i, law in enumerate(law_data, 1):
+        with placeholder.container():
             st.markdown(
-                f"**{i}. {law['법령명']}**  \n"
-                f"- 구분: {law['법령구분명']}  \n"
-                f"- 소관부처: {law['소관부처명']}  \n"
-                f"- 시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}  \n"
-                f"- 링크: {law['법령상세링크'] or '없음'}"
+                f"""
+                <div class='law-slide'>
+                    <div style='font-weight:700'>🔎 {i}. {law['법령명']} <span style='opacity:.7'>({law['법령구분명']})</span></div>
+                    <div style='margin-top:6px'>소관부처: {law['소관부처명']}</div>
+                    <div>시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}</div>
+                    {f"<div style='margin-top:6px'><a href='{law['법령상세링크']}' target='_blank'>법령 상세보기</a></div>" if law.get('법령상세링크') else ''}
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
+        prog.progress(i / n, text=f"관련 법령 미리보기 {i}/{n}")
+        time.sleep(max(0.0, delay))
+    prog.empty()
+
+# =============================
+# Output routing (classifier)
+# =============================
+ROUTE_SYS = (
+    "질문을 다음 라벨 중 하나로 분류: [단순, 민사, 형사, 행정노무, 복합]. "
+    "반드시 라벨 한 단어만 출력."
+)
+
+def route_label(q: str) -> str:
+    if not client or not AZURE:
+        # 오프라인 시 휴리스틱 폴백
+        t = (q or "").lower()
+        if any(k in t for k in ("형사","고소","고발","벌금","기소","수사","압수수색","사기","폭행","절도","음주","약취","보이스피싱")): return "형사"
+        if any(k in t for k in ("민사","손해배상","채무","계약","임대차","유치권","가압류","가처분","소송가액","지연손해금","불법행위")): return "민사"
+        if any(k in t for k in ("행정심판","과징금","과태료","허가","인가","취소처분","해임","징계","해고","근로","연차","퇴직금","산재")): return "행정노무"
+        return "단순"
+    msgs = [{"role":"system","content":ROUTE_SYS},{"role":"user","content": q or ""}]
+    try:
+        resp = client.chat.completions.create(
+            model=AZURE["deployment"], messages=msgs, temperature=0.0, max_tokens=10, stream=False
+        )
+        return (resp.choices[0].message.content or "단순").strip()
+    except Exception:
+        return "단순"
+# 템플릿: 간결(섹션 헤더만) — 세부는 시스템 프롬프트가 강제
+TEMPLATES = {
+"형사": """[출력 서식 강제]
+## 결론
+## 사실관계(확정/가정 구분)
+## 적용 법령(조문 직접 인용)
+## 판례 요지
+## 법리분석(구성요건·위법성·책임)
+## 절차·전략
+## 출처 링크
+""",
+"민사": """[출력 서식 강제]
+## 결론
+## 사실관계(확정/가정 구분)
+## 적용 법령(조문 직접 인용)
+## 판례 요지
+## 법리분석(청구원인·항변·증명책임)
+## 절차·전략
+## 출처 링크
+""",
+"행정노무": """[출력 서식 강제]
+## 결론
+## 사실관계(확정/가정 구분)
+## 관련 법령·행정규칙
+## 판례/해석례 요지
+## 법리분석(처분성·적법절차·비례원칙)
+## 구제수단
+## 출처 링크
+""",
+"복합": """[출력 서식 강제]
+## 결론
+## 사실관계(확정/가정 구분)
+## 적용 법령 세트(조문 인용)
+## 판례/해석례 교차 요지
+## 쟁점별 법리분석(주장/반박/평가)
+## 절차·전략
+## 출처 링크
+""",
+"단순": """[출력 서식 강제]
+## 결론
+## 근거(조문/해석례 링크)
+## 다음 확인이 필요한 사실(질문 2~3개)
+## 출처 링크
+"""
+}
+
+def choose_output_template(q: str) -> str:
+    """질문 내용을 분류(label)하고 해당 템플릿을 반환"""
+    label = route_label(q)
+    return TEMPLATES.get(label, TEMPLATES["단순"])
+
+# =============================
+# System prompt (STRICT — 변호사 메모 규칙)
+# =============================
+LEGAL_SYS = (
+"당신은 대한민국 변호사다. 답변은 **법률 자문 메모** 형식으로 작성한다.\n"
+"규칙(모두 강제):\n"
+"1) 사용자가 단순 질의/인사/잡담/검색을 하면 자연스럽고 간결하게 답한다.\n"
+"2) 불필요한 섹션 헤더, 각주, 법령 링크 등을 강제하지 않는다.\n"
+"3) 사용자가 법률 자문을 명시적으로 요청하면, 법률 모드 전환을 제안한다.\n"
+"4) **결론 한 문장**을 맨 앞에 제시하고, 맨 끝에서 다시 1문장으로 재확인한다.\n"
+"5) 모든 주장/해석 뒤에는 **근거 각주**를 붙인다: `[법령명 제x조]`, `[대법원 yyyy도/다 nnnn, 선고일]`, `[법제처 해석례 expcSeq]`.\n"
+"6) **조문은 1~2문장만 직접 인용**하며 blockquote로 표기한다.\n"
+"7) 사실관계는 **확정/가정**을 구분하여 기술한다.\n"
+"8) **모호한 표현 금지**(예: '~일 수 있다/보인다/가능성이 있다') — 사용 시 바로 뒤에 근거를 붙인다.\n"
+"9) 링크는 **www.law.go.kr** 또는 **대법원 종합법률정보**만 사용한다.\n"
+"10) 섹션 헤더는 템플릿에 따르며, 각 섹션은 **2~4문장 이상**으로 구체적으로 작성한다.\n"
+"11) 말미에 반드시 `출처: [법령명](https://www.law.go.kr/법령/법령명) 형태로 기재 후 참고용으로만 활용하라는 공지를 한다.\n"
+)
+
+# =============================
+# Model helpers
+# =============================
+
+def build_history_messages(max_turns=10):
+    msgs = [{"role":"system","content": LEGAL_SYS}]
+    history = st.session_state.messages[-max_turns*2:]
+    msgs.extend({"role": m["role"], "content": m["content"]} for m in history)
+    return msgs
+
+def stream_chat_completion(messages, temperature=0.2, max_tokens=2000):
+    stream = client.chat.completions.create(
+        model=AZURE["deployment"], messages=messages,
+        temperature=temperature, max_tokens=max_tokens, stream=True,
+    )
+    for chunk in stream:
+        try:
+            c = chunk.choices[0]
+            if getattr(c, "finish_reason", None): break
+            d = getattr(c, "delta", None)
+            txt = getattr(d, "content", None) if d else None
+            if txt: yield txt
+        except Exception:
+            continue
+
+def chat_completion(messages, temperature=0.2, max_tokens=2000) -> str:
+    resp = client.chat.completions.create(
+        model=AZURE["deployment"], messages=messages,
+        temperature=temperature, max_tokens=max_tokens, stream=False,
+    )
+    try:
+        return resp.choices[0].message.content or ""
+    except Exception:
+        return ""
+
+# =============================
+# Sidebar: 링크 생성기 (무인증)
+# =============================
+with st.sidebar:
+    st.header("🔗 링크 생성기 (무인증)")
+    DEFAULTS = {
+        "법령명": "민법",
+        "법령_공포번호": "",
+        "법령_공포일자": "",
+        "법령_시행일자": "",
+        "행정규칙명": "수입통관사무처리에관한고시",
+        "자치법규명": "서울특별시경관조례",
+        "조약번호": "2193",
+        "조약발효일": "20140701",
+        "판례_사건번호": "2010다52349",
+        "헌재사건": "2022헌마1312",
+        "해석례ID": "313107",
+        "용어ID": "3945293",
+        "별표파일ID": "110728887",
+    }
+    target = st.selectbox(
+        "대상 선택",
+        [
+            "법령(한글주소)", "법령(정밀: 공포/시행/공포일자)", "법령(조문/부칙/삼단비교)",
+            "행정규칙(한글주소)", "자치법규(한글주소)", "조약(한글주소 또는 번호/발효일자)",
+            "판례(대표: 법제처 한글주소 + 전체: 대법원 검색)", "헌재결정례(한글주소)",
+            "법령해석례(ID 전용)", "법령용어(ID 전용)", "별표·서식 파일(ID 전용)"
+        ], index=0
+    )
+
+    url = None; out_kind = None; out_q = ""
+    if target == "법령(한글주소)":
+        name = st.text_input("법령명", value=DEFAULTS["법령명"])
+        if st.button("생성", use_container_width=True):
+            url = hangul_by_name("법령", name); out_kind="law"; out_q=name
+
+    elif target == "법령(정밀: 공포/시행/공포일자)":
+        name = st.text_input("법령명", value=DEFAULTS["법령명"])
+        c1, c2, c3 = st.columns(3)
+        with c1: g_no = st.text_input("공포번호", value=DEFAULTS["법령_공포번호"])
+        with c2: g_dt = st.text_input("공포일자(YYYYMMDD)", value=DEFAULTS["법령_공포일자"])
+        with c3: ef   = st.text_input("시행일자(YYYYMMDD, 선택)", value=DEFAULTS["법령_시행일자"])
+        st.caption("예: (08358) / (07428,20050331) / (20060401,07428,20050331)")
+        if st.button("생성", use_container_width=True):
+            keys = [k for k in [ef, g_no, g_dt] if k] if ef else [k for k in [g_no, g_dt] if k] if (g_dt or g_no) else [g_no]
+            url = hangul_law_with_keys(name, keys); out_kind="law"; out_q=name
+
+    elif target == "법령(조문/부칙/삼단비교)":
+        name = st.text_input("법령명", value=DEFAULTS["법령명"])
+        sub  = st.text_input("하위 경로", value="제3조")
+        if st.button("생성", use_container_width=True):
+            url = hangul_law_article(name, sub); out_kind="law"; out_q=f"{name} {sub}"
+
+    elif target == "행정규칙(한글주소)":
+        name = st.text_input("행정규칙명", value=DEFAULTS["행정규칙명"])
+        use_keys = st.checkbox("발령번호/발령일자로 특정", value=False)
+        if use_keys:
+            c1, c2 = st.columns(2)
+            with c1: issue_no = st.text_input("발령번호", value="")
+            with c2: issue_dt = st.text_input("발령일자(YYYYMMDD)", value="")
+            if st.button("생성", use_container_width=True):
+                url = hangul_admrul_with_keys(name, issue_no, issue_dt); out_kind="admrul"; out_q=name
+        else:
+            if st.button("생성", use_container_width=True):
+                url = hangul_by_name("행정규칙", name); out_kind="admrul"; out_q=name
+
+    elif target == "자치법규(한글주소)":
+        name = st.text_input("자치법규명", value=DEFAULTS["자치법규명"])
+        use_keys = st.checkbox("공포번호/공포일자로 특정", value=False)
+        if use_keys:
+            c1, c2 = st.columns(2)
+            with c1: no = st.text_input("공포번호", value="")
+            with c2: dt = st.text_input("공포일자(YYYYMMDD)", value="")
+            if st.button("생성", use_container_width=True):
+                url = hangul_ordin_with_keys(name, no, dt); out_kind="ordin"; out_q=name
+        else:
+            if st.button("생성", use_container_width=True):
+                url = hangul_by_name("자치법규", name); out_kind="ordin"; out_q=name
+
+    elif target == "조약(한글주소 또는 번호/발효일자)":
+        mode = st.radio("방식", ["이름(직접입력)", "번호/발효일자(권장)"], horizontal=True, index=1)
+        if mode.startswith("이름"):
+            name = st.text_input("조약명", value="한-불 사회보장협정")
+            if st.button("생성", use_container_width=True):
+                url = hangul_by_name("조약", name); out_kind="trty"; out_q=name
+        else:
+            c1, c2 = st.columns(2)
+            with c1: tno = st.text_input("조약번호", value=DEFAULTS["조약번호"])
+            with c2: eff = st.text_input("발효일자(YYYYMMDD)", value=DEFAULTS["조약발효일"])
+            if st.button("생성", use_container_width=True):
+                url = hangul_trty_with_keys(tno, eff); out_kind="trty"; out_q=tno
+
+    elif target == "판례(대표: 법제처 한글주소 + 전체: 대법원 검색)":
+        mode = st.radio("입력 방식", ["사건번호로 만들기(권장)", "사건명 직접 입력"], index=0)
+        law_url = None; scourt_url = None
+        if mode.startswith("사건번호"):
+            cno = st.text_input("사건번호", value=DEFAULTS["판례_사건번호"])
+            colA, colB = st.columns(2)
+            with colA:  court = st.selectbox("법원", ["대법원"], index=0)
+            with colB:  dispo = st.selectbox("선고유형", ["판결", "결정"], index=0)
+            if st.button("링크 생성", use_container_width=True):
+                name = build_case_name_from_no(cno, court=court, disposition=dispo)
+                if not name: st.error("사건번호 형식이 올바르지 않습니다. 예) 2010다52349, 2009도1234")
+                else:
+                    law_url = hangul_by_name("판례", name); scourt_url = build_scourt_link(cno)
+        else:
+            name = st.text_input("판례명", value=f"대법원 {DEFAULTS['판례_사건번호']} 판결")
+            found_no = extract_case_no(name)
+            if st.button("링크 생성", use_container_width=True):
+                law_url = hangul_by_name("판례", name)
+                if found_no: scourt_url = build_scourt_link(found_no)
+        if law_url or scourt_url:
+            st.subheader("생성된 링크")
+            if law_url:
+                st.write("• 법제처 한글주소(대표 판례)")
+                present_url_with_fallback(law_url, kind="prec", q=(cno if mode.startswith("사건번호") else (name or "")))
+            if scourt_url:
+                st.write("• 대법원 종합법률정보(전체 판례 검색)")
+                st.code(scourt_url, language="text")
+                st.link_button("새 탭에서 열기", scourt_url, use_container_width=True)
+                copy_url_button(scourt_url, key=str(abs(hash(scourt_url))), label="대법원 링크 복사")
+
+    elif target == "헌재결정례(한글주소)":
+        name_or_no = st.text_input("사건명 또는 사건번호", value=DEFAULTS["헌재사건"])
+        if st.button("생성", use_container_width=True):
+            url = hangul_by_name("헌재결정례", name_or_no); out_kind="cc"; out_q=name_or_no
+
+    elif target == "법령해석례(ID 전용)":
+        expc_id = st.text_input("해석례 ID(expcSeq)", value=DEFAULTS["해석례ID"])
+        if st.button("생성", use_container_width=True):
+            url = expc_public_by_id(expc_id); out_kind="expc"; out_q=expc_id
+
+    elif target == "법령용어(ID 전용)":
+        trm = st.text_input("용어 ID(trmSeqs)", value=DEFAULTS["용어ID"])
+        if st.button("생성", use_container_width=True):
+            url = lstrm_public_by_id(trm); out_kind="term"; out_q=trm
+
+    elif target == "별표·서식 파일(ID 전용)":
+        fl = st.text_input("파일 시퀀스(flSeq)", value=DEFAULTS["별표파일ID"])
+        if st.button("생성", use_container_width=True):
+            url = licbyl_file_download(fl); out_kind="file"; out_q=fl
+
+    if url:
+        st.success("생성된 링크")
+        present_url_with_fallback(url, kind=(out_kind or "law"), q=(out_q or ""))
+        st.caption("⚠️ 한글주소는 ‘정확한 명칭’이 필요합니다. 괄호 식별자(공포번호·일자 등) 사용 권장.")
+
+# =============================
+# Chat flow
+# =============================
+
+def _push_user_from_pending() -> str | None:
+    """_pending_user_q 가 있으면, Nonce로 중복을 막고 1회만 messages에 추가."""
+    q = st.session_state.pop("_pending_user_q", None)
+    nonce = st.session_state.pop("_pending_user_nonce", None)
+    if not q:
+        return None
+    # 같은 이벤트(Nonce) 재처리 방지
+    if nonce and st.session_state.get("_last_user_nonce") == nonce:
+        return None
+    # 동일 내용이 방금 직전에 이미 들어간 경우도 방지
+    msgs = st.session_state.messages
+    if msgs and msgs[-1].get("role") == "user" and msgs[-1].get("content") == q:
+        st.session_state["_last_user_nonce"] = nonce
+        return None
+    msgs.append({"role": "user", "content": q, "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+    st.session_state["_last_user_nonce"] = nonce
+    return q
+
+# 1) 직전 제출(이벤트)이 있는 경우, 먼저 히스토리에 1회만 반영
+user_q = _push_user_from_pending()
+
+# 🔝 1-1) 최근 질문 상단 고정 바 렌더 (히스토리/스트리밍 전에 호출)
+render_pinned_question()
+
+# 2) 히스토리 정방향 렌더
+with st.container():
+    for i, m in enumerate(st.session_state.messages):
+        with st.chat_message(m["role"]):
+            if m["role"] == "assistant":
+                render_bubble_with_copy(m["content"], key=f"past-{i}")
+                if m.get("law"):
+                    with st.expander("📋 이 턴에서 참고한 법령 요약"):
+                        for j, law in enumerate(m["law"], 1):
+                            st.write(f"**{j}. {law['법령명']}** ({law['법령구분명']})  | 시행 {law['시행일자']}  | 공포 {law['공포일자']}")
+                            if law.get("법령상세링크"):
+                                st.write(f"- 링크: {law['법령상세링크']}")
+            else:
+                st.markdown(m["content"])
+
+# 3) 방금 입력이 있었다면 맨 아래에서 스트리밍
+if user_q:
+    with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
+        law_data, used_endpoint, err, search_mode = find_law_with_fallback(
+            user_q, num_rows=st.session_state.settings["num_rows"]
+        )
+
+    # ▶ 내부 디버깅용 로그만 남기고 화면에는 노출하지 않음
+    if used_endpoint:
+        print(f"[DEBUG] 사용한 법제처 API endpoint: {used_endpoint} (mode={search_mode})")
+    if err:
+        st.warning(err)
+
+    # ▶ 애니메이션 미리보기 (원하면 settings로 끌 수 있음)
+    if law_data and st.session_state.settings.get("animate", True):
+        animate_law_results(law_data, delay=float(st.session_state.settings.get("animate_delay", 0.9)))
     else:
-        st.caption("※ 관련 법령명이 직접 검색되지 않았습니다. (API 2회 시도)")
+        st.caption("※ 법제처 DB의 내용을 검색을 완료 했습니다. 답변 드리겠습니다.")
+
+    law_ctx = format_law_context(law_data)
+
+    # ✅ 문장+URL/URL 단독 모두 지원: 첫 URL만 추출해 본문 컨텍스트 생성
+    url_only = extract_first_url(user_q)
+    url_ctx = make_url_context(url_only) if url_only else ""
+
+    template_block = choose_output_template(user_q)
+    model_messages = build_history_messages(max_turns=10) + [{
+        "role": "user",
+        "content": f"""사용자 질문: {user_q}
+
+{url_ctx}
+관련 법령 정보(분석):
+{law_ctx}
+
+[운영 지침]
+- 답변에 법령명·공포/시행일·소관부처 등 메타데이터 포함.
+- 링크는 반드시 www.law.go.kr 사용.
+- 말미에 출처 표기 + 참고용 고지.
+{template_block}
+"""
+    }]
+ 
+    with st.chat_message("assistant"):
+        placeholder = st.empty()
+        full_text, buffer = "", ""
+        try:
+            placeholder.markdown("_답변 생성 중입니다._")
+            if client is None:
+                full_text = "Azure OpenAI 설정이 없어 기본 안내를 제공합니다.\n\n" + law_ctx
+                placeholder.markdown(_normalize_text(full_text))
+            else:
+                for piece in stream_chat_completion(model_messages, temperature=0.7, max_tokens=1200):
+                    buffer += piece
+                    if len(buffer) >= 200:
+                        full_text += buffer; buffer = ""
+                        placeholder.markdown(_normalize_text(full_text[-1500:]))
+                if buffer:
+                    full_text += buffer
+                    placeholder.markdown(_normalize_text(full_text))
+        except Exception as e:
+            full_text = f"**오류**: {e}\n\n{law_ctx}"
+            placeholder.markdown(_normalize_text(full_text))
+
+        placeholder.empty()
+        final_text = _normalize_text(full_text)
+        final_text = fix_links_with_lawdata(final_text, law_data)  # link correction applied
+        render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
+
+    st.session_state.messages.append({
+        "role": "assistant", "content": final_text, "law": law_data, "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
+
+# 4) ChatBar (맨 아래 고정)
+submitted, typed_text, files = chatbar(
+    placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
+    accept=["pdf", "docx", "txt"],
+    max_files=5,
+    max_size_mb=15,
+    key_prefix=KEY_PREFIX,
+)
+
+if submitted:
+    text = (typed_text or "").strip()
+    if text:
+        st.session_state["_pending_user_q"] = text
+        st.session_state["_pending_user_nonce"] = time.time_ns()
+    # 입력창은 '다음 런 시작 전에' 비우도록 플래그만 켜고 즉시 재실행
+    st.session_state["_clear_input"] = True
+    st.rerun()
+
+st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
