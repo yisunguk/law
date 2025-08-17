@@ -24,6 +24,13 @@ MAX_ROWS_PER_CALL = 50
 st.set_page_config(page_title="법제처 검색(Fuzzy 통합)", page_icon="⚖️", layout="centered")
 
 # ──────────────────────────────────────────────────────────────
+# 사이드바 설정
+# ──────────────────────────────────────────────────────────────
+st.sidebar.title("⚙️ 설정")
+num_rows_sidebar = st.sidebar.slider("검색 결과 개수", min_value=5, max_value=30, value=10, step=1)
+threshold_sidebar = st.sidebar.slider("Fuzzy 매칭 임계값", min_value=0.5, max_value=0.9, value=0.62, step=0.01)
+
+# ──────────────────────────────────────────────────────────────
 # 유틸
 # ──────────────────────────────────────────────────────────────
 def _norm_kor(s: str) -> str:
@@ -105,7 +112,7 @@ def gather_candidate_lawnames(user_query: str, max_tokens: int = 6) -> list[dict
                 pool[nick] = tmp
     return list(pool.values())
 
-def fuzzy_pick_official_name(user_query: str, candidates: list[dict], threshold: float = 0.62) -> str | None:
+def fuzzy_pick_official_name(user_query: str, candidates: list[dict], threshold: float) -> str | None:
     if not candidates:
         return None
 
@@ -136,13 +143,13 @@ def fuzzy_pick_official_name(user_query: str, candidates: list[dict], threshold:
         return name_to_official.get(best_name, best_name)
     return None
 
-def search_with_fuzzy(user_query: str, final_rows: int = 10):
+def search_with_fuzzy(user_query: str, final_rows: int = 10, threshold: float = 0.62):
     laws, endpoint, err = search_law_data(user_query, num_rows=final_rows)
     if laws:
         return laws, endpoint, err, {"mode": "primary", "used_query": user_query}
 
     pool = gather_candidate_lawnames(user_query)
-    guess = fuzzy_pick_official_name(user_query, pool)
+    guess = fuzzy_pick_official_name(user_query, pool, threshold)
     if guess:
         laws2, endpoint2, err2 = search_law_data(guess, num_rows=final_rows)
         if laws2:
@@ -160,7 +167,7 @@ q = st.text_input("법령(또는 별칭/키워드)을 입력하세요", placehol
 
 if q:
     with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
-        items, used_ep, err, info = search_with_fuzzy(q, final_rows=10)
+        items, used_ep, err, info = search_with_fuzzy(q, final_rows=num_rows_sidebar, threshold=threshold_sidebar)
 
     if used_ep:
         print(f"[DEBUG] endpoint={used_ep}, mode={info.get('mode')}, used_query={info.get('used_query')}")
