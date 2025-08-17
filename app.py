@@ -100,6 +100,13 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
   width: 100% !important;
 }}
 
+/* --- Animated law slide card --- */
+.law-slide {{
+  border:1px solid rgba(127,127,127,.25);
+  border-radius:12px; padding:12px 14px; margin:8px 0;
+}}
+[data-theme="light"] .law-slide {{ border-color:#e5e5e5; }}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -176,17 +183,17 @@ def render_bubble_with_copy(message: str, key: str):
       </button>
     </div>
     <script>
-    (function(){{
+    (function(){
       const btn = document.getElementById("copy-{key}");
       if (!btn) return;
-      btn.addEventListener("click", async () => {{
-        try {{
+      btn.addEventListener("click", async () => {
+        try {
           await navigator.clipboard.writeText({safe_raw_json});
           const old = btn.innerHTML; btn.innerHTML = "복사됨!";
           setTimeout(()=>btn.innerHTML = old, 1200);
-        }} catch(e) {{ alert("복사 실패: " + e); }}
-      }});
-    }})();
+        } catch(e) { alert("복사 실패: " + e); }
+      });
+    })();
     </script>
     """, height=40)
 
@@ -201,20 +208,20 @@ def copy_url_button(url: str, key: str, label: str = "링크 복사"):
         <span id="copied-{key}" style="font-size:12px;color:var(--text-color,#888)"></span>
       </div>
       <script>
-        (function(){{
+        (function(){
           const btn = document.getElementById("copy-url-{key}");
           const msg = document.getElementById("copied-{key}");
           if(!btn) return;
-          btn.addEventListener("click", async () => {{
-            try {{
+          btn.addEventListener("click", async () => {
+            try {
               await navigator.clipboard.writeText({safe});
               msg.textContent = "복사됨!";
               setTimeout(()=>msg.textContent="", 1200);
-            }} catch(e) {{
+            } catch(e) {
               msg.textContent = "복사 실패";
-            }}
-          }});
-        }})();
+            }
+          });
+        })();
       </script>
     """, height=40)
 
@@ -290,6 +297,7 @@ def present_url_with_fallback(main_url: str, kind: str, q: str, label_main="새 
         copy_url_button(fb, key=str(abs(hash(fb))))
 
 # ===== Pinned Question helper =====
+
 def _esc(s: str) -> str:
     return html.escape(s or "").replace("\n", "<br>")
 
@@ -308,7 +316,6 @@ def render_pinned_question():
       <div class="text">{_esc(last_q)}</div>
     </div>
     """, unsafe_allow_html=True)
-
 
 
 # Link correction utility: fix law.go.kr URLs using MOLEG search results
@@ -348,14 +355,21 @@ if AZURE:
         st.error(f"Azure OpenAI 초기화 실패: {e}")
 
 if "messages" not in st.session_state: st.session_state.messages = []
-if "settings" not in st.session_state: st.session_state.settings = {"num_rows": 5, "include_search": True, "safe_mode": False}
+if "settings" not in st.session_state:
+    st.session_state.settings = {
+        "num_rows": 10,         # ▶ 기본 10개
+        "include_search": True,
+        "safe_mode": False,
+        "animate": True,        # ▶ 검색결과 애니메이션 표시 기본 ON
+        "animate_delay": 0.9,   # ▶ 개당 표시 간격(초)
+    }
 if "_last_user_nonce" not in st.session_state: st.session_state["_last_user_nonce"] = None  # ✅ 중복 방지용
 
 # =============================
 # MOLEG API (Law Search)
 # =============================
 @st.cache_data(show_spinner=False, ttl=300)
-def search_law_data(query: str, num_rows: int = 5):
+def search_law_data(query: str, num_rows: int = 10):
     if not LAW_API_KEY:
         return [], None, "LAW_API_KEY 미설정"
     params = {
@@ -397,6 +411,31 @@ def format_law_context(law_data: list[dict]) -> str:
             f"   - 링크: {law['법령상세링크'] or '없음'}"
         )
     return "\n\n".join(rows)
+
+# ▶▶ NEW: 애니메이션 카드 출력
+def animate_law_results(law_data: list[dict], delay: float = 1.0):
+    if not law_data:
+        st.info("관련 법령 검색 결과가 없습니다.")
+        return
+    n = len(law_data)
+    prog = st.progress(0.0, text="관련 법령 미리보기")
+    placeholder = st.empty()
+    for i, law in enumerate(law_data, 1):
+        with placeholder.container():
+            st.markdown(
+                f"""
+                <div class='law-slide'>
+                    <div style='font-weight:700'>🔎 {i}. {law['법령명']} <span style='opacity:.7'>({law['법령구분명']})</span></div>
+                    <div style='margin-top:6px'>소관부처: {law['소관부처명']}</div>
+                    <div>시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}</div>
+                    {f"<div style='margin-top:6px'><a href='{law['법령상세링크']}' target='_blank'>법령 상세보기</a></div>" if law.get('법령상세링크') else ''}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        prog.progress(i / n, text=f"관련 법령 미리보기 {i}/{n}")
+        time.sleep(max(0.0, delay))
+    prog.empty()
 
 # =============================
 # Output routing (classifier)
@@ -492,6 +531,7 @@ LEGAL_SYS = (
 # =============================
 # Model helpers
 # =============================
+
 def build_history_messages(max_turns=10):
     msgs = [{"role":"system","content": LEGAL_SYS}]
     history = st.session_state.messages[-max_turns*2:]
@@ -720,8 +760,16 @@ if user_q:
         law_data, used_endpoint, err = search_law_data(
             user_q, num_rows=st.session_state.settings["num_rows"]
         )
-    if used_endpoint: st.caption(f"법제처 API endpoint: `{used_endpoint}`")
-    if err: st.warning(err)
+
+    # ▶ 내부 디버깅용 로그만 남기고 화면에는 노출하지 않음
+    if used_endpoint:
+        print(f"[DEBUG] 사용한 법제처 API endpoint: {used_endpoint}")
+    if err:
+        st.warning(err)
+
+    # ▶ 애니메이션 미리보기 (원하면 settings로 끌 수 있음)
+    if st.session_state.settings.get("animate", True):
+        animate_law_results(law_data, delay=float(st.session_state.settings.get("animate_delay", 0.9)))
 
     law_ctx = format_law_context(law_data)
 
