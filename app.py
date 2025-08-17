@@ -372,39 +372,121 @@ if "settings" not in st.session_state:
 if "_last_user_nonce" not in st.session_state: st.session_state["_last_user_nonce"] = None  # ✅ 중복 방지용
 
 # =============================
-# MOLEG API (Law Search)
+# MOLEG API (Law Search) — unified, spec-compliant
 # =============================
-@st.cache_data(show_spinner=False, ttl=300)
-def search_law_data(query: str, num_rows: int = 10):
+import urllib.parse as up
+import xml.etree.ElementTree as ET
+
+MOLEG_BASE = "https://apis.data.go.kr/1170000"
+
+# 공통 호출 유틸 (필요 시 4번 통합검색 확장 용이)
+def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int = 1):
+    """
+    target: law | admrul | ordin | trty | expc | detc | licbyl | lstrm
+    """
     if not LAW_API_KEY:
         return [], None, "LAW_API_KEY 미설정"
+
+    # 엔드포인트는 가이드 명칭대로 *SearchList.do
+    endpoint = f"{MOLEG_BASE}/{target}/{target}SearchList.do"
+
     params = {
-        "serviceKey": up.quote_plus(LAW_API_KEY),
-        "target": "law",
-        "query": query,
+        "serviceKey": LAW_API_KEY,         # 가이드: serviceKey 인증 사용
+        "target": target,                  # 고정값 (예: law)
+        "query": query or "*",             # 기본값 *
         "numOfRows": max(1, min(10, int(num_rows))),
-        "pageNo": 1,
+        "pageNo": max(1, int(page_no)),
     }
-    last_err = None
-    for url in ("https://apis.data.go.kr/1170000/law/lawSearchList.do",
-                "http://apis.data.go.kr/1170000/law/lawSearchList.do"):
-        try:
-            res = requests.get(url, params=params, timeout=15)
-            res.raise_for_status()
-            root = ET.fromstring(res.text)
-            laws = [{
-                "법령명": law.findtext("법령명한글", default=""),
-                "법령약칭명": law.findtext("법령약칭명", default=""),
-                "소관부처명": law.findtext("소관부처명", default=""),
-                "법령구분명": law.findtext("법령구분명", default=""),
-                "시행일자": law.findtext("시행일자", default=""),
-                "공포일자": law.findtext("공포일자", default=""),
-                "법령상세링크": law.findtext("법령상세링크", default=""),
-            } for law in root.findall(".//law")]
-            return laws, url, None
-        except Exception as e:
-            last_err = e
-    return [], None, f"법제처 API 연결 실패: {last_err}"
+
+    try:
+        resp = requests.get(endpoint, params=params, timeout=15)
+        resp.raise_for_status()
+    except Exception as e:
+        return [], endpoint, f"법제처 API 연결 실패: {e}"
+
+    # XML 파싱
+    try:
+        root = ET.fromstring(resp.text)
+
+        # resultCode / resultMsg 검사 (00이어야 성공)
+        result_code = (root.findtext(".//resultCode") or "").strip()
+        result_msg  = (root.findtext(".//resultMsg") or "").strip()
+        if result_code and result_code != "00":
+            # 가이드의 에러 정의 반영
+            return [], endpoint, f"법제처 API 오류 [{result_code}]: {result_msg or 'fail'}"
+
+        # 타깃별 아이템 태그 (가이드 표기를 모두 고려)
+        item_tags = {
+            "law":    ["law"],
+            "admrul": ["admrul"],
+            "ordin":  ["law"],      # OrdinSearch 안의 항목 태그명이 'law'로 제공됨
+            "trty":   ["Trty", "trty"],
+            "expc":   ["expc"],
+            "detc":   ["Detc", "detc"],
+            "licbyl": ["licbyl"],
+            "lstrm":  ["lstrm"],
+        }.get(target, ["law"])
+
+        items = []
+        for tag in item_tags:
+            items.extend(root.findall(f".//{tag}"))
+
+        # 최소한 law 화면에 쓰는 공통 구조로 정규화 (법령명/부처/시행·공포/상세링크 등)
+        normalized = []
+        for el in items:
+            normalized.append({
+                "법령명":       (el.findtext("법령명한글") or el.findtext("자치법규명") or el.findtext("조약명") or "").strip(),
+                "법령약칭명":   (el.findtext("법령약칭명") or "").strip(),
+                "소관부처명":   (el.findtext("소관부처명") or "").strip(),
+                "법령구분명":   (el.findtext("법령구분명") or el.findtext("자치법규종류") or el.findtext("조약구분명") or "").strip(),
+                "시행일자":     (el.findtext("시행일자") or "").strip(),
+                "공포일자":     (el.findtext("공포일자") or "").strip(),
+                "법령상세링크": (el.findtext("법령상세링크") or el.findtext("자치법규상세링크") or el.findtext("조약상세링크") or "").strip(),
+            })
+
+        return normalized, endpoint, None
+
+    # =============================
+    # MOLEG API 통합 검색
+    # =============================
+
+    def find_all_law_data(query: str, num_rows: int = 3):
+    """
+    하나의 질의어(query)로 법령, 행정규칙, 자치법규, 조약을 모두 검색.
+    각 카테고리별 최대 num_rows 개씩 반환.
+    """
+    targets = {
+        "법령": "law",
+        "행정규칙": "admrul",
+        "자치법규": "ordin",
+        "조약": "trty",
+        # 필요 시 아래도 추가 가능
+        # "법령해석례": "expc",
+        # "헌재결정례": "detc",
+    }
+
+    results = {}
+    for label, target in targets.items():
+        laws, endpoint, err = _call_moleg_list(target, query, num_rows=num_rows)
+        results[label] = {
+            "items": laws,
+            "endpoint": endpoint,
+            "error": err
+        }
+    return results
+
+
+    except Exception as e:
+        return [], endpoint, f"응답 파싱 실패: {e}"
+
+@st.cache_data(show_spinner=False, ttl=300)
+def search_law_data(query: str, num_rows: int = 10):
+    """
+    (통일 버전) 가이드 표준에 따라 'law' 타깃을 조회.
+    향후 확장 시 _call_moleg_list()를 재사용.
+    """
+    return _call_moleg_list("law", query, num_rows=num_rows)
+
 
 # ▶ 키워드→대표 법령 매핑으로 2차 검색 시도 (항상 API를 통해 재검색)
 def find_law_with_fallback(user_query: str, num_rows: int = 10):
@@ -882,69 +964,12 @@ if submitted:
 
 st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
 
-
-
 # ============================================================
 # LOG-ENABLED OVERRIDES (appended safely without touching UI)
 # - search_law_data(): add visible logs for API URL/response
 # - find_law_with_fallback(): add logs for GPT candidates & choice
 # These override earlier definitions by virtue of being defined later.
 # ============================================================
-
-@st.cache_data(show_spinner=False, ttl=300)
-def search_law_data(query: str, num_rows: int = 10):
-    """MOLEG 법제처 API 호출 + Streamlit/터미널 로그 출력 (오버라이드)"""
-    try:
-        base_url = LAW_API_URL
-    except NameError:
-        # 혹시 상수가 다른 이름이면 최대한 기존 전역에서 가져오도록 시도
-        base_url = globals().get("LAW_API_URL", "")
-    try:
-        api_key = LAW_API_KEY
-    except NameError:
-        api_key = globals().get("LAW_API_KEY", "")
-
-    url = f"{base_url}?OC={api_key}&target=law&query={query}&display={num_rows}&type=json"
-
-    # 🔎 로그 출력 (UI + 터미널)
-    try:
-        st.write("🔎 [API 호출 시도] URL:", url)
-    except Exception:
-        pass
-    try:
-        print("[API 호출 시도]", url)
-    except Exception:
-        pass
-
-    try:
-        resp = requests.get(url, timeout=15)
-        try:
-            st.write("📡 [API 응답 코드]:", resp.status_code)
-        except Exception:
-            pass
-        try:
-            st.write("📄 [API 응답 내용 일부]:", (resp.text or "")[:300])
-        except Exception:
-            pass
-        try:
-            print("[API 응답 코드]", resp.status_code)
-            print("[API 응답 내용 일부]", (resp.text or "")[:300])
-        except Exception:
-            pass
-
-        data = resp.json()
-        return data.get("law", []), "law", None
-    except Exception as e:
-        try:
-            st.error(f"API 호출 오류: {e}")
-        except Exception:
-            pass
-        try:
-            print("[API 호출 오류]", e)
-        except Exception:
-            pass
-        return [], "law", str(e)
-
 
 def find_law_with_fallback(user_query: str, num_rows: int = 10):
     """GPT 확장 후보 → 다중 검색 → 스코어 최적 선택 + 로그 (오버라이드)"""
