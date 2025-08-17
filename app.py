@@ -368,9 +368,8 @@ if "settings" not in st.session_state:
         "safe_mode": False,
         "animate": True,        # ▶ 검색결과 애니메이션 표시 기본 ON
         "animate_delay": 0.9,   # ▶ 개당 표시 간격(초)
-        "use_gpt_query_expansion": True,
     }
-if "_last_user_nonce" not in st.session_state: st.session_state["_last_user_nonce"] = None  
+if "_last_user_nonce" not in st.session_state: st.session_state["_last_user_nonce"] = None  # ✅ 중복 방지용
 
 # =============================
 # MOLEG API (Law Search)
@@ -407,140 +406,33 @@ def search_law_data(query: str, num_rows: int = 10):
             last_err = e
     return [], None, f"법제처 API 연결 실패: {last_err}"
 
-# =============================
-# NEW: GPT 질의 확장기 + 스코어러
-# =============================
-def gpt_expand_query(user_query: str) -> dict:
-    """
-    사용자의 질의에서 법령 공식명/약칭/띄어쓰기 변형 후보를 만들어 반환합니다.
-    Azure OpenAI 설정이 없으면 약칭→정식명 폴백 맵만 사용합니다.
-    반환 예: {"target": "law", "candidates": ["중대재해 처벌 등에 관한 법률","중대재해처벌법"]}
-    """
-    # Azure가 없으면 간단 폴백
-    if not (AZURE and client):
-        q = (user_query or "").strip()
-        cand = [q] if q else []
-        fallback_map = {
-            "중대재해처벌법": "중대재해 처벌 등에 관한 법률",
-            "주임법": "주택임대차보호법",
-            "상임법": "상가건물 임대차보호법",
-            "개보법": "개인정보 보호법",
-        }
-        for k, v in fallback_map.items():
-            if k in q and v not in cand:
-                cand.insert(0, v)
-        # 띄어쓰기 변형도 한 개 정도 추가
-        if q and " " not in q:
-            spaced = re.sub(r'(법)$', r' 법', q)
-            if spaced != q and spaced not in cand:
-                cand.append(spaced)
-        return {"target": "law", "candidates": list(dict.fromkeys([c for c in cand if c]))}
-
-    # Azure 사용: 구조화 JSON으로 후보 생성
-    sys_msg = (
-        "너는 대한민국 법령 검색 보조기야. 사용자가 쓴 비공식/약칭 질의를 "
-        "법제처(www.law.go.kr)의 '법령명(한글)' 정식 명칭 후보들로 확장해. "
-        "JSON만 출력해. 설명 금지. 필드: target(모호하면 'law'), candidates(최대 5개)."
-    )
-    usr_msg = f"질의: {user_query}"
-    try:
-        resp = client.chat.completions.create(
-            model=AZURE["deployment"],
-            messages=[{"role":"system","content":sys_msg},{"role":"user","content":usr_msg}],
-            temperature=0.0,
-            max_tokens=200,
-            stream=False,
-        )
-        txt = (resp.choices[0].message.content or "").strip()
-        data = json.loads(txt)
-        if not isinstance(data, dict): raise ValueError("bad json")
-        cands = [c.strip() for c in data.get("candidates", []) if c and c.strip()]
-        if not cands:
-            raise ValueError("no candidates")
-        return {"target": data.get("target") or "law", "candidates": cands[:5]}
-    except Exception:
-        # 실패 시 폴백
-        return {"target": "law", "candidates": [user_query]}
-
-def _score_results(q: str, laws: list[dict]) -> int:
-    """높을수록 좋음: 완전일치(3) > 포함(2) > 결과만 있음(1) > 없음(0)"""
-    if not laws: return 0
-    q_norm = (q or "").replace(" ", "")
-    best = 1
-    for law in laws:
-        name = (law.get("법령명") or "").strip()
-        name_norm = name.replace(" ", "")
-        if not name: continue
-        if name == q or name_norm == q_norm: 
-            return 3
-        if q in name or q_norm in name_norm:
-            best = max(best, 2)
-    return best
-
 # ▶ 키워드→대표 법령 매핑으로 2차 검색 시도 (항상 API를 통해 재검색)
-
 def find_law_with_fallback(user_query: str, num_rows: int = 10):
-    """GPT 확장(+폴백) → 다중 후보 검색 → 최고 스코어 결과 선택"""
-    settings = st.session_state.get("settings", {})
-    use_expand = settings.get("use_gpt_query_expansion", True)
+    # 1차: 원문 질의 그대로 검색
+    laws, endpoint, err = search_law_data(user_query, num_rows=num_rows)
+    if laws:
+        return laws, endpoint, err, "primary"
 
-    # 후보 생성
-    candidates = [user_query]
-    if use_expand:
-        try:
-            expansion = gpt_expand_query(user_query)
-            candidates += expansion.get("candidates", [])
-        except Exception:
-            pass
-    # 중복 제거, 공백 제거
-    dedup = []
-    seen = set()
-    for c in candidates:
-        c = (c or "").strip()
-        if not c or c in seen: 
-            continue
-        seen.add(c); dedup.append(c)
+    # 2차: 자주 쓰는 키워드를 대표 법령명으로 매핑하여 재검색
+    keyword_map = {
+        "정당방위": "형법",
+        "전세": "주택임대차보호법",
+        "상가임대차": "상가건물 임대차보호법",
+        "근로계약": "근로기준법",
+        "해고": "근로기준법",
+        "개인정보": "개인정보 보호법",
+        "산재": "산업재해보상보험법",
+        "이혼": "민법",
+    }
+    text = (user_query or "")
+    for k, law_name in keyword_map.items():
+        if k in text:
+            laws2, ep2, err2 = search_law_data(law_name, num_rows=num_rows)
+            if laws2:
+                return laws2, ep2, err2, f"fallback:{law_name}"
 
-    best = ([], None, None, "none", 0, "")
-    last_endpoint = None
-    last_err = None
-
-    for idx, q in enumerate(dedup):
-        laws, endpoint, err = search_law_data(q, num_rows=num_rows)
-        last_endpoint, last_err = endpoint, err
-        score = _score_results(q, laws)
-        mode = "primary" if idx == 0 else f"gpt:{q}"
-        if score > best[4]:
-            best = (laws, endpoint, err, mode, score, q)
-            if score == 3:
-                break
-
-    # 기존 키워드 맵 안전망 (이전 동작 유지)
-    if best[4] < 2:
-        keyword_map = {
-            "정당방위": "형법",
-            "전세": "주택임대차보호법",
-            "상가임대차": "상가건물 임대차보호법",
-            "근로계약": "근로기준법",
-            "해고": "근로기준법",
-            "개인정보": "개인정보 보호법",
-            "산재": "산업재해보상보험법",
-            "이혼": "민법",
-        }
-        text = (user_query or "")
-        for k, law_name in keyword_map.items():
-            if k in text:
-                laws2, ep2, err2 = search_law_data(law_name, num_rows=num_rows)
-                score2 = _score_results(law_name, laws2)
-                if score2 > best[4]:
-                    best = (laws2, ep2, err2, f"fallback:{law_name}", score2, law_name)
-                    if score2 == 3:
-                        break
-
-    laws, endpoint, err, mode, _, used_q = best
-    if not laws:
-        return [], last_endpoint, last_err, "none"
-    return laws, endpoint, err, mode
+    # 끝까지 못 찾으면 0건 유지
+    return [], endpoint, err, "none"
 
 def format_law_context(law_data: list[dict]) -> str:
     if not law_data: return "관련 법령 검색 결과가 없습니다."
@@ -989,3 +881,181 @@ if submitted:
     st.rerun()
 
 st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
+
+
+
+# ============================================================
+# LOG-ENABLED OVERRIDES (appended safely without touching UI)
+# - search_law_data(): add visible logs for API URL/response
+# - find_law_with_fallback(): add logs for GPT candidates & choice
+# These override earlier definitions by virtue of being defined later.
+# ============================================================
+
+@st.cache_data(show_spinner=False, ttl=300)
+def search_law_data(query: str, num_rows: int = 10):
+    """MOLEG 법제처 API 호출 + Streamlit/터미널 로그 출력 (오버라이드)"""
+    try:
+        base_url = LAW_API_URL
+    except NameError:
+        # 혹시 상수가 다른 이름이면 최대한 기존 전역에서 가져오도록 시도
+        base_url = globals().get("LAW_API_URL", "")
+    try:
+        api_key = LAW_API_KEY
+    except NameError:
+        api_key = globals().get("LAW_API_KEY", "")
+
+    url = f"{base_url}?OC={api_key}&target=law&query={query}&display={num_rows}&type=json"
+
+    # 🔎 로그 출력 (UI + 터미널)
+    try:
+        st.write("🔎 [API 호출 시도] URL:", url)
+    except Exception:
+        pass
+    try:
+        print("[API 호출 시도]", url)
+    except Exception:
+        pass
+
+    try:
+        resp = requests.get(url, timeout=15)
+        try:
+            st.write("📡 [API 응답 코드]:", resp.status_code)
+        except Exception:
+            pass
+        try:
+            st.write("📄 [API 응답 내용 일부]:", (resp.text or "")[:300])
+        except Exception:
+            pass
+        try:
+            print("[API 응답 코드]", resp.status_code)
+            print("[API 응답 내용 일부]", (resp.text or "")[:300])
+        except Exception:
+            pass
+
+        data = resp.json()
+        return data.get("law", []), "law", None
+    except Exception as e:
+        try:
+            st.error(f"API 호출 오류: {e}")
+        except Exception:
+            pass
+        try:
+            print("[API 호출 오류]", e)
+        except Exception:
+            pass
+        return [], "law", str(e)
+
+
+def find_law_with_fallback(user_query: str, num_rows: int = 10):
+    """GPT 확장 후보 → 다중 검색 → 스코어 최적 선택 + 로그 (오버라이드)"""
+    try:
+        st.write("📝 [사용자 질의]:", user_query)
+    except Exception:
+        pass
+    try:
+        print("[사용자 질의]", user_query)
+    except Exception:
+        pass
+
+    # GPT 확장 or 폴백
+    use_expansion = True
+    try:
+        use_expansion = st.session_state.get("settings", {}).get("use_gpt_query_expansion", True)
+    except Exception:
+        pass
+
+    if use_expansion and "gpt_expand_query" in globals():
+        expansion = gpt_expand_query(user_query)
+        candidates = [user_query] + (expansion.get("candidates", []) if isinstance(expansion, dict) else [])
+    else:
+        expansion = {"target":"law","candidates":[user_query]}
+        candidates = [user_query]
+
+    # 로그: 후보
+    try:
+        st.write("✨ [GPT 확장 후보]:", candidates)
+    except Exception:
+        pass
+    try:
+        print("[GPT 확장 후보]", candidates)
+    except Exception:
+        pass
+
+    tried = set()
+    best_pack = ([], None, None, "none", 0, "")  # (laws, endpoint, err, mode, score, used_q)
+
+    # 스코어러 확보
+    scorer = globals().get("_score_results")
+    if not callable(scorer):
+        def scorer(q, laws):
+            if not laws: 
+                return 0
+            q_norm = (q or "").replace(" ", "")
+            best = 1
+            for law in laws:
+                name = (law.get("법령명") or "").strip()
+                name_norm = name.replace(" ", "")
+                if not name:
+                    continue
+                if name == q or name_norm == q_norm:
+                    return 3
+                if q in name or q_norm in name_norm:
+                    best = max(best, 2)
+            return best
+
+    for idx, q in enumerate(candidates):
+        q = (q or "").strip()
+        if not q or q in tried:
+            continue
+        tried.add(q)
+        laws, endpoint, err = search_law_data(q, num_rows=num_rows)
+        score = scorer(q, laws)
+        mode = "primary" if idx == 0 else f"gpt:{q}"
+
+        # 후보별 로그
+        try:
+            st.write(f"🔍 [후보 {q}] → 점수 {score}, 결과 개수 {len(laws)}")
+        except Exception:
+            pass
+        try:
+            print(f"[후보 {q}] 점수 {score}, 결과 개수 {len(laws)}")
+        except Exception:
+            pass
+
+        if score > best_pack[4]:
+            best_pack = (laws, endpoint, err, mode, score, q)
+            if score == 3:
+                break
+
+    # 기존 키워드 맵 폴백도 유지 (있다면)
+    if best_pack[4] < 2:
+        keyword_map = {
+            "정당방위": "형법",
+            "전세": "주택임대차보호법",
+            "상가임대차": "상가건물 임대차보호법",
+            "근로계약": "근로기준법",
+            "해고": "근로기준법",
+            "개인정보": "개인정보 보호법",
+            "산재": "산업재해보상보험법",
+            "이혼": "민법",
+        }
+        text = (user_query or "")
+        for k, law_name in keyword_map.items():
+            if k in text:
+                laws2, ep2, err2 = search_law_data(law_name, num_rows=num_rows)
+                score2 = scorer(law_name, laws2)
+                if score2 > best_pack[4]:
+                    best_pack = (laws2, ep2, err2, f"fallback:{law_name}", score2, law_name)
+
+    laws, endpoint, err, mode, _, used_q = best_pack
+
+    try:
+        st.write(f"✅ [최종 선택 질의]: {used_q}, 모드: {mode}, 결과 수: {len(laws)}")
+    except Exception:
+        pass
+    try:
+        print(f"[최종 선택 질의] {used_q}, 모드: {mode}, 결과 수: {len(laws)}")
+    except Exception:
+        pass
+
+    return laws, endpoint, err, mode
