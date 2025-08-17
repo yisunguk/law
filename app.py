@@ -413,6 +413,34 @@ def search_law_data(query: str, num_rows: int = 10):
             last_err = e
     return [], None, f"법제처 API 연결 실패: {last_err}"
 
+# ▶ 키워드→대표 법령 매핑으로 2차 검색 시도 (항상 API를 통해 재검색)
+def find_law_with_fallback(user_query: str, num_rows: int = 10):
+    # 1차: 원문 질의 그대로 검색
+    laws, endpoint, err = search_law_data(user_query, num_rows=num_rows)
+    if laws:
+        return laws, endpoint, err, "primary"
+
+    # 2차: 자주 쓰는 키워드를 대표 법령명으로 매핑하여 재검색
+    keyword_map = {
+        "정당방위": "형법",
+        "전세": "주택임대차보호법",
+        "상가임대차": "상가건물 임대차보호법",
+        "근로계약": "근로기준법",
+        "해고": "근로기준법",
+        "개인정보": "개인정보 보호법",
+        "산재": "산업재해보상보험법",
+        "이혼": "민법",
+    }
+    text = (user_query or "")
+    for k, law_name in keyword_map.items():
+        if k in text:
+            laws2, ep2, err2 = search_law_data(law_name, num_rows=num_rows)
+            if laws2:
+                return laws2, ep2, err2, f"fallback:{law_name}"
+
+    # 끝까지 못 찾으면 0건 유지
+    return [], endpoint, err, "none"
+
 def format_law_context(law_data: list[dict]) -> str:
     if not law_data: return "관련 법령 검색 결과가 없습니다."
     rows = []
@@ -770,19 +798,21 @@ with st.container():
 # 3) 방금 입력이 있었다면 맨 아래에서 스트리밍
 if user_q:
     with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
-        law_data, used_endpoint, err = search_law_data(
+        law_data, used_endpoint, err, search_mode = find_law_with_fallback(
             user_q, num_rows=st.session_state.settings["num_rows"]
         )
 
     # ▶ 내부 디버깅용 로그만 남기고 화면에는 노출하지 않음
     if used_endpoint:
-        print(f"[DEBUG] 사용한 법제처 API endpoint: {used_endpoint}")
+        print(f"[DEBUG] 사용한 법제처 API endpoint: {used_endpoint} (mode={search_mode})")
     if err:
         st.warning(err)
 
     # ▶ 애니메이션 미리보기 (원하면 settings로 끌 수 있음)
-    if st.session_state.settings.get("animate", True):
+    if law_data and st.session_state.settings.get("animate", True):
         animate_law_results(law_data, delay=float(st.session_state.settings.get("animate_delay", 0.9)))
+    else:
+        st.caption("※ 관련 법령명이 직접 검색되지 않았습니다. 아래 답변은 일반 법 원칙을 바탕으로 생성됩니다.")))
 
     law_ctx = format_law_context(law_data)
 
