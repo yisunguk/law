@@ -368,7 +368,6 @@ if "settings" not in st.session_state:
         "safe_mode": False,
         "animate": True,        # ▶ 검색결과 애니메이션 표시 기본 ON
         "animate_delay": 0.9,   # ▶ 개당 표시 간격(초)
-    ,
         "use_gpt_query_expansion": True,
     }
 if "_last_user_nonce" not in st.session_state: st.session_state["_last_user_nonce"] = None  
