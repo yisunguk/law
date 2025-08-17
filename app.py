@@ -812,7 +812,7 @@ if user_q:
     if law_data and st.session_state.settings.get("animate", True):
         animate_law_results(law_data, delay=float(st.session_state.settings.get("animate_delay", 0.9)))
     else:
-        st.caption("※ 관련 법령명이 직접 검색되지 않았습니다. 아래 답변은 일반 법 원칙을 바탕으로 생성됩니다.")))
+        st.caption("※ 관련 법령명이 직접 검색되지 않았습니다. 아래 답변은 일반 법 원칙을 바탕으로 생성됩니다.")
 
     law_ctx = format_law_context(law_data)
 
