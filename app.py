@@ -87,7 +87,7 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 
 /* Chat message width = container width */
 :root {{
-  --msg-max: 100%;         /* 필요하면 960px 등으로 변경 */
+  --msg-max: 100%;
 }}
 
 [data-testid="stChatMessage"] {{
@@ -201,8 +201,6 @@ def render_bubble_with_copy(message: str, key: str):
     html_out = html_tpl.replace("__KEY__", str(key)).replace("__SAFE__", safe_raw_json)
     components.html(html_out, height=40)
 
-
-
 def copy_url_button(url: str, key: str, label: str = "링크 복사"):
     if not url: return
     safe = json.dumps(url)
@@ -235,8 +233,6 @@ def copy_url_button(url: str, key: str, label: str = "링크 복사"):
                 .replace("__SAFE__", safe)
                 .replace("__LABEL__", html.escape(label)))
     components.html(html_out, height=40)
-
-
 
 def load_secrets():
     try:
@@ -330,27 +326,24 @@ def render_pinned_question():
     </div>
     """, unsafe_allow_html=True)
 
-
-# Link correction utility: fix law.go.kr URLs using MOLEG search results
+# Link correction utility
 def fix_links_with_lawdata(markdown: str, law_data: list[dict]) -> str:
     """Replace law.go.kr URLs in the answer with official detail links from law_data."""
     import re
     if not markdown or not law_data:
         return markdown
-
     name_to_url = {
         d["법령명"]: (d["법령상세링크"] or f"https://www.law.go.kr/법령/{_henc(d['법령명'])}")
         for d in law_data if d.get("법령명")
     }
-
     pat = re.compile(r'\[([^\]]+)\]\((https?://www\.law\.go\.kr/[^\)]+)\)')
     def repl(m):
         text, url = m.group(1), m.group(2)
         if text in name_to_url:
             return f'[{text}]({name_to_url[text]})'
         return m.group(0)
-
     return pat.sub(repl, markdown)
+
 # =============================
 # Secrets / Clients / Session
 # =============================
@@ -723,7 +716,6 @@ with st.sidebar:
             if law_url:
                 st.write("• 법제처 한글주소(대표 판례)")
                 present_url_with_fallback(law_url, kind="prec", q=(cno if mode.startswith("사건번호") else (name or "")))
-                st.caption("※ 등록된 대표 판례만 직접 열립니다. 실패 시 아래 대체(대법원) 링크 사용.")
             if scourt_url:
                 st.write("• 대법원 종합법률정보(전체 판례 검색)")
                 st.code(scourt_url, language="text")
@@ -878,7 +870,6 @@ submitted, typed_text, files = chatbar(
     max_size_mb=15,
     key_prefix=KEY_PREFIX,
 )
-
 
 if submitted:
     text = (typed_text or "").strip()
