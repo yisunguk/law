@@ -183,17 +183,17 @@ def render_bubble_with_copy(message: str, key: str):
       </button>
     </div>
     <script>
-    (function(){
+    (function(){{
       const btn = document.getElementById("copy-{key}");
       if (!btn) return;
-      btn.addEventListener("click", async () => {
-        try {
+      btn.addEventListener("click", async () => {{
+        try {{
           await navigator.clipboard.writeText({safe_raw_json});
           const old = btn.innerHTML; btn.innerHTML = "복사됨!";
           setTimeout(()=>btn.innerHTML = old, 1200);
-        } catch(e) { alert("복사 실패: " + e); }
-      });
-    })();
+        }} catch(e) {{ alert("복사 실패: " + e); }}
+      }});
+    }})();
     </script>
     """, height=40)
 
