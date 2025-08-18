@@ -190,10 +190,12 @@ def normalize_law_link(u: str) -> str:
 def _normalize_text(s: str) -> str:
     s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
     lines = [ln.rstrip() for ln in s.split("\n")]
-    while lines and not lines[0].strip(): lines.pop(0)
-    while lines and not lines[-1].strip(): lines.pop()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
     merged, i = [], 0
-    num_pat = re.compile(r'^\s*((\d+)|([IVXLC]+)|([ivxlc]+))\s*[\.\)]\s*$')
+    num_pat = re.compile(r'^s*((\d+)|([IVXLC]+)|([ivxlc]+))\s*[\.\)]\s*$')
     while i < len(lines):
         cur = lines[i]; m = num_pat.match(cur)
         if m:
@@ -214,11 +216,14 @@ def _normalize_text(s: str) -> str:
             prev_blank = False; out.append(ln)
     return "\n".join(out)
 
+
 # === 새로 추가: 중복 제거 유틸 ===
 import re
+
 def _dedupe_blocks(text: str) -> str:
     s = _normalize_text(text or "")
-    # 1) 완전 동일 문단 연속 중복 제거
+
+    # 1) 완전 동일 문단의 연속 중복 제거
     lines, out, prev = s.split("\n"), [], None
     for ln in lines:
         if ln.strip() and ln == prev:
@@ -226,15 +231,22 @@ def _dedupe_blocks(text: str) -> str:
         out.append(ln); prev = ln
     s = "\n".join(out)
 
-    # 2) 자주 반복되는 헤더/메모 블록 2중 출력 방지(예: "법률 자문 메모"로 시작하는 동일 본문)
-    pat = re.compile(r'(법률 자문 메모[\s\S]{30,}?)(?:\n+)\1', re.MULTILINE)
+    # 2) "법률 자문 메모"로 시작하는 동일 본문 2중 출력 방지
+    pat = re.compile(r'(법률\s*자문\s*메모[\s\S]{50,}?)(?:\n+)\1', re.I)
     s = pat.sub(r'\1', s)
 
-    # 3) “의도 분석/추가 검색/재검색” 같은 내부 절차 문구 제거(혹시 남아 있으면)
-    s = re.sub(r'^\s*\d+\.\s*\*\*?(사용자의 의도 분석|추가 검색|재검색)\*\*?.*?(?=\n\d+\.|\Z)', '', s, flags=re.M|re.S)
-    # 다중 빈 줄 정리
+    # 3) 내부 절차 문구 노출 시 제거(의도 분석/추가 검색/재검색)
+    s = re.sub(
+        r'^\s*\d+\.\s*\*\*?(사용자의 의도 분석|추가 검색|재검색)\*\*?.*?(?=\n\d+\.|\Z)',
+        '',
+        s,
+        flags=re.M | re.S
+    )
+
+    # 빈 줄 정리
     s = re.sub(r'\n{3,}', '\n\n', s)
     return s
+
 
 def render_bubble_with_copy(message: str, key: str):
     message = _normalize_text(message)
@@ -1156,9 +1168,9 @@ if user_q:
         from datetime import datetime
 
 # ... (위에서 final_text 완성하는 부분까지 동일)
-final_text = _normalize_text(full_text)
-final_text = fix_links_with_lawdata(final_text, collected_laws)
-final_text = _dedupe_blocks(final_text)  # 중복 문단 제거
+        final_text = _normalize_text(full_text)
+        final_text = fix_links_with_lawdata(final_text, collected_laws)
+        final_text = _dedupe_blocks(final_text)  # 중복 문단 제거
 
 # ✅ 출력 (한 번만)
 placeholder.empty()
