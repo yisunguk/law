@@ -214,6 +214,28 @@ def _normalize_text(s: str) -> str:
             prev_blank = False; out.append(ln)
     return "\n".join(out)
 
+# === 새로 추가: 중복 제거 유틸 ===
+import re
+def _dedupe_blocks(text: str) -> str:
+    s = _normalize_text(text or "")
+    # 1) 완전 동일 문단 연속 중복 제거
+    lines, out, prev = s.split("\n"), [], None
+    for ln in lines:
+        if ln.strip() and ln == prev:
+            continue
+        out.append(ln); prev = ln
+    s = "\n".join(out)
+
+    # 2) 자주 반복되는 헤더/메모 블록 2중 출력 방지(예: "법률 자문 메모"로 시작하는 동일 본문)
+    pat = re.compile(r'(법률 자문 메모[\s\S]{30,}?)(?:\n+)\1', re.MULTILINE)
+    s = pat.sub(r'\1', s)
+
+    # 3) “의도 분석/추가 검색/재검색” 같은 내부 절차 문구 제거(혹시 남아 있으면)
+    s = re.sub(r'^\s*\d+\.\s*\*\*?(사용자의 의도 분석|추가 검색|재검색)\*\*?.*?(?=\n\d+\.|\Z)', '', s, flags=re.M|re.S)
+    # 다중 빈 줄 정리
+    s = re.sub(r'\n{3,}', '\n\n', s)
+    return s
+
 def render_bubble_with_copy(message: str, key: str):
     message = _normalize_text(message)
     st.markdown(message)
@@ -682,24 +704,25 @@ def animate_law_results(law_data: list[dict], delay: float = 1.0):
 def choose_output_template(q: str) -> str:
     return "가능하면 결론·근거·출처를 포함해 간단히 정리하세요.\n"
 
-def choose_output_template(q: str) -> str:
-    label = route_label(q)
-    return TEMPLATES.get(label, TEMPLATES["단순"])
-
 # =============================
 # System prompt (법률 메모 + 도구 사용 규칙)
 # =============================
 LEGAL_SYS = (
-"당신은 대한민국 변호사다. 답변은 **법률 자문 메모** 형식으로 작성한다.\n"
-"규칙(모두 강제):\n"
-"1) 먼저 사용자의 의도를 분석하여 필요한 카테고리와 핵심 키워드를 도출한다.\n"
-"2) 필요하면 제공된 도구(search_one, search_multi)를 호출하여 국가법령정보 목록을 조회한다.\n"
-"3) 결과를 읽고 관련도 높은 순으로 재정렬·요약하고, 법령명·조문·시행일자·소관부처·상세링크를 제시한다.\n"
-"4) 결과가 모호하거나 0건이면 더 정교한 질의어(예: '민법 제839조', '재산분할')로 1~2회 재검색한다.\n"
-"5) 링크는 반드시 www.law.go.kr 도메인만 사용한다(상대경로면 절대URL로 교정).\n"
-"6) 결론 한 문장을 맨 앞에, 맨 끝에 1문장으로 재확인하며, 섹션은 템플릿을 따른다.\n"
-"7) 조문은 1~2문장만 직접 인용하고 blockquote로 표기한다.\n"
-"8) 모든 주장 뒤에는 근거 각주를 붙인다: [법령명 제x조], [대법원 yyyy도/다 nnnn], [법제처 해석례 expcSeq].\n"
+"당신은 대한민국 변호사다. 답변은 **법률 자문 메모** 형식으로 간결하게 작성한다.\n"
+"출력 규칙(강제):\n"
+"- 내부적으로 의도 분석/검색/재검색은 수행하되, **그 절차를 출력하지 말 것**.\n"
+"- 다음 4개 섹션만 출력: 1) 결론 2) 근거 요약(조문 1~2문장 인용 가능) 3) 실무 포인트/조치 4) 출처 링크.\n"
+"- 같은 내용이나 섹션을 **반복 출력 금지**. 메모는 한 번만 쓴다.\n"
+"- 링크는 반드시 www.law.go.kr(또는 glaw.scourt.go.kr)만 사용. 상대경로는 절대URL로.\n"
+"- 확실치 않으면 단정 금지, ‘추가 확인 필요’ 사유를 짧게 적시.\n"
+"- 어구: 과장/군더더기 금지, 문장은 짧게.\n"
+"\n"
+"작성 예시(형식만 참조):\n"
+"법률 자문 메모\n"
+"1) 결론: 한 문장.\n"
+"2) 근거 요약: > [조문 인용 1~2문장] …\n"
+"3) 실무 포인트: 번호 목록 2~4개.\n"
+"4) 출처 링크: [법령명](URL) …\n"
 )
 
 # =============================
@@ -1132,6 +1155,7 @@ if user_q:
 
         # 링크 교정 + 렌더
         final_text = fix_links_with_lawdata(final_text, collected_laws)
+        final_text = _dedupe_blocks(final_text)
         placeholder.markdown(final_text)
         render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
 
