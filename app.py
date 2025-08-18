@@ -320,6 +320,43 @@ def hangul_trty_with_keys(no: str, eff_date: str) -> str: return f"{_HBASE}/조�
 def expc_public_by_id(expc_id: str) -> str: return f"https://www.law.go.kr/LSW/expcInfoP.do?expcSeq={up.quote(expc_id)}"
 def lstrm_public_by_id(trm_seqs: str) -> str: return f"https://www.law.go.kr/LSW/lsTrmInfoR.do?trmSeqs={up.quote(trm_seqs)}"
 def licbyl_file_download(fl_seq: str) -> str: return f"https://www.law.go.kr/LSW/flDownload.do?flSeq={up.quote(fl_seq)}"
+# 1) 키워드→조문 사전(필요에 맞게 계속 추가)
+ARTICLE_SYNONYMS = {
+    "재산분할": "제839조의2",
+    "이혼": "제834조",
+    # ...
+}
+
+# 2) 조문 패턴
+_ARTICLE_RE = re.compile(r"^제?\d+조(의\d+)?$")
+
+def resolve_article_from_keywords(keys):
+    keys = [k.strip() for k in (keys or []) if k]
+    # 사전 매핑
+    for k in keys:
+        if k in ARTICLE_SYNONYMS:
+            return ARTICLE_SYNONYMS[k]
+    # 직접 조문 표기
+    for k in keys:
+        if _ARTICLE_RE.match(k):
+            return k
+    return None
+
+def hangul_law_with_keys(name: str, keys) -> str:
+    """키워드가 조문을 가리키면 조문으로, 아니면 검색으로."""
+    art = resolve_article_from_keywords(keys)
+    if art:
+        # 조문으로 바로 연결 (괄호 없이)
+        return hangul_law_article(name, art)
+    # 조문이 아니면 검색(옵션 B 코드와 동일)
+    q = " ".join([name] + [k for k in (keys or []) if k]) if keys else name
+    return build_fallback_search("law", q)
+
+
+# "제839조" 같은 패턴 인식용
+import re
+_ARTICLE_RE = re.compile(r"^제?\d+조(의\d+)?$")
+
 
 def make_law_link(law_name: str, mst_id: str) -> str:
     """MST 기반 법령 상세 링크 생성"""
