@@ -136,21 +136,65 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 </style>
 """, unsafe_allow_html=True)
 
-# 통합검색 우측 패널 고정 & 스크롤 영역
-st.markdown("""
-<style>
-#search-panel { position: sticky; top: 80px; }           /* 화면 스크롤 시 우측 패널 고정 */
-.search-card  { border:1px solid rgba(127,127,127,.25);
-                border-radius:12px; padding:12px 14px; }
-.search-scroll{ max-height: calc(100vh - 200px); overflow:auto; }
+# ---- 오른쪽 플로팅 패널용 CSS ----
+def _inject_right_rail_css():
+    st.markdown("""
+    <style>
+    /* 채팅 본문이 가려지지 않도록 오른쪽 여백 확보 */
+    .block-container { padding-right: 380px !important; }
 
-/* 좁은 화면(태블릿/모바일)에서는 고정 해제하고 상하로 쌓기 */
-@media (max-width: 1024px) {
-  #search-panel { position: static; }
-  .search-scroll{ max-height: none; }
-}
-</style>
-""", unsafe_allow_html=True)
+    /* 오른쪽 고정 패널 */
+    #search-flyout {
+      position: fixed; right: 18px; top: 88px;
+      width: 360px; max-width: 38vw;
+      height: calc(100vh - 130px); overflow: auto;
+      border-radius: 12px; padding: 12px 14px; z-index: 1000;
+      border: 1px solid rgba(127,127,127,.25);
+      background: rgba(0,0,0,.35); backdrop-filter: blur(6px);
+    }
+    [data-theme="light"] #search-flyout {
+      background: #fff; color: #222; border-color: #e5e5e5;
+    }
+    [data-theme="dark"] #search-flyout {
+      background: #1f1f1f; color: #eee; border-color: rgba(255,255,255,.16);
+    }
+
+    /* 좁은 화면(모바일/태블릿)은 상하 스택 */
+    @media (max-width: 1024px) {
+      .block-container { padding-right: 0 !important; }
+      #search-flyout   { position: static; width: auto; height: auto; }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# ---- 오른쪽 플로팅 패널 렌더러 ----
+def render_search_flyout(user_q: str, num_rows: int = 3):
+    # 패널 + 제목
+    st.markdown("<div id='search-flyout'>", unsafe_allow_html=True)
+    st.markdown("### 📚 통합 검색 결과")
+
+    with st.expander("열기/접기", expanded=True):
+        results = find_all_law_data(user_q, num_rows=num_rows)
+        for label, pack in results.items():
+            items, err2 = pack.get("items"), pack.get("error")
+            st.subheader(f"🔎 {label}")
+            if err2:
+                st.warning(err2)
+            elif not items:
+                st.caption("검색 결과 없음")
+            else:
+                for i, law in enumerate(items, 1):
+                    nm   = law.get("법령명","")
+                    kind = law.get("법령구분","")
+                    dept = law.get("소관부처명","")
+                    eff  = law.get("시행일자","-")
+                    pub  = law.get("공포일자","-")
+                    link = law.get("법령상세링크")
+                    st.markdown(f"**{i}. {nm}** ({kind}) — 소관:{dept} / 시행:{eff} / 공포:{pub}")
+                    if link:
+                        st.write(f"[법령 상세보기]({link})")
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown(
     """
@@ -1074,88 +1118,11 @@ with st.container():
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
 # ===============================
 if user_q:
-    # 좌: 답변(2), 우: 통합검색(1)
-    col_ans, col_res = st.columns([2, 1], vertical_alignment="top", gap="large")
+    # ✅ 오른쪽 플로팅 패널 삽입 (레이아웃 완전 분리)
+    _inject_right_rail_css()
+    render_search_flyout(user_q, num_rows=3)
 
-    # ──────────────── 오른쪽: 통합 검색 결과 (고정 패널)
-    with col_res:
-        st.markdown("<div id='search-panel'>", unsafe_allow_html=True)
-        st.markdown("<div class='search-card'>", unsafe_allow_html=True)
-        st.markdown("### 📚 통합 검색 결과")
-        with st.expander("열기/접기", expanded=True):
-            st.markdown("<div class='search-scroll'>", unsafe_allow_html=True)
-            results = find_all_law_data(user_q, num_rows=3)
-            for label, pack in results.items():
-                items, err2 = pack.get("items"), pack.get("error")
-                st.subheader(f"🔎 {label}")
-                if err2:
-                    st.warning(err2)
-                elif not items:
-                    st.caption("검색 결과 없음")
-                else:
-                    for i, law in enumerate(items, 1):
-                        nm   = law.get("법령명","")
-                        kind = law.get("법령구분","")
-                        dept = law.get("소관부처명","")
-                        eff  = law.get("시행일자","-")
-                        pub  = law.get("공포일자","-")
-                        link = law.get("법령상세링크")
-                        st.markdown(f"**{i}. {nm}** ({kind}) — 소관:{dept} / 시행:{eff} / 공포:{pub}")
-                        if link:
-                            st.write(f"[법령 상세보기]({link})")
-            st.markdown("</div>", unsafe_allow_html=True)  # .search-scroll
-        st.markdown("</div></div>", unsafe_allow_html=True)  # .search-card / #search-panel
-
-    # ──────────────── 왼쪽: GPT 답변 말풍선 (기존 로직 그대로)
-    with col_ans:
-        with st.chat_message("assistant"):
-            placeholder = st.empty()
-            full_text, buffer = "", ""
-            collected_laws = []
-            try:
-                placeholder.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다..._")
-                for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
-                    if kind == "delta":
-                        buffer += payload or ""
-                        if len(buffer) >= 200:
-                            full_text += buffer; buffer = ""
-                            placeholder.markdown(_normalize_text(full_text[-1500:]))
-                    elif kind == "final":
-                        full_text += (payload or "")
-                        collected_laws = law_list or []
-                        break
-                if buffer:
-                    full_text += buffer
-            except Exception as e:
-                laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
-                collected_laws = laws
-                law_ctx = format_law_context(laws)
-                tpl = choose_output_template(user_q)
-                full_text = f"{tpl}\n\n{law_ctx}\n\n(오류: {e})"
-
-            final_text = _normalize_text(full_text)
-            final_text = fix_links_with_lawdata(final_text, collected_laws)
-            final_text = _dedupe_blocks(final_text)
-
-            placeholder.empty()
-            with placeholder.container():
-                render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
-
-
-            # 후처리
-            final_text = _normalize_text(full_text)
-            final_text = fix_links_with_lawdata(final_text, collected_laws)
-            final_text = _dedupe_blocks(final_text)
-
-            # 출력 (복사 버튼은 어시스턴트 말풍선에만)
-            placeholder.empty()
-            with placeholder.container():
-                render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
-
-
-
-
-    # ▶ 본문 답변: LLM 도구(함수콜) 기반
+    # ✅ 왼쪽: GPT 답변 말풍선 (기존 로직 그대로)
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_text, buffer = "", ""
@@ -1164,30 +1131,27 @@ if user_q:
             placeholder.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다..._")
             for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
                 if kind == "delta":
-                    buffer += payload
+                    buffer += payload or ""
                     if len(buffer) >= 200:
                         full_text += buffer; buffer = ""
                         placeholder.markdown(_normalize_text(full_text[-1500:]))
                 elif kind == "final":
-                    full_text += payload
-                    collected_laws = law_list
+                    full_text += (payload or "")
+                    collected_laws = law_list or []
                     break
             if buffer:
                 full_text += buffer
         except Exception as e:
-            # 도구 실패 폴백 (초기 화면에 뜨지 않도록, 여기서만 처리)
             laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
             collected_laws = laws
             law_ctx = format_law_context(laws)
             tpl = choose_output_template(user_q)
             full_text = f"{tpl}\n\n{law_ctx}\n\n(오류: {e})"
 
-        # ✅ 후처리(정규화 → 링크교정 → 중복문단 제거)
         final_text = _normalize_text(full_text)
         final_text = fix_links_with_lawdata(final_text, collected_laws)
         final_text = _dedupe_blocks(final_text)
 
-        # ✅ 출력 (한 번만) — 복사 버튼은 어시스턴트 말풍선에만
         placeholder.empty()
         with placeholder.container():
             render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
