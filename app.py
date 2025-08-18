@@ -659,35 +659,34 @@ def _clean_query_for_api(q: str) -> str:
 
 # 통합 검색(Expander용)
 def find_all_law_data(query: str, num_rows: int = 3):
-    q = _clean_query_for_api(query)
-    targets = {"법령": "law", "행정규칙": "admrul", "자치법규": "ordin", "조약": "trty"}
     results = {}
-    for label, target in targets.items():
+
+    # 1) '법령' 섹션: LLM 후보 전부 시도 → 누적
+    law_items_all, law_errs, law_endpoint = [], [], None
+    law_queries = choose_law_queries_llm_first(query)
+
+    for q in law_queries:
+        items, endpoint, err = _call_moleg_list("law", q, num_rows=num_rows)
+        if items:
+            law_items_all.extend(items)
+            law_endpoint = endpoint
+        if err:
+            law_errs.append(f"{q}: {err}")
+
+    results["법령"] = {
+        "items": law_items_all,
+        "endpoint": law_endpoint,
+        "error": "; ".join(law_errs) if law_errs else None,
+    }
+
+    # 2) 나머지 섹션은 동일
+    q_clean = _clean_query_for_api(query)
+    for label, target in {"행정규칙": "admrul", "자치법규": "ordin", "조약": "trty"}.items():
         try:
-            items, endpoint, err = _call_moleg_list(target, q, num_rows=num_rows)
-            # 미리보기 한정: 전부 비면 법령명만/첫 토큰으로 한 번 더 시도
-            if not items and " " in q:
-                m = re.search(r'([가-힣A-Za-z0-9·\s]{1,40}?(법|령|규칙|조례))', q)
-                q2 = (m.group(0).strip() if m else q.split(" ")[0]).strip()
-                if q2 and q2 != q:
-                    items, endpoint, err = _call_moleg_list(target, q2, num_rows=num_rows)
+            items, endpoint, err = _call_moleg_list(target, q_clean, num_rows=num_rows)
         except Exception as e:
             items, endpoint, err = [], None, f"호출 오류: {e}"
         results[label] = {"items": items, "endpoint": endpoint, "error": err}
-
-    # 🔽🔽🔽 여기서부터 추가: '법령' 탭이 비었으면 LLM/키워드로 재조회
-    if not results.get("법령", {}).get("items"):
-        law_names = extract_law_candidates_llm(query)  # 1) LLM 후보
-        # 2) 키워드 폴백(자연어에 '명함/개인정보' 등 포함 시 우선 시도)
-        for kw, mapped in KEYWORD_TO_LAW.items():
-            if kw in (query or "") and mapped not in law_names:
-                law_names.insert(0, mapped)
-
-        for name in law_names:
-            items, endpoint, err = _call_moleg_list("law", name, num_rows=num_rows)
-            if items:
-                results["법령"] = {"items": items, "endpoint": endpoint, "error": err}
-                break
 
     return results
 
