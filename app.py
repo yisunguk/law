@@ -314,6 +314,62 @@ def _dedupe_blocks(text: str) -> str:
     s = re.sub(r'\n{3,}', '\n\n', s)
     return s
 
+# === add: 여러 법령 결과를 한 번에 요약해서 LLM에 먹일 프라이머 ===
+def _summarize_laws_for_primer(law_items: list[dict], max_items: int = 6) -> str:
+    """
+    여러 법령 검색 결과를 짧게 요약해 시스템 프롬프트로 주입.
+    - 너무 많으면 상위 일부만 (max_items)
+    - 형식: "관련 법령 후보: 1) 법령명(구분, 소관부처, 시행/공포)"
+    """
+    if not law_items:
+        return ""
+    rows = []
+    for i, d in enumerate(law_items[:max_items], 1):
+        nm = d.get("법령명","").strip()
+        kind = d.get("법령구분","").strip()
+        dept = d.get("소관부처명","").strip()
+        eff = d.get("시행일자","").strip()
+        pub = d.get("공포일자","").strip()
+        rows.append(f"{i}) {nm} ({kind}; {dept}; 시행 {eff}, 공포 {pub})")
+    body = "\n".join(rows)
+    return (
+        "아래는 사용자 사건과 관련도가 높은 법령 후보 목록이다. "
+        "답변을 작성할 때 각각의 적용 범위와 책임주체, 구성요건·의무·제재를 교차 검토하라.\n"
+        f"{body}\n"
+        "가능하면 각 법령을 분리된 소제목으로 정리하고, 핵심 조문(1~2개)만 간단 인용하라."
+    )
+
+# === add: LLM-우선 후보 → 각 후보로 MOLEG API 다건 조회/누적 ===
+def prefetch_law_context(user_q: str, num_rows_per_law: int = 3) -> list[dict]:
+    """
+    1) LLM이 법령 후보를 뽑는다 (extract_law_candidates_llm)  # :contentReference[oaicite:4]{index=4}
+    2) 후보들 각각에 대해 _call_moleg_list("law", ...) 호출    # :contentReference[oaicite:5]{index=5}
+    3) 결과를 전부 합쳐서 반환 (중복은 간단 제거)
+    """
+    seen = set()
+    merged: list[dict] = []
+
+    # 1) 후보
+    law_names = extract_law_candidates_llm(user_q) or []
+
+    # 후보가 0개면 _clean_query_for_api()로 마지막 폴백
+    if not law_names:
+        law_names = [_clean_query_for_api(user_q)]  # :contentReference[oaicite:6]{index=6}
+
+    # 2) 각 후보로 다건 조회
+    for name in law_names:
+        if not name:
+            continue
+        items, _, _ = _call_moleg_list("law", name, num_rows=num_rows_per_law)  # :contentReference[oaicite:7]{index=7}
+        for it in (items or []):
+            key = (it.get("법령명",""), it.get("법령구분",""), it.get("시행일자",""))
+            if key not in seen:
+                seen.add(key)
+                merged.append(it)
+
+    return merged
+
+
 def render_bubble_with_copy(message: str, key: str):
     """어시스턴트 말풍선 전용 복사 버튼"""
     message = _normalize_text(message or "")
@@ -1004,6 +1060,39 @@ def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
                 return
             final_text = extract_text(resp2["resp"])
             yield ("final", final_text, [])
+
+
+def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
+    # ✅ 오프라인/미설정 가드 ...
+    # (생략)
+
+    msgs = [
+        {"role":"system","content": LEGAL_SYS},
+        {"role":"user","content": user_q},
+    ]
+
+    # === add: LLM 호출 전에 '여러 법령 컨텍스트' 프라이머를 시스템 메시지로 주입 ===
+    try:
+        pre_laws = prefetch_law_context(user_q, num_rows_per_law=3)   # 위에서 만든 프리패치
+        primer = _summarize_laws_for_primer(pre_laws, max_items=6)
+        if primer:
+            msgs.insert(1, {"role":"system","content": primer})
+    except Exception:
+        pass  # 프리패치 실패 시 조용히 진행
+
+    # ---------- [변경 없음] 이후 기존 safe_chat_completion 로직, tools, 스트리밍 등 유지 ----------
+    resp_dict = safe_chat_completion(
+        client,
+        messages=msgs,
+        model=AZURE["deployment"],
+        stream=False,
+        allow_retry=True,
+        tools=TOOLS,
+        tool_choice="auto",
+        temperature=0.2,
+        max_tokens=1200,
+    )
+    # 이하 원래 코드 그대로...
 
 
 # =============================
