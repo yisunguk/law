@@ -800,12 +800,10 @@ TOOLS = [
 ]
 
 def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
-    if client is None or AZURE is None:
-        # 오프라인 폴백: 간단 검색 + 요약 템플릿
-        laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
-        law_ctx = format_law_context(laws)
-        tpl = choose_output_template(user_q)
-        return f"**(오프라인 안내)**\n\n{tpl}\n\n{law_ctx}", laws
+
+ if client is None or AZURE is None:
+    # 오프라인일 경우 아무것도 표시하지 않음
+    return "", []
 
     msgs = [
         {"role":"system","content": LEGAL_SYS},
