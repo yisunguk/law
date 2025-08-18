@@ -735,22 +735,80 @@ def _clean_query_for_api(q: str) -> str:
     if name: return name.group(0).strip()
     return q
 
+# === add: LLM 기반 키워드 추출기 ===
+@st.cache_data(show_spinner=False, ttl=300)
+def extract_keywords_llm(q: str) -> list[str]:
+    """
+    사용자 질문에서 '짧은 핵심 키워드' 2~6개만 JSON으로 뽑는다.
+    예: {"keywords":["건설현장","사망사고","살인","현장소장"]}
+    """
+    if not q or (client is None):
+        return []
+    SYSTEM_KW = (
+        "너는 한국 법률 질의의 핵심 키워드만 추출하는 도우미야. "
+        "반드시 JSON만 반환해. 설명 금지.\n"
+        '형식: {"keywords":["건설현장","사망사고","형사책임","안전보건"]}'
+    )
+    try:
+        resp = client.chat.completions.create(
+            model=AZURE["deployment"],
+            messages=[{"role":"system","content": SYSTEM_KW},
+                      {"role":"user","content": q.strip()}],
+            temperature=0.0, max_tokens=96,
+        )
+        txt = (resp.choices[0].message.content or "").strip()
+        # 코드펜스/잡텍스트 제거 (법령 추출기와 동일 방식)
+        if "```" in txt:
+            import re
+            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", txt)
+            if m: txt = m.group(1).strip()
+        if not txt.startswith("{"):
+            import re
+            m = re.search(r"\{[\s\S]*\}", txt)
+            if m: txt = m.group(0)
+
+        data = json.loads(txt)
+        kws = [s.strip() for s in data.get("keywords", []) if s.strip()]
+        # 과도한 일반어 제거(선택): 한 글자/두 글자 일반명사 등
+        kws = [k for k in kws if len(k) >= 2]
+        return kws[:6]
+    except Exception:
+        return []
+
+
 
 # 통합 검색(Expander용)
 def find_all_law_data(query: str, num_rows: int = 3):
     results = {}
 
-    # 1) '법령' 섹션: LLM 후보 전부 시도 → 누적
-    law_items_all, law_errs, law_endpoint = [], [], None
-    law_queries = choose_law_queries_llm_first(query)
+    # --- 1) 키워드 기반 질의 세트 준비 ---
+    kw_list = extract_keywords_llm(query)              # 새로 추가한 키워드 추출기 사용
+    q_clean = _clean_query_for_api(query)              # 기존 전처리(폴백)
+    law_name_candidates = extract_law_candidates_llm(query) or []  # 법령명 후보(보조)
 
-    for q in law_queries:
-        items, endpoint, err = _call_moleg_list("law", q, num_rows=num_rows)
-        if items:
-            law_items_all.extend(items)
-            law_endpoint = endpoint
-        if err:
-            law_errs.append(f"{q}: {err}")
+    # 키워드 → 질의어 조합 (과도한 폭주 방지: 상위 3~5개만)
+    keyword_queries = []
+    for k in kw_list[:5]:
+        # (예) "건설현장 사망사고", "현장소장 살인" 등 2~3개 조합도 가능
+        keyword_queries.append(k)
+    # 폴백/보조 질의들 뒤에 추가
+    if law_name_candidates:
+        keyword_queries.extend([nm for nm in law_name_candidates if nm not in keyword_queries])
+    if q_clean and q_clean not in keyword_queries:
+        keyword_queries.append(q_clean)
+
+    # --- 2) '법령' 섹션: 키워드/후보들을 순차 조회, 누적 ---
+    law_items_all, law_errs, law_endpoint = [], [], None
+    for qx in keyword_queries:
+        try:
+            items, endpoint, err = _call_moleg_list("law", qx, num_rows=num_rows)
+            if items:
+                law_items_all.extend(items)
+                law_endpoint = endpoint
+            if err:
+                law_errs.append(f"{qx}: {err}")
+        except Exception as e:
+            law_errs.append(f"{qx}: {e}")
 
     results["법령"] = {
         "items": law_items_all,
@@ -758,17 +816,19 @@ def find_all_law_data(query: str, num_rows: int = 3):
         "error": "; ".join(law_errs) if law_errs else None,
     }
 
-    # 2) 나머지 섹션은 동일
-    q_clean = _clean_query_for_api(query)
+    # --- 3) 나머지 섹션(행정규칙/자치법규/조약)도 같은 키워드 세트로 조회 ---
     for label, target in {"행정규칙": "admrul", "자치법규": "ordin", "조약": "trty"}.items():
         try:
-            items, endpoint, err = _call_moleg_list(target, q_clean, num_rows=num_rows)
+            merged, endpoint = [], None
+            for qx in keyword_queries[:5]:
+                items, ep, err = _call_moleg_list(target, qx, num_rows=num_rows)
+                if items:
+                    merged.extend(items); endpoint = ep
+            results[label] = {"items": merged, "endpoint": endpoint, "error": None}
         except Exception as e:
-            items, endpoint, err = [], None, f"호출 오류: {e}"
-        results[label] = {"items": items, "endpoint": endpoint, "error": err}
+            results[label] = {"items": [], "endpoint": None, "error": f"호출 오류: {e}"}
 
     return results
-
 
 # 캐시된 단일 법령 검색
 @st.cache_data(show_spinner=False, ttl=300)
