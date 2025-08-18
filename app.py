@@ -368,6 +368,41 @@ def fix_links_with_lawdata(markdown: str, law_data: list[dict]) -> str:
         return m.group(0)
     return pat.sub(repl, markdown)
 
+# === Link preview helper (실제 동작 링크 미리보기 + 복사/열기) ===
+def render_link_preview(slot_key: str, url: str, kind: str, q: str, title: str = "생성된 링크"):
+    """
+    저장된 URL을 실제 reachable 여부에 따라 미리보기 + 복사/열기 버튼으로 보여준다.
+    원본이 막혀 있으면 law.go.kr 검색 링크로 자동 대체한다.
+    - slot_key: 세션 상태/위젯 키 prefix
+    - url: 원본 URL(직접 링크)
+    - kind: 'law'|'admrul'|'ordin'|'trty'|'prec'|'cc'|'expc'|'term'|'file' 등
+    - q: 대체 검색 링크를 만들 때 사용할 질의어
+    """
+    if not url:
+        st.warning("생성된 URL이 없습니다.")
+        return
+
+    try:
+        ok = is_reachable(url)  # 이미 코드에 있는 헬퍼
+    except Exception:
+        ok = False
+
+    use_url = url if ok else build_fallback_search(kind, q)  # 이미 코드에 있는 헬퍼
+
+    st.markdown(f"**{title}**")
+    st.text_input("URL", value=use_url, key=f"{slot_key}_url", disabled=True)
+
+    col_open, col_copy, _ = st.columns([1, 1, 3])
+    with col_open:
+        st.link_button("열기", use_url, use_container_width=True)
+    with col_copy:
+        # 이미 코드에 있는 copy_url_button 사용
+        copy_url_button(use_url, key=f"{slot_key}_copy", label="복사")
+
+    if not ok:
+        st.info("원본 링크가 열리지 않아 **대체 검색 링크**로 대체했습니다.")
+
+
 # =============================
 # Secrets / Clients / Session
 # =============================
