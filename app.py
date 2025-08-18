@@ -450,7 +450,7 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
     # MOLEG API 통합 검색
     # =============================
 
-    def find_all_law_data(query: str, num_rows: int = 3):
+def find_all_law_data(query: str, num_rows: int = 3):
     """
     하나의 질의어(query)로 법령, 행정규칙, 자치법규, 조약을 모두 검색.
     각 카테고리별 최대 num_rows 개씩 반환.
@@ -474,9 +474,6 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
             "error": err
         }
     return results
-
-    except Exception as e:
-        return [], endpoint, f"응답 파싱 실패: {e}"
 
 @st.cache_data(show_spinner=False, ttl=300)
 def search_law_data(query: str, num_rows: int = 10):
