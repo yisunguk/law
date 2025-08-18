@@ -39,6 +39,46 @@ MINISTRIES = [
     "국가보훈부", "인사혁신처", "원자력안전위원회", "질병관리청",
 ]
 
+# ==============================
+# 추천 키워드 (탭별) + 헬퍼
+# ==============================
+
+# 법령명 기반 추천(법령 탭 전용)
+SUGGESTED_LAW_KEYWORDS = {
+    "민법": ["제839조", "재산분할", "이혼", "제840조", "친권"],
+    "형법": ["제307조", "명예훼손", "사기", "폭행", "상해"],
+    "주택임대차보호법": ["보증금", "임차권등기명령", "대항력", "우선변제권"],
+    "상가건물 임대차보호법": ["보증금", "권리금", "갱신요구권", "대항력"],
+    "근로기준법": ["해고", "연차", "퇴직금", "임금체불"],
+    "개인정보 보호법": ["수집이용", "제3자제공", "유출통지", "과징금"],
+}
+FALLBACK_LAW_KEYWORDS = ["정의", "목적", "벌칙"]
+
+def suggest_keywords_for_law(law_name: str) -> list[str]:
+    if not law_name:
+        return FALLBACK_LAW_KEYWORDS
+    if law_name in SUGGESTED_LAW_KEYWORDS:
+        return SUGGESTED_LAW_KEYWORDS[law_name]
+    for k in SUGGESTED_LAW_KEYWORDS:
+        if k in law_name:
+            return SUGGESTED_LAW_KEYWORDS[k]
+    return FALLBACK_LAW_KEYWORDS
+
+# 탭별 기본 추천(행정규칙/자치법규/조약/판례/헌재/해석례)
+SUGGESTED_TAB_KEYWORDS = {
+    "admrul": ["고시", "훈령", "예규", "지침", "개정"],
+    "ordin":  ["조례", "규칙", "규정", "시행", "개정"],
+    "trty":   ["비준", "발효", "양자", "다자", "협정"],
+    # 판례/헌재는 키워드 검색용 보조(정확 링크는 사건번호·사건표시가 더 적합)
+    "prec":   ["손해배상", "대여금", "사기", "이혼", "근로"],
+    "cc":     ["위헌", "합헌", "각하", "침해", "기각"],
+    "expc":   ["유권해석", "질의회신", "법령해석", "적용범위"],
+}
+
+def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
+    return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
+
+
 # =============================
 # Config & Style
 # =============================
@@ -718,97 +758,199 @@ def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
 # =============================
 with st.sidebar:
     st.header("🔗 링크 생성기 (무인증)")
-
     tabs = st.tabs(["법령", "행정규칙", "자치법규", "조약", "판례", "헌재", "해석례", "용어/별표"])
 
-    # 법령
+    # ───────────────────────── 법령
     with tabs[0]:
         law_name = st.text_input("법령명", value="민법", key="sb_law_name")
-        law_keys = st.text_input("키워드(쉼표로 구분, 선택)", value="", key="sb_law_keys")
+
+        # 자동 추천 키워드(멀티선택) → 바로 쓸 수 있게 일부 기본 선택
+        law_suggest = suggest_keywords_for_law(law_name)
+        law_keys_ms = st.multiselect("키워드(자동 추천)", options=law_suggest, default=law_suggest[:2], key="sb_law_keys_ms")
+
         if st.button("법령 상세 링크 만들기", key="sb_btn_law"):
-            keys = [k.strip() for k in law_keys.split(",") if k.strip()] if law_keys else []
+            keys = list(law_keys_ms) if law_keys_ms else []
             url = hangul_law_with_keys(law_name, keys) if keys else hangul_by_name("법령", law_name)
-            present_url_with_fallback(url, "law", law_name)
+            st.session_state["gen_law"] = {"url": url, "kind": "law", "q": law_name}
 
-    # 행정규칙
-with tabs[1]:
-    adm_name = st.text_input("행정규칙명", value="수입통관사무처리에관한고시", key="sb_adm_name")
-    dept     = st.selectbox("소관 부처(선택)", MINISTRIES, index=0, key="sb_adm_dept")
+        if "gen_law" in st.session_state:
+            d = st.session_state["gen_law"]
+            render_link_preview("gen_law", d["url"], d["kind"], d["q"], title="법령 링크 미리보기")
 
-    colA, colB = st.columns(2)
-    with colA:
-        issue_no  = st.text_input("공포번호(선택)", value="", key="sb_adm_no")
-    with colB:
-        issue_dt  = st.text_input("공포일자(YYYYMMDD, 선택)", value="", key="sb_adm_dt")
+    # ───────────────────────── 행정규칙
+    with tabs[1]:
+        adm_name = st.text_input("행정규칙명", value="수입통관사무처리에관한고시", key="sb_adm_name")
+        dept     = st.selectbox("소관 부처(선택)", MINISTRIES, index=0, key="sb_adm_dept")
 
-    # 1) 정확 링크(부처와 무관) - 기존 동작 유지
-    if st.button("행정규칙 링크 만들기", key="sb_btn_adm"):
-        if issue_no and issue_dt:
-            url = hangul_admrul_with_keys(adm_name, issue_no, issue_dt)
-        else:
-            url = hangul_by_name("행정규칙", adm_name)
-        present_url_with_fallback(url, "admrul", adm_name)
+        colA, colB = st.columns(2)
+        with colA: issue_no = st.text_input("공포번호(선택)", value="", key="sb_adm_no")
+        with colB: issue_dt = st.text_input("공포일자(YYYYMMDD, 선택)", value="", key="sb_adm_dt")
 
-    # 2) 부처 포함 검색 링크 - 부처를 질의에 함께 넣어 site 검색으로 연결
-    if st.button("행정규칙(부처 포함) 검색 링크", key="sb_btn_adm_dept"):
-        q = f"{adm_name} {dept}" if dept and dept != MINISTRIES[0] else adm_name
-        search_url = build_fallback_search("admrul", q)  # www.law.go.kr 검색 URL 생성
-        present_url_with_fallback(search_url, "admrul", q)
+        # 추천 키워드(검색용)
+        adm_keys_ms = st.multiselect("키워드(자동 추천)", options=suggest_keywords_for_tab("admrul"),
+                                     default=["고시", "개정"], key="sb_adm_keys_ms")
 
-
-    # 자치법규
-    with tabs[2]:
-        ordin_name = st.text_input("자치법규명", value="서울특별시경관조례", key="sb_ordin_name")
-        ordin_no   = st.text_input("공포번호(선택)", value="", key="sb_ordin_no")
-        ordin_dt   = st.text_input("공포일자(YYYYMMDD, 선택)", value="", key="sb_ordin_dt")
-        if st.button("자치법규 링크 만들기", key="sb_btn_ordin"):
-            if ordin_no and ordin_dt:
-                url = hangul_ordin_with_keys(ordin_name, ordin_no, ordin_dt)
-            else:
-                url = hangul_by_name("자치법규", ordin_name)
-            present_url_with_fallback(url, "ordin", ordin_name)
-
-    # 조약
-    with tabs[3]:
-        trty_no  = st.text_input("조약 번호(예: 2193)", value="2193", key="sb_trty_no")
-        eff_dt   = st.text_input("발효일자(YYYYMMDD)", value="20140701", key="sb_trty_eff")
-        if st.button("조약 링크 만들기", key="sb_btn_trty"):
-            url = hangul_trty_with_keys(trty_no, eff_dt)
-            present_url_with_fallback(url, "trty", trty_no)
-
-    # 판례
-    with tabs[4]:
-        case_no = st.text_input("사건번호(예: 2010다52349)", value="2010다52349", key="sb_case_no")
-        if st.button("대법원 판례 검색", key="sb_btn_prec"):
-            url = build_scourt_link(case_no)
-            present_url_with_fallback(url, "prec", case_no)
-
-    # 헌법재판소(간단 검색 링크)
-    with tabs[5]:
-        cc_q = st.text_input("헌재 사건/키워드", value="2022헌마1312", key="sb_cc_q")
-        if st.button("헌재 검색 링크 만들기", key="sb_btn_cc"):
-            url = build_fallback_search("cc", cc_q)
-            present_url_with_fallback(url, "cc", cc_q)
-
-    # 해석례/용어/별표
-    with tabs[6]:
         col1, col2 = st.columns(2)
         with col1:
-            expc_id = st.text_input("해석례 ID", value="313107", key="sb_expc_id")
-            if st.button("해석례 링크", key="sb_btn_expc"):
-                url = expc_public_by_id(expc_id)
-                present_url_with_fallback(url, "expc", expc_id)
+            if st.button("행정규칙 링크 만들기", key="sb_btn_adm"):
+                if issue_no and issue_dt:
+                    url = hangul_admrul_with_keys(adm_name, issue_no, issue_dt)
+                else:
+                    url = hangul_by_name("행정규칙", adm_name)
+                st.session_state["gen_adm"] = {"url": url, "kind": "admrul", "q": adm_name}
         with col2:
-            term_id = st.text_input("법령용어 ID", value="3945293", key="sb_term_id")
-            if st.button("용어사전 링크", key="sb_btn_term"):
-                url = f"https://www.law.go.kr/LSW/termInfoR.do?termSeq={up.quote(term_id)}"
-                present_url_with_fallback(url, "term", term_id)
+            if st.button("행정규칙(부처/키워드) 검색 링크", key="sb_btn_adm_dept"):
+                keys = " ".join(adm_keys_ms) if adm_keys_ms else ""
+                q = " ".join(x for x in [adm_name, dept if dept and dept != MINISTRIES[0] else "", keys] if x)
+                url = build_fallback_search("admrul", q)
+                st.session_state["gen_adm_dept"] = {"url": url, "kind": "admrul", "q": q}
 
-        st.markdown("---")
-        flseq = st.text_input("별표·서식 파일 ID", value="110728887", key="sb_flseq")
-        if st.button("별표/서식 파일 다운로드", key="sb_btn_file"):
-            url = licbyl_file_download(flseq)
-            present_url_with_fallback(url, "file", flseq)
+        if "gen_adm" in st.session_state:
+            d = st.session_state["gen_adm"]
+            render_link_preview("gen_adm", d["url"], d["kind"], d["q"], title="행정규칙 링크 미리보기")
+        if "gen_adm_dept" in st.session_state:
+            d = st.session_state["gen_adm_dept"]
+            render_link_preview("gen_adm_dept", d["url"], d["kind"], d["q"], title="행정규칙(부처/키워드) 검색 미리보기")
+
+    # ───────────────────────── 자치법규
+    with tabs[2]:
+        ordin_name = st.text_input("자치법규명", value="서울특별시경관조례", key="sb_ordin_name")
+        colA, colB = st.columns(2)
+        with colA: ordin_no = st.text_input("공포번호(선택)", value="", key="sb_ordin_no")
+        with colB: ordin_dt = st.text_input("공포일자(YYYYMMDD, 선택)", value="", key="sb_ordin_dt")
+
+        # 추천 키워드(검색용)
+        ordin_keys_ms = st.multiselect("키워드(자동 추천)", options=suggest_keywords_for_tab("ordin"),
+                                       default=["조례", "개정"], key="sb_ordin_keys_ms")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("자치법규 링크 만들기", key="sb_btn_ordin"):
+                if ordin_no and ordin_dt:
+                    url = hangul_ordin_with_keys(ordin_name, ordin_no, ordin_dt)
+                else:
+                    url = hangul_by_name("자치법규", ordin_name)
+                st.session_state["gen_ordin"] = {"url": url, "kind": "ordin", "q": ordin_name}
+        with col2:
+            if st.button("자치법규(키워드) 검색 링크", key="sb_btn_ordin_kw"):
+                keys = " ".join(ordin_keys_ms) if ordin_keys_ms else ""
+                q = " ".join(x for x in [ordin_name, keys] if x)
+                url = build_fallback_search("ordin", q)
+                st.session_state["gen_ordin_kw"] = {"url": url, "kind": "ordin", "q": q}
+
+        if "gen_ordin" in st.session_state:
+            d = st.session_state["gen_ordin"]
+            render_link_preview("gen_ordin", d["url"], d["kind"], d["q"], title="자치법규 링크 미리보기")
+        if "gen_ordin_kw" in st.session_state:
+            d = st.session_state["gen_ordin_kw"]
+            render_link_preview("gen_ordin_kw", d["url"], d["kind"], d["q"], title="자치법규(키워드) 검색 미리보기")
+
+    # ───────────────────────── 조약
+    with tabs[3]:
+        trty_no = st.text_input("조약 번호", value="2193", key="sb_trty_no")
+        eff_dt  = st.text_input("발효일자(YYYYMMDD)", value="20140701", key="sb_trty_eff")
+        trty_keys_ms = st.multiselect("키워드(자동 추천)", options=suggest_keywords_for_tab("trty"),
+                                      default=["발효"], key="sb_trty_keys_ms")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("조약 상세 링크 만들기", key="sb_btn_trty"):
+                url = hangul_trty_with_keys(trty_no, eff_dt)
+                st.session_state["gen_trty"] = {"url": url, "kind": "trty", "q": trty_no}
+        with col2:
+            if st.button("조약(키워드) 검색 링크", key="sb_btn_trty_kw"):
+                q = " ".join([trty_no] + trty_keys_ms) if trty_keys_ms else trty_no
+                url = build_fallback_search("trty", q)
+                st.session_state["gen_trty_kw"] = {"url": url, "kind": "trty", "q": q}
+
+        if "gen_trty" in st.session_state:
+            d = st.session_state["gen_trty"]
+            render_link_preview("gen_trty", d["url"], d["kind"], d["q"], title="조약 링크 미리보기")
+        if "gen_trty_kw" in st.session_state:
+            d = st.session_state["gen_trty_kw"]
+            render_link_preview("gen_trty_kw", d["url"], d["kind"], d["q"], title="조약(키워드) 검색 미리보기")
+
+    # ───────────────────────── 판례
+    with tabs[4]:
+        case_no = st.text_input("사건번호(예: 2010다52349)", value="2010다52349", key="sb_case_no")
+        prec_keys_ms = st.multiselect("키워드(자동 추천·검색용)", options=suggest_keywords_for_tab("prec"),
+                                      default=["손해배상"], key="sb_prec_keys_ms")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("대법원 판례 링크 만들기", key="sb_btn_prec"):
+                url = build_scourt_link(case_no)
+                st.session_state["gen_prec"] = {"url": url, "kind": "prec", "q": case_no}
+        with col2:
+            if st.button("판례(키워드) 검색 링크", key="sb_btn_prec_kw"):
+                q = " ".join([case_no] + prec_keys_ms) if case_no else " ".join(prec_keys_ms)
+                url = build_fallback_search("prec", q)   # 키워드→law.go.kr로 보조 검색
+                st.session_state["gen_prec_kw"] = {"url": url, "kind": "prec", "q": q}
+
+        if "gen_prec" in st.session_state:
+            d = st.session_state["gen_prec"]
+            render_link_preview("gen_prec", d["url"], d["kind"], d["q"], title="판례 링크 미리보기")
+        if "gen_prec_kw" in st.session_state:
+            d = st.session_state["gen_prec_kw"]
+            render_link_preview("gen_prec_kw", d["url"], d["kind"], d["q"], title="판례(키워드) 검색 미리보기")
+
+    # ───────────────────────── 헌재
+    with tabs[5]:
+        cc_q = st.text_input("헌재 사건/키워드", value="2022헌마1312", key="sb_cc_q")
+        cc_keys_ms = st.multiselect("키워드(자동 추천·검색용)", options=suggest_keywords_for_tab("cc"),
+                                    default=["위헌"], key="sb_cc_keys_ms")
+
+        if st.button("헌재 검색 링크 만들기", key="sb_btn_cc"):
+            q = " ".join([cc_q] + cc_keys_ms) if cc_q else " ".join(cc_keys_ms)
+            url = build_fallback_search("cc", q)
+            st.session_state["gen_cc"] = {"url": url, "kind": "cc", "q": q}
+
+        if "gen_cc" in st.session_state:
+            d = st.session_state["gen_cc"]
+            render_link_preview("gen_cc", d["url"], d["kind"], d["q"], title="헌재 검색 미리보기")
+
+    # ───────────────────────── 해석례
+    with tabs[6]:
+        colA, colB = st.columns(2)
+        with colA:
+            expc_id = st.text_input("해석례 ID", value="313107", key="sb_expc_id")
+            if st.button("해석례 링크 만들기", key="sb_btn_expc"):
+                url = expc_public_by_id(expc_id)
+                st.session_state["gen_expc"] = {"url": url, "kind": "expc", "q": expc_id}
+        with colB:
+            expc_keys_ms = st.multiselect("키워드(자동 추천·검색용)", options=suggest_keywords_for_tab("expc"),
+                                          default=["유권해석"], key="sb_expc_keys_ms")
+            if st.button("해석례(키워드) 검색 링크", key="sb_btn_expc_kw"):
+                q = " ".join([expc_id] + expc_keys_ms) if expc_id else " ".join(expc_keys_ms)
+                url = build_fallback_search("expc", q)
+                st.session_state["gen_expc_kw"] = {"url": url, "kind": "expc", "q": q}
+
+        if "gen_expc" in st.session_state:
+            d = st.session_state["gen_expc"]
+            render_link_preview("gen_expc", d["url"], d["kind"], d["q"], title="해석례 링크 미리보기")
+        if "gen_expc_kw" in st.session_state:
+            d = st.session_state["gen_expc_kw"]
+            render_link_preview("gen_expc_kw", d["url"], d["kind"], d["q"], title="해석례(키워드) 검색 미리보기")
+
+    # ───────────────────────── 용어/별표
+    with tabs[7]:
+        col1, col2 = st.columns(2)
+        with col1:
+            term_id = st.text_input("법령용어 ID", value="3945293", key="sb_term_id")
+            if st.button("용어사전 링크 만들기", key="sb_btn_term"):
+                url = f"https://www.law.go.kr/LSW/termInfoR.do?termSeq={up.quote(term_id)}"
+                st.session_state["gen_term"] = {"url": url, "kind": "term", "q": term_id}
+        with col2:
+            flseq = st.text_input("별표·서식 파일 ID", value="110728887", key="sb_flseq")
+            if st.button("별표/서식 파일 다운로드", key="sb_btn_file"):
+                url = licbyl_file_download(flseq)
+                st.session_state["gen_file"] = {"url": url, "kind": "file", "q": flseq}
+
+        if "gen_term" in st.session_state:
+            d = st.session_state["gen_term"]
+            render_link_preview("gen_term", d["url"], d["kind"], d["q"], title="용어사전 링크 미리보기")
+        if "gen_file" in st.session_state:
+            d = st.session_state["gen_file"]
+            render_link_preview("gen_file", d["url"], d["kind"], d["q"], title="별표/서식 다운로드 링크")
 
 # =============================
 # Chat flow
