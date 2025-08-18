@@ -369,6 +369,33 @@ def prefetch_law_context(user_q: str, num_rows_per_law: int = 3) -> list[dict]:
 
     return merged
 
+# === add: LLM-우선 질의어 선택 헬퍼 ===
+def choose_law_queries_llm_first(user_q: str) -> list[str]:
+    """
+    1) LLM 후보(최대 3개) → extract_law_candidates_llm()
+    2) _clean_query_for_api() 폴백
+    3) (옵션) KEYWORD_TO_LAW 폴백
+    """
+    ordered: list[str] = []
+
+    # 1) LLM 후보
+    llm_candidates = extract_law_candidates_llm(user_q) or []
+    for nm in llm_candidates:
+        if nm and nm not in ordered:
+            ordered.append(nm)
+
+    # 2) 폴백: 전처리 질의어
+    cleaned = _clean_query_for_api(user_q)
+    if cleaned and cleaned not in ordered:
+        ordered.append(cleaned)
+
+    # 3) 보조 폴백
+    for kw, mapped in KEYWORD_TO_LAW.items():
+        if kw in (user_q or "") and mapped not in ordered:
+            ordered.append(mapped)
+
+    return ordered
+
 
 def render_bubble_with_copy(message: str, key: str):
     """어시스턴트 말풍선 전용 복사 버튼"""
