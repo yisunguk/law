@@ -47,6 +47,15 @@ def normalize_law_link(link: str) -> str:
         return "https://www.law.go.kr" + link
     return link
 
+def hangul_law_with_keys(name: str, keys) -> str:
+    keys = [k for k in (keys or []) if k]
+    art = next((k for k in keys if _ARTICLE_RE.match(k)), None)
+    if art:
+        return hangul_law_article(name, art)
+    # 조문이 아니면 검색 링크로
+    q = " ".join([name] + keys)
+    return build_fallback_search("law", q)
+
 
 # ==============================
 # 추천 키워드 (탭별) + 헬퍼
@@ -823,7 +832,7 @@ with st.sidebar:
             keys = list(law_keys_ms) if law_keys_ms else []
             url = hangul_law_with_keys(law_name, keys) if keys else hangul_by_name("법령", law_name)
             st.session_state["gen_law"] = {"url": url, "kind": "law", "q": law_name}
-
+    
         if "gen_law" in st.session_state:
             d = st.session_state["gen_law"]
             render_link_preview("gen_law", d["url"], d["kind"], d["q"], title="법령 링크 미리보기")
