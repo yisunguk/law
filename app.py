@@ -666,19 +666,73 @@ def find_all_law_data(query: str, num_rows: int = 3):
             items, endpoint, err = _call_moleg_list(target, q, num_rows=num_rows)
             # 미리보기 한정: 전부 비면 법령명만/첫 토큰으로 한 번 더 시도
             if not items and " " in q:
-                m = re.search(r'([가-힣A-Za-z0-9·\\s]{1,40}?(법|령|규칙|조례))', q)
+                m = re.search(r'([가-힣A-Za-z0-9·\s]{1,40}?(법|령|규칙|조례))', q)
                 q2 = (m.group(0).strip() if m else q.split(" ")[0]).strip()
                 if q2 and q2 != q:
                     items, endpoint, err = _call_moleg_list(target, q2, num_rows=num_rows)
         except Exception as e:
             items, endpoint, err = [], None, f"호출 오류: {e}"
         results[label] = {"items": items, "endpoint": endpoint, "error": err}
+
+    # 🔽🔽🔽 여기서부터 추가: '법령' 탭이 비었으면 LLM/키워드로 재조회
+    if not results.get("법령", {}).get("items"):
+        law_names = extract_law_candidates_llm(query)  # 1) LLM 후보
+        # 2) 키워드 폴백(자연어에 '명함/개인정보' 등 포함 시 우선 시도)
+        for kw, mapped in KEYWORD_TO_LAW.items():
+            if kw in (query or "") and mapped not in law_names:
+                law_names.insert(0, mapped)
+
+        for name in law_names:
+            items, endpoint, err = _call_moleg_list("law", name, num_rows=num_rows)
+            if items:
+                results["법령"] = {"items": items, "endpoint": endpoint, "error": err}
+                break
+
     return results
+
 
 # 캐시된 단일 법령 검색
 @st.cache_data(show_spinner=False, ttl=300)
 def search_law_data(query: str, num_rows: int = 10):
     return _call_moleg_list("law", query, num_rows=num_rows)
+
+# 🔽 여기에 추가 (search_law_data 아래)
+
+# 자연어 → 대표 법령명 폴백용 맵
+KEYWORD_TO_LAW = {
+    "개인정보": "개인정보 보호법",
+    "명함": "개인정보 보호법",
+    "고객정보": "개인정보 보호법",
+    # 필요 시 확장...
+}
+
+SYSTEM_EXTRACT = """너는 한국 법령명을 추출하는 도우미야.
+사용자 질문에서 관련 '법령명(공식명)' 후보를 1~3개 뽑아 JSON으로만 응답해.
+형식: {"laws":["개인정보 보호법","개인정보 보호법 시행령"]} 다른 말 금지.
+법령명이 애매하면 가장 유력한 것 1개만.
+"""
+
+@st.cache_data(show_spinner=False, ttl=300)
+def extract_law_candidates_llm(q: str) -> list[str]:
+    if not q or (client is None):
+        return []
+    try:
+        resp = client.chat.completions.create(
+            model=AZURE["deployment"],
+            messages=[
+                {"role":"system","content": SYSTEM_EXTRACT},
+                {"role":"user","content": q.strip()},
+            ],
+            temperature=0.0,
+            max_tokens=128,
+        )
+        txt = (resp.choices[0].message.content or "").strip()
+        data = json.loads(txt)
+        laws = [s.strip() for s in data.get("laws", []) if s.strip()]
+        return laws[:3]
+    except Exception:
+        return []
+
 
 # 간단 폴백(예비 — 도구 모드 기본이므로 최소화)
 def find_law_with_fallback(user_query: str, num_rows: int = 10):
