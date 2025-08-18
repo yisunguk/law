@@ -28,6 +28,17 @@ from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_tx
 from external_content import is_url, make_url_context
 from external_content import extract_first_url
 
+# 행정규칙 소관 부처 드롭다운 옵션
+MINISTRIES = [
+    "부처 선택(선택)",
+    "국무조정실", "기획재정부", "교육부", "과학기술정보통신부",
+    "외교부", "통일부", "법무부", "행정안전부", "문화체육관광부",
+    "농림축산식품부", "산업통상자원부", "보건복지부", "환경부",
+    "고용노동부", "여성가족부", "국토교통부", "해양수산부",
+    "중소벤처기업부", "금융위원회", "방송통신위원회", "공정거래위원회",
+    "국가보훈부", "인사혁신처", "원자력안전위원회", "질병관리청",
+]
+
 # =============================
 # Config & Style
 # =============================
@@ -720,16 +731,30 @@ with st.sidebar:
             present_url_with_fallback(url, "law", law_name)
 
     # 행정규칙
-    with tabs[1]:
-        adm_name = st.text_input("행정규칙명", value="수입통관사무처리에관한고시", key="sb_adm_name")
+with tabs[1]:
+    adm_name = st.text_input("행정규칙명", value="수입통관사무처리에관한고시", key="sb_adm_name")
+    dept     = st.selectbox("소관 부처(선택)", MINISTRIES, index=0, key="sb_adm_dept")
+
+    colA, colB = st.columns(2)
+    with colA:
         issue_no  = st.text_input("공포번호(선택)", value="", key="sb_adm_no")
+    with colB:
         issue_dt  = st.text_input("공포일자(YYYYMMDD, 선택)", value="", key="sb_adm_dt")
-        if st.button("행정규칙 링크 만들기", key="sb_btn_adm"):
-            if issue_no and issue_dt:
-                url = hangul_admrul_with_keys(adm_name, issue_no, issue_dt)
-            else:
-                url = hangul_by_name("행정규칙", adm_name)
-            present_url_with_fallback(url, "admrul", adm_name)
+
+    # 1) 정확 링크(부처와 무관) - 기존 동작 유지
+    if st.button("행정규칙 링크 만들기", key="sb_btn_adm"):
+        if issue_no and issue_dt:
+            url = hangul_admrul_with_keys(adm_name, issue_no, issue_dt)
+        else:
+            url = hangul_by_name("행정규칙", adm_name)
+        present_url_with_fallback(url, "admrul", adm_name)
+
+    # 2) 부처 포함 검색 링크 - 부처를 질의에 함께 넣어 site 검색으로 연결
+    if st.button("행정규칙(부처 포함) 검색 링크", key="sb_btn_adm_dept"):
+        q = f"{adm_name} {dept}" if dept and dept != MINISTRIES[0] else adm_name
+        search_url = build_fallback_search("admrul", q)  # www.law.go.kr 검색 URL 생성
+        present_url_with_fallback(search_url, "admrul", q)
+
 
     # 자치법규
     with tabs[2]:
