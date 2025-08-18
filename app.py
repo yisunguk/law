@@ -707,11 +707,83 @@ def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
 # =============================
 with st.sidebar:
     st.header("🔗 링크 생성기 (무인증)")
-    DEFAULTS = {"법령명":"민법","법령_공포번호":"","법령_공포일자":"","법령_시행일자":"",
-                "행정규칙명":"수입통관사무처리에관한고시","자치법규명":"서울특별시경관조례","조약번호":"2193","조약발효일":"20140701",
-                "판례_사건번호":"2010다52349","헌재사건":"2022헌마1312","해석례ID":"313107","용어ID":"3945293","별표파일ID":"110728887"}
-    # (원본 사이드바 그대로 — 생략) ... 필요한 경우 위에서 제공된 구현 복사 유지
-    # 여기서는 공간 절약을 위해 핵심만 남깁니다. 원본 전체 사이드바 구현은 유지하거나 필요 시 재붙여 사용하세요.
+
+    tabs = st.tabs(["법령", "행정규칙", "자치법규", "조약", "판례", "헌재", "해석례", "용어/별표"])
+
+    # 법령
+    with tabs[0]:
+        law_name = st.text_input("법령명", value="민법", key="sb_law_name")
+        law_keys = st.text_input("키워드(쉼표로 구분, 선택)", value="", key="sb_law_keys")
+        if st.button("법령 상세 링크 만들기", key="sb_btn_law"):
+            keys = [k.strip() for k in law_keys.split(",") if k.strip()] if law_keys else []
+            url = hangul_law_with_keys(law_name, keys) if keys else hangul_by_name("법령", law_name)
+            present_url_with_fallback(url, "law", law_name)
+
+    # 행정규칙
+    with tabs[1]:
+        adm_name = st.text_input("행정규칙명", value="수입통관사무처리에관한고시", key="sb_adm_name")
+        issue_no  = st.text_input("공포번호(선택)", value="", key="sb_adm_no")
+        issue_dt  = st.text_input("공포일자(YYYYMMDD, 선택)", value="", key="sb_adm_dt")
+        if st.button("행정규칙 링크 만들기", key="sb_btn_adm"):
+            if issue_no and issue_dt:
+                url = hangul_admrul_with_keys(adm_name, issue_no, issue_dt)
+            else:
+                url = hangul_by_name("행정규칙", adm_name)
+            present_url_with_fallback(url, "admrul", adm_name)
+
+    # 자치법규
+    with tabs[2]:
+        ordin_name = st.text_input("자치법규명", value="서울특별시경관조례", key="sb_ordin_name")
+        ordin_no   = st.text_input("공포번호(선택)", value="", key="sb_ordin_no")
+        ordin_dt   = st.text_input("공포일자(YYYYMMDD, 선택)", value="", key="sb_ordin_dt")
+        if st.button("자치법규 링크 만들기", key="sb_btn_ordin"):
+            if ordin_no and ordin_dt:
+                url = hangul_ordin_with_keys(ordin_name, ordin_no, ordin_dt)
+            else:
+                url = hangul_by_name("자치법규", ordin_name)
+            present_url_with_fallback(url, "ordin", ordin_name)
+
+    # 조약
+    with tabs[3]:
+        trty_no  = st.text_input("조약 번호(예: 2193)", value="2193", key="sb_trty_no")
+        eff_dt   = st.text_input("발효일자(YYYYMMDD)", value="20140701", key="sb_trty_eff")
+        if st.button("조약 링크 만들기", key="sb_btn_trty"):
+            url = hangul_trty_with_keys(trty_no, eff_dt)
+            present_url_with_fallback(url, "trty", trty_no)
+
+    # 판례
+    with tabs[4]:
+        case_no = st.text_input("사건번호(예: 2010다52349)", value="2010다52349", key="sb_case_no")
+        if st.button("대법원 판례 검색", key="sb_btn_prec"):
+            url = build_scourt_link(case_no)
+            present_url_with_fallback(url, "prec", case_no)
+
+    # 헌법재판소(간단 검색 링크)
+    with tabs[5]:
+        cc_q = st.text_input("헌재 사건/키워드", value="2022헌마1312", key="sb_cc_q")
+        if st.button("헌재 검색 링크 만들기", key="sb_btn_cc"):
+            url = build_fallback_search("cc", cc_q)
+            present_url_with_fallback(url, "cc", cc_q)
+
+    # 해석례/용어/별표
+    with tabs[6]:
+        col1, col2 = st.columns(2)
+        with col1:
+            expc_id = st.text_input("해석례 ID", value="313107", key="sb_expc_id")
+            if st.button("해석례 링크", key="sb_btn_expc"):
+                url = expc_public_by_id(expc_id)
+                present_url_with_fallback(url, "expc", expc_id)
+        with col2:
+            term_id = st.text_input("법령용어 ID", value="3945293", key="sb_term_id")
+            if st.button("용어사전 링크", key="sb_btn_term"):
+                url = f"https://www.law.go.kr/LSW/termInfoR.do?termSeq={up.quote(term_id)}"
+                present_url_with_fallback(url, "term", term_id)
+
+        st.markdown("---")
+        flseq = st.text_input("별표·서식 파일 ID", value="110728887", key="sb_flseq")
+        if st.button("별표/서식 파일 다운로드", key="sb_btn_file"):
+            url = licbyl_file_download(flseq)
+            present_url_with_fallback(url, "file", flseq)
 
 # =============================
 # Chat flow
