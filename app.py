@@ -1170,12 +1170,21 @@ def _push_user_from_pending() -> str | None:
 
 user_q = _push_user_from_pending()
 render_pinned_question()
+msgs = st.session_state.get("messages", [])
+st.session_state.messages = [
+    m for m in msgs if not (m.get("role")=="assistant" and not (m.get("content") or "").strip())
+]
 
 with st.container():
     for i, m in enumerate(st.session_state.messages):
-        with st.chat_message(m["role"]):
-            if m["role"] == "assistant":
-                render_bubble_with_copy(m["content"], key=f"past-{i}")  # ✅ 과거 assistant만 복사 버튼
+        role = m.get("role")
+        content = (m.get("content") or "")
+        if role == "assistant" and not content.strip():
+            continue  # ✅ 내용이 비면 말풍선 자체를 만들지 않음
+
+        with st.chat_message(role):
+            if role == "assistant":
+                render_bubble_with_copy(content, key=f"past-{i}")
                 if m.get("law"):
                     with st.expander("📋 이 턴에서 참고한 법령 요약"):
                         for j, law in enumerate(m["law"], 1):
@@ -1183,7 +1192,8 @@ with st.container():
                             if law.get("법령상세링크"):
                                 st.write(f"- 링크: {law['법령상세링크']}")
             else:
-                st.markdown(m["content"])  # 유저 말풍선엔 복사 버튼 없음
+                st.markdown(content)
+
 
 # 🔻 어시스턴트 답변 출력은 반드시 user_q가 있을 때만 실행 (초기 빈 말풍선 방지)
 # ===============================
@@ -1196,54 +1206,54 @@ if user_q:
     _inject_right_rail_css()
     render_search_flyout(user_q, num_rows=3)
 
-    # ✅ 엔진 준비됐을 때만 말풍선 컨테이너 생성
     if client and AZURE:
-        with st.chat_message("assistant"):
-            placeholder = st.empty()
-            full_text, buffer = "", ""
-            collected_laws = []
-            try:
-                placeholder.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다..._")
-                for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
-                    if kind == "delta":
-                        buffer += payload or ""
-                        if len(buffer) >= 200:
-                            full_text += buffer; buffer = ""
-                            placeholder.markdown(_normalize_text(full_text[-1500:]))
-                    elif kind == "final":
-                        full_text += (payload or "")
-                        collected_laws = law_list or []
-                        break
-                if buffer:
-                    full_text += buffer
-            except Exception as e:
-                laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
-                collected_laws = laws
-                law_ctx = format_law_context(laws)
-                tpl = choose_output_template(user_q)
-                full_text = f"{tpl}\n\n{law_ctx}\n\n(오류: {e})"
+        # 1) 말풍선 없이 임시 컨테이너로 스트리밍
+        stream_box = st.empty()
+        full_text, buffer, collected_laws = "", "", []
+        try:
+            stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
+            for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
+                if kind == "delta":
+                    buffer += (payload or "")
+                    if len(buffer) >= 200:
+                        full_text += buffer; buffer = ""
+                        stream_box.markdown(_normalize_text(full_text[-1500:]))
+                elif kind == "final":
+                    full_text += (payload or "")
+                    collected_laws = law_list or []
+                    break
+            if buffer:
+                full_text += buffer
+        except Exception as e:
+            laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
+            collected_laws = laws
+            law_ctx = format_law_context(laws)
+            tpl = choose_output_template(user_q)
+            full_text = f"{tpl}\n\n{law_ctx}\n\n(오류: {e})"
 
-            final_text = _normalize_text(full_text)
-            final_text = fix_links_with_lawdata(final_text, collected_laws)
-            final_text = _dedupe_blocks(final_text)
+        # 2) 후처리
+        final_text = _normalize_text(full_text)
+        final_text = fix_links_with_lawdata(final_text, collected_laws)
+        final_text = _dedupe_blocks(final_text)
 
-            # ✅ 빈 결과면 말풍선 없이 종료
-            if not final_text.strip():
-                placeholder.empty()
-            else:
-                placeholder.empty()
-                with placeholder.container():
-                    render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
+        stream_box.empty()  # 임시 표시 제거
 
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": final_text,
-                    "law": collected_laws,
-                    "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                })
+        # 3) 본문이 있을 때만 말풍선 생성
+        if final_text.strip():
+            with st.chat_message("assistant"):
+                render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": final_text,
+                "law": collected_laws,
+                "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            })
+        else:
+            # ✅ 말풍선 만들지 않음 (회색 버블 방지)
+            st.info("현재 모델이 오프라인이거나 오류로 인해 답변을 생성하지 못했습니다.")
     else:
-        # ✅ 엔진이 없으면 일반 안내만 (채팅 말풍선 아님)
         st.info("답변 엔진이 아직 설정되지 않았습니다. API 키/엔드포인트를 확인해 주세요.")
+
 
 
         # --- 최종 후처리 ---
