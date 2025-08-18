@@ -719,7 +719,7 @@ LEGAL_SYS = (
 "\n"
 "작성 예시(형식만 참조):\n"
 "법률 자문 메모\n"
-"1) 결론: 한 문장.\n"
+"1) 주요 내용: 한 문장.\n"
 "2) 근거 요약: > [조문 인용 1~2문장] …\n"
 "3) 실무 포인트: 번호 목록 2~4개.\n"
 "4) 출처 링크: [법령명](URL) …\n"
@@ -1153,11 +1153,18 @@ if user_q:
             tpl = choose_output_template(user_q)
             final_text = _normalize_text(f"{tpl}\n\n{law_ctx}\n\n(오류: {e})")
 
-        # 링크 교정 + 렌더
-        final_text = fix_links_with_lawdata(final_text, collected_laws)
-        final_text = _dedupe_blocks(final_text)
-        placeholder.markdown(final_text)
-        render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
+        from datetime import datetime
+
+# ... (위에서 final_text 완성하는 부분까지 동일)
+final_text = _normalize_text(full_text)
+final_text = fix_links_with_lawdata(final_text, collected_laws)
+final_text = _dedupe_blocks(final_text)  # 중복 문단 제거
+
+# ✅ 출력 (한 번만)
+placeholder.empty()
+with placeholder.container():
+    render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
+
 
     st.session_state.messages.append({
         "role":"assistant","content": final_text, "law": collected_laws, "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
