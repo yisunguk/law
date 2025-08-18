@@ -10,6 +10,7 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 from openai import AzureOpenAI
+from llm_safety import safe_chat_completion
 
 # TLS 1.2 강제용 어댑터 정의
 from requests.adapters import HTTPAdapter
@@ -876,11 +877,24 @@ def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
         {"role":"system","content": LEGAL_SYS},
         {"role":"user","content": user_q},
     ]
-    # 1차 호출
-    resp = client.chat.completions.create(
-        model=AZURE["deployment"], messages=msgs, tools=TOOLS,
-        tool_choice="auto", temperature=0.2, max_tokens=1200
+
+    # ---------- [변경1] 1차 호출: safe_chat_completion 사용 ----------
+    resp_dict = safe_chat_completion(
+        client,
+        messages=msgs,
+        model=AZURE["deployment"],
+        stream=False,               # 1차는 스트리밍 아님
+        allow_retry=True,
+        tools=TOOLS,
+        tool_choice="auto",
+        temperature=0.2,
+        max_tokens=1200,
     )
+    if resp_dict.get("type") == "blocked_by_content_filter":
+        yield ("final", resp_dict["message"], [])
+        return
+
+    resp = resp_dict["resp"]   # 🔹원래 OpenAI 응답 객체
     msg = resp.choices[0].message
     law_for_links = []
 
@@ -903,12 +917,22 @@ def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
                     if r.get("items"): law_for_links.extend(r["items"])
             msgs.append({"role":"tool","tool_call_id": call.id, "content": json.dumps(result, ensure_ascii=False)})
 
-        # 2차 호출(최종 요약/선정)
+        # ---------- [변경2] 2차 호출: 스트리밍/비스트리밍 모두 safe_* ----------
         if stream:
-            stream_resp = client.chat.completions.create(
-                model=AZURE["deployment"], messages=msgs,
-                temperature=0.2, max_tokens=1400, stream=True
+            resp2 = safe_chat_completion(
+                client,
+                messages=msgs,
+                model=AZURE["deployment"],
+                stream=True,
+                allow_retry=True,
+                temperature=0.2,
+                max_tokens=1400,
             )
+            if resp2.get("type") == "blocked_by_content_filter":
+                yield ("final", resp2["message"], law_for_links)
+                return
+
+            stream_resp = resp2["stream"]
             out = ""
             for ch in stream_resp:
                 try:
@@ -922,19 +946,38 @@ def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
                     continue
             yield ("final", out, law_for_links)
         else:
-            resp2 = client.chat.completions.create(
-                model=AZURE["deployment"], messages=msgs,
-                temperature=0.2, max_tokens=1400, stream=False
+            resp2 = safe_chat_completion(
+                client,
+                messages=msgs,
+                model=AZURE["deployment"],
+                stream=False,
+                allow_retry=True,
+                temperature=0.2,
+                max_tokens=1400,
             )
-            final_text = resp2.choices[0].message.content or ""
+            if resp2.get("type") == "blocked_by_content_filter":
+                yield ("final", resp2["message"], law_for_links)
+                return
+            final_text = extract_text(resp2["resp"])
             yield ("final", final_text, law_for_links)
+
     else:
         # 함수콜 없이 바로 답변
         if stream:
-            stream_resp = client.chat.completions.create(
-                model=AZURE["deployment"], messages=msgs,
-                temperature=0.2, max_tokens=1200, stream=True
+            resp2 = safe_chat_completion(
+                client,
+                messages=msgs,
+                model=AZURE["deployment"],
+                stream=True,
+                allow_retry=True,
+                temperature=0.2,
+                max_tokens=1200,
             )
+            if resp2.get("type") == "blocked_by_content_filter":
+                yield ("final", resp2["message"], [])
+                return
+
+            stream_resp = resp2["stream"]
             out = ""
             for ch in stream_resp:
                 try:
@@ -948,12 +991,21 @@ def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
                     continue
             yield ("final", out, [])
         else:
-            resp2 = client.chat.completions.create(
-                model=AZURE["deployment"], messages=msgs,
-                temperature=0.2, max_tokens=1200, stream=False
+            resp2 = safe_chat_completion(
+                client,
+                messages=msgs,
+                model=AZURE["deployment"],
+                stream=False,
+                allow_retry=True,
+                temperature=0.2,
+                max_tokens=1200,
             )
-            final_text = resp2.choices[0].message.content or ""
+            if resp2.get("type") == "blocked_by_content_filter":
+                yield ("final", resp2["message"], [])
+                return
+            final_text = extract_text(resp2["resp"])
             yield ("final", final_text, [])
+
 
 # =============================
 # Sidebar: 링크 생성기 (무인증)
