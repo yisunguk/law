@@ -136,16 +136,21 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 </style>
 """, unsafe_allow_html=True)
 
+# 통합검색 우측 패널 고정 & 스크롤 영역
 st.markdown("""
 <style>
-[data-testid="column"]:nth-of-type(2) {
-  position: sticky;
-  top: 80px;
-  align-self: flex-start;
+#search-panel { position: sticky; top: 80px; }           /* 화면 스크롤 시 우측 패널 고정 */
+.search-card  { border:1px solid rgba(127,127,127,.25);
+                border-radius:12px; padding:12px 14px; }
+.search-scroll{ max-height: calc(100vh - 200px); overflow:auto; }
+
+/* 좁은 화면(태블릿/모바일)에서는 고정 해제하고 상하로 쌓기 */
+@media (max-width: 1024px) {
+  #search-panel { position: static; }
+  .search-scroll{ max-height: none; }
 }
 </style>
 """, unsafe_allow_html=True)
-
 
 st.markdown(
     """
@@ -1065,17 +1070,23 @@ with st.container():
 # ===============================
 # 좌우 분리 레이아웃 (교체용)
 # ===============================
+# ===============================
+# 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
+# ===============================
 if user_q:
     # 좌: 답변(2), 우: 통합검색(1)
     col_ans, col_res = st.columns([2, 1], vertical_alignment="top", gap="large")
 
-    # ──────────────── 우측: 통합 검색 결과 (독립 영역)
+    # ──────────────── 오른쪽: 통합 검색 결과 (고정 패널)
     with col_res:
-        st.markdown("<h3 style='margin:6px 0 8px'>📚 통합 검색 결과</h3>", unsafe_allow_html=True)
-        with st.expander("열기/접기", expanded=False):
+        st.markdown("<div id='search-panel'>", unsafe_allow_html=True)
+        st.markdown("<div class='search-card'>", unsafe_allow_html=True)
+        st.markdown("### 📚 통합 검색 결과")
+        with st.expander("열기/접기", expanded=True):
+            st.markdown("<div class='search-scroll'>", unsafe_allow_html=True)
             results = find_all_law_data(user_q, num_rows=3)
             for label, pack in results.items():
-                items, err2 = pack["items"], pack["error"]
+                items, err2 = pack.get("items"), pack.get("error")
                 st.subheader(f"🔎 {label}")
                 if err2:
                     st.warning(err2)
@@ -1083,14 +1094,19 @@ if user_q:
                     st.caption("검색 결과 없음")
                 else:
                     for i, law in enumerate(items, 1):
-                        st.markdown(
-                            f"**{i}. {law['법령명']}** ({law['법령구분']}) "
-                            f"- 소관:{law['소관부처명']} / 시행:{law['시행일자']} / 공포:{law['공포일자']}"
-                        )
-                        if law.get('법령상세링크'):
-                            st.write(f"[법령 상세보기]({law['법령상세링크']})")
+                        nm   = law.get("법령명","")
+                        kind = law.get("법령구분","")
+                        dept = law.get("소관부처명","")
+                        eff  = law.get("시행일자","-")
+                        pub  = law.get("공포일자","-")
+                        link = law.get("법령상세링크")
+                        st.markdown(f"**{i}. {nm}** ({kind}) — 소관:{dept} / 시행:{eff} / 공포:{pub}")
+                        if link:
+                            st.write(f"[법령 상세보기]({link})")
+            st.markdown("</div>", unsafe_allow_html=True)  # .search-scroll
+        st.markdown("</div></div>", unsafe_allow_html=True)  # .search-card / #search-panel
 
-    # ──────────────── 좌측: GPT 답변 말풍선 (기존 로직 그대로)
+    # ──────────────── 왼쪽: GPT 답변 말풍선 (기존 로직 그대로)
     with col_ans:
         with st.chat_message("assistant"):
             placeholder = st.empty()
@@ -1116,6 +1132,15 @@ if user_q:
                 law_ctx = format_law_context(laws)
                 tpl = choose_output_template(user_q)
                 full_text = f"{tpl}\n\n{law_ctx}\n\n(오류: {e})"
+
+            final_text = _normalize_text(full_text)
+            final_text = fix_links_with_lawdata(final_text, collected_laws)
+            final_text = _dedupe_blocks(final_text)
+
+            placeholder.empty()
+            with placeholder.container():
+                render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
+
 
             # 후처리
             final_text = _normalize_text(full_text)
