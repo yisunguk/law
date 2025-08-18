@@ -131,6 +131,13 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 # ---- 오른쪽 플로팅 패널용 CSS ----
 def _inject_right_rail_css():
     st.markdown("""
+<style>
+#search-flyout details { margin-top: 6px; }
+#search-flyout h4 { font-size: 1rem; }
+</style>
+""", unsafe_allow_html=True)
+
+    st.markdown("""
     <style>
     /* 채팅 본문이 가려지지 않도록 오른쪽 여백 확보 */
     .block-container { padding-right: 380px !important; }
@@ -161,32 +168,54 @@ def _inject_right_rail_css():
 
 # ---- 오른쪽 플로팅 패널 렌더러 ----
 def render_search_flyout(user_q: str, num_rows: int = 3):
-    # 패널 + 제목
-    st.markdown("<div id='search-flyout'>", unsafe_allow_html=True)
-    st.markdown("### 📚 통합 검색 결과")
+    """오른쪽 고정 패널: 통합 검색 결과 (순수 HTML 렌더링)"""
+    results = find_all_law_data(user_q, num_rows=num_rows)
 
-    with st.expander("열기/접기", expanded=True):
-        results = find_all_law_data(user_q, num_rows=num_rows)
-        for label, pack in results.items():
-            items, err2 = pack.get("items"), pack.get("error")
-            st.subheader(f"🔎 {label}")
-            if err2:
-                st.warning(err2)
-            elif not items:
-                st.caption("검색 결과 없음")
-            else:
-                for i, law in enumerate(items, 1):
-                    nm   = law.get("법령명","")
-                    kind = law.get("법령구분","")
-                    dept = law.get("소관부처명","")
-                    eff  = law.get("시행일자","-")
-                    pub  = law.get("공포일자","-")
-                    link = law.get("법령상세링크")
-                    st.markdown(f"**{i}. {nm}** ({kind}) — 소관:{dept} / 시행:{eff} / 공포:{pub}")
-                    if link:
-                        st.write(f"[법령 상세보기]({link})")
+    esc = html.escape
+    html_parts = []
+    html_parts.append('<div id="search-flyout">')
+    html_parts.append('<h3>📚 통합 검색 결과</h3>')
+    html_parts.append('<details open><summary style="cursor:pointer;font-weight:600">열기/접기</summary>')
 
-    st.markdown("</div>", unsafe_allow_html=True)
+    for label, pack in results.items():
+        items = pack.get("items") or []
+        err   = pack.get("error")
+
+        html_parts.append(f'<h4 style="margin:10px 0 6px">🔎 {esc(label)}</h4>')
+
+        if err:
+            html_parts.append(f'<div style="opacity:.85">⚠️ {esc(err)}</div>')
+            continue
+        if not items:
+            html_parts.append('<div style="opacity:.65">검색 결과 없음</div>')
+            continue
+
+        # 결과 카드 목록
+        for i, law in enumerate(items, 1):
+            nm   = esc(law.get("법령명",""))
+            kind = esc(law.get("법령구분",""))
+            dept = esc(law.get("소관부처명",""))
+            eff  = esc(law.get("시행일자","-"))
+            pub  = esc(law.get("공포일자","-"))
+            link = law.get("법령상세링크")
+
+            html_parts.append('<div style="border:1px solid rgba(127,127,127,.25);'
+                              'border-radius:12px;padding:10px 12px;margin:8px 0">')
+            html_parts.append(f'<div style="font-weight:700">{i}. {nm} '
+                              f'<span style="opacity:.7">({kind})</span></div>')
+            html_parts.append(f'<div style="margin-top:4px">소관부처: {dept}</div>')
+            html_parts.append(f'<div>시행일자: {eff} / 공포일자: {pub}</div>')
+            if link:
+                html_parts.append(f'<div style="margin-top:6px">'
+                                  f'<a href="{esc(link)}" target="_blank">법령 상세보기</a>'
+                                  f'</div>')
+            html_parts.append('</div>')
+
+    html_parts.append('</details>')
+    html_parts.append('</div>')  # #search-flyout
+
+    st.markdown("\n".join(html_parts), unsafe_allow_html=True)
+
 
 st.markdown(
     """
