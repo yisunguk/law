@@ -39,14 +39,6 @@ MINISTRIES = [
     "국가보훈부", "인사혁신처", "원자력안전위원회", "질병관리청",
 ]
 
-# 법령 상세링크를 절대 URL로 보정
-def normalize_law_link(link: str) -> str:
-    if not link:
-        return ""
-    if link.startswith("/"):
-        return "https://www.law.go.kr" + link
-    return link
-
 # ==============================
 # 추천 키워드 (탭별) + 헬퍼
 # ==============================
@@ -1122,7 +1114,7 @@ if user_q:
     _inject_right_rail_css()
     render_search_flyout(user_q, num_rows=3)
 
-    # ✅ 왼쪽: GPT 답변 말풍선 (기존 로직 그대로)
+    # ✅ 왼쪽: GPT 답변 말풍선
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_text, buffer = "", ""
@@ -1148,21 +1140,33 @@ if user_q:
             tpl = choose_output_template(user_q)
             full_text = f"{tpl}\n\n{law_ctx}\n\n(오류: {e})"
 
+        # --- 최종 후처리 ---
         final_text = _normalize_text(full_text)
         final_text = fix_links_with_lawdata(final_text, collected_laws)
         final_text = _dedupe_blocks(final_text)
 
-        placeholder.empty()
-        with placeholder.container():
-            render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
+        # --- 빈 답변 가드 ---
+        if not final_text.strip():
+            # 스트리밍 중 띄운 문구만 지우고, 빈 말풍선은 남기지 않음
+            placeholder.empty()
+            st.info("현재 모델이 오프라인이거나 오류로 인해 답변을 생성하지 못했습니다.")
+        else:
+            # 로딩/중간 출력 지우기 → 최종 말풍선 렌더
+            placeholder.empty()
+            with placeholder.container():
+                render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
 
-        # 대화 기록 저장
-        st.session_state.messages.append({
-            "role":"assistant","content": final_text, "law": collected_laws,
-            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        })
+            # 대화 기록 저장 (내용 있을 때만)
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": final_text,
+                    "law": collected_laws,
+                    "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            )
 
-# 4) ChatBar (맨 아래 고정)
+   # 4) ChatBar (맨 아래 고정)
 submitted, typed_text, files = chatbar(
     placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
     accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
