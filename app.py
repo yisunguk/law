@@ -1139,35 +1139,58 @@ with st.container():
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
 # ===============================
 if user_q:
-    # ✅ 오른쪽 플로팅 패널 삽입 (레이아웃 완전 분리)
     _inject_right_rail_css()
     render_search_flyout(user_q, num_rows=3)
 
-    # ✅ 왼쪽: GPT 답변 말풍선
-    with st.chat_message("assistant"):
-        placeholder = st.empty()
-        full_text, buffer = "", ""
-        collected_laws = []
-        try:
-            placeholder.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다..._")
-            for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
-                if kind == "delta":
-                    buffer += payload or ""
-                    if len(buffer) >= 200:
-                        full_text += buffer; buffer = ""
-                        placeholder.markdown(_normalize_text(full_text[-1500:]))
-                elif kind == "final":
-                    full_text += (payload or "")
-                    collected_laws = law_list or []
-                    break
-            if buffer:
-                full_text += buffer
-        except Exception as e:
-            laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
-            collected_laws = laws
-            law_ctx = format_law_context(laws)
-            tpl = choose_output_template(user_q)
-            full_text = f"{tpl}\n\n{law_ctx}\n\n(오류: {e})"
+    # ✅ 엔진 준비됐을 때만 말풍선 컨테이너 생성
+    if client and AZURE:
+        with st.chat_message("assistant"):
+            placeholder = st.empty()
+            full_text, buffer = "", ""
+            collected_laws = []
+            try:
+                placeholder.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다..._")
+                for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
+                    if kind == "delta":
+                        buffer += payload or ""
+                        if len(buffer) >= 200:
+                            full_text += buffer; buffer = ""
+                            placeholder.markdown(_normalize_text(full_text[-1500:]))
+                    elif kind == "final":
+                        full_text += (payload or "")
+                        collected_laws = law_list or []
+                        break
+                if buffer:
+                    full_text += buffer
+            except Exception as e:
+                laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
+                collected_laws = laws
+                law_ctx = format_law_context(laws)
+                tpl = choose_output_template(user_q)
+                full_text = f"{tpl}\n\n{law_ctx}\n\n(오류: {e})"
+
+            final_text = _normalize_text(full_text)
+            final_text = fix_links_with_lawdata(final_text, collected_laws)
+            final_text = _dedupe_blocks(final_text)
+
+            # ✅ 빈 결과면 말풍선 없이 종료
+            if not final_text.strip():
+                placeholder.empty()
+            else:
+                placeholder.empty()
+                with placeholder.container():
+                    render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
+
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": final_text,
+                    "law": collected_laws,
+                    "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                })
+    else:
+        # ✅ 엔진이 없으면 일반 안내만 (채팅 말풍선 아님)
+        st.info("답변 엔진이 아직 설정되지 않았습니다. API 키/엔드포인트를 확인해 주세요.")
+
 
         # --- 최종 후처리 ---
         final_text = _normalize_text(full_text)
