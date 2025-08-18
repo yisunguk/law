@@ -381,7 +381,10 @@ import ssl
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
 
-MOLEG_BASE = "https://apis.data.go.kr/1170000"
+MOLEG_BASES = [
+    "https://apis.data.go.kr/1170000",
+    "http://apis.data.go.kr/1170000",
+]
 
 class TLS12HttpAdapter(HTTPAdapter):
     """Force TLS 1.2 handshake (일부 환경의 SSL 충돌 회피용)."""
@@ -420,19 +423,34 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
         "pageNo": max(1, int(page_no)),
     }
 
-    # 2) 호출 (TLS1.2 강제 세션 사용)
-    try:
-        sess = requests.Session()
-        sess.mount("https://", TLS12HttpAdapter())
-        resp = sess.get(
-            endpoint,
-            params=params,
-            timeout=15,
-            headers={"User-Agent": "Mozilla/5.0"}
-        )
-        resp.raise_for_status()
-    except Exception as e:
-        return [], endpoint, f"법제처 API 연결 실패: {e}"
+    # 2) 호출 (HTTPS 우선 → SSLError 시 HTTP로 폴백)
+    last_err = None
+    resp = None
+    for base in MOLEG_BASES:   # ["https://apis.data.go.kr/1170000", "http://apis.data.go.kr/1170000"]
+        endpoint = f"{base}/{target}/{target}SearchList.do"
+        try:
+            sess = requests.Session()
+            if base.startswith("https://"):
+                sess.mount("https://", TLS12HttpAdapter())
+            resp = sess.get(
+                endpoint,
+                params=params,
+                timeout=15,
+                headers={"User-Agent": "Mozilla/5.0"},
+                allow_redirects=True,
+            )
+            resp.raise_for_status()
+            break  # ✅ 성공했으면 반복 종료
+        except requests.exceptions.SSLError as e:
+            last_err = e
+            continue  # HTTPS 실패 → HTTP로 재시도
+        except Exception as e:
+            last_err = e
+            continue
+
+    if resp is None:
+        return [], None, f"법제처 API 연결 실패: {last_err}"
+
 
     # 3) XML 파싱 + 에러코드 확인(00=성공)
     try:
