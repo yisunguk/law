@@ -295,7 +295,24 @@ def load_secrets():
 
 def _henc(s: str) -> str: return up.quote((s or "").strip())
 def hangul_by_name(domain: str, name: str) -> str: return f"{_HBASE}/{_henc(domain)}/{_henc(name)}"
-def hangul_law_with_keys(name: str, keys): return f"{_HBASE}/법령/{_henc(name)}/({','.join(_henc(k) for k in keys if k)})"
+# 파일 상단에 이미 import re 되어 있음
+_ARTICLE_RE = re.compile(r"^제?\d+조(의\d+)?$")
+
+def hangul_law_with_keys(name: str, keys) -> str:
+    """키워드/조문을 받아 '확실히 열리는' law.go.kr 검색 링크를 만든다."""
+    keys = [k for k in (keys or []) if k]
+    # 조문이 있으면 "민법 제839조" 형태로 검색
+    art = next((k for k in keys if _ARTICLE_RE.match(k)), None)
+    if art:
+        q = f"{name} {art}"
+        return build_fallback_search("law", q)
+    # 조문이 아니면 키워드들을 묶어서 검색
+    if keys:
+        q = " ".join([name] + keys)
+        return build_fallback_search("law", q)
+    # 키워드가 전혀 없으면 법령명 기본 주소(법령명 검색 진입)
+    return build_fallback_search("law", name)
+
 def hangul_law_article(name: str, subpath: str) -> str: return f"{_HBASE}/법령/{_henc(name)}/{_henc(subpath)}"
 def hangul_admrul_with_keys(name: str, issue_no: str, issue_date: str) -> str: return f"{_HBASE}/행정규칙/{_henc(name)}/({_henc(issue_no)},{_henc(issue_date)})"
 def hangul_ordin_with_keys(name: str, no: str, date: str) -> str: return f"{_HBASE}/자치법규/{_henc(name)}/({_henc(no)},{_henc(date)})"
@@ -328,7 +345,16 @@ def build_scourt_link(case_no: str) -> str:
 def is_reachable(url: str) -> bool:
     try:
         r = requests.get(url, timeout=8, allow_redirects=True)
-        return 200 <= r.status_code < 400
+        # 상태코드 체크
+        if not (200 <= r.status_code < 400):
+            return False
+        # law.go.kr의 한글주소 오류 페이지 텍스트를 추가로 감지
+        text = r.text[:4000]
+        bad_signals = [
+            "해당 한글주소명을 찾을 수 없습니다",
+            "한글 법령주소를 확인해 주시기 바랍니다",
+        ]
+        return not any(sig in text for sig in bad_signals)
     except Exception:
         return False
 
