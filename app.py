@@ -803,18 +803,35 @@ def extract_law_candidates_llm(q: str) -> list[str]:
         resp = client.chat.completions.create(
             model=AZURE["deployment"],
             messages=[
-                {"role":"system","content": SYSTEM_EXTRACT},
-                {"role":"user","content": q.strip()},
+                {"role": "system", "content": SYSTEM_EXTRACT},
+                {"role": "user", "content": q.strip()},
             ],
             temperature=0.0,
             max_tokens=128,
         )
         txt = (resp.choices[0].message.content or "").strip()
+
+        # --- 추가: 코드펜스/잡텍스트 제거 ---
+        if "```" in txt:
+            import re
+            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", txt)
+            if m:
+                txt = m.group(1).strip()
+
+        if not txt.startswith("{"):
+            import re
+            m = re.search(r"\{[\s\S]*\}", txt)
+            if m:
+                txt = m.group(0)
+
+        # --- JSON 파싱 ---
         data = json.loads(txt)
         laws = [s.strip() for s in data.get("laws", []) if s.strip()]
         return laws[:3]
+
     except Exception:
         return []
+
 
 
 # 간단 폴백(예비 — 도구 모드 기본이므로 최소화)
@@ -1088,15 +1105,6 @@ def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
             final_text = extract_text(resp2["resp"])
             yield ("final", final_text, [])
 
-
-def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
-    # ✅ 오프라인/미설정 가드 ...
-    # (생략)
-
-    msgs = [
-        {"role":"system","content": LEGAL_SYS},
-        {"role":"user","content": user_q},
-    ]
 
     # === add: LLM 호출 전에 '여러 법령 컨텍스트' 프라이머를 시스템 메시지로 주입 ===
     try:
