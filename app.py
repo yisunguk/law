@@ -475,7 +475,6 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
         }
     return results
 
-
     except Exception as e:
         return [], endpoint, f"응답 파싱 실패: {e}"
 
