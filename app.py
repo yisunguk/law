@@ -11,6 +11,19 @@ import streamlit as st
 import streamlit.components.v1 as components
 from openai import AzureOpenAI
 
+# TLS 1.2 강제용 어댑터 정의
+from requests.adapters import HTTPAdapter
+from urllib3.util.ssl_ import create_urllib3_context
+
+class TLS12HttpAdapter(HTTPAdapter):
+    """TLS1.2 only adapter for requests"""
+    def init_poolmanager(self, *args, **kwargs):
+        context = create_urllib3_context()
+        context.set_ciphers('HIGH:!aNULL:!eNULL:!SSLv2:!SSLv3')
+        kwargs['ssl_context'] = context
+        return super().init_poolmanager(*args, **kwargs)
+
+
 from chatbar import chatbar
 # (첨부 파싱은 나중 확장용으로 import 유지)
 from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_txt, sanitize
@@ -478,14 +491,17 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
         normalized = []
         for el in items:
             normalized.append({
-                "법령명": (el.findtext("법령명한글") or el.findtext("자치법규명") or el.findtext("조약명") or "").strip(),
-                "법령약칭명": (el.findtext("법령약칭명") or "").strip(),
-                "소관부처명": (el.findtext("소관부처명") or "").strip(),
-                "법령구분명": (el.findtext("법령구분명") or el.findtext("자치법규종류") or el.findtext("조약구분명") or "").strip(),
-                "시행일자": (el.findtext("시행일자") or "").strip(),
-                "공포일자": (el.findtext("공포일자") or "").strip(),
-                "법령상세링크": (el.findtext("법령상세링크") or el.findtext("자치법규상세링크") or el.findtext("조약상세링크") or "").strip(),
-            })
+               "법령명": (el.findtext("법령명한글") or el.findtext("자치법규명") or el.findtext("조약명") or "").strip(),
+               "법령약칭명": (el.findtext("법령약칭명") or "").strip(),
+               "소관부처명": (el.findtext("소관부처명") or "").strip(),
+               "법령구분명": (el.findtext("법령구분명") or el.findtext("자치법규종류") or el.findtext("조약구분명") or "").strip(),
+               "시행일자": (el.findtext("시행일자") or "").strip(),
+               "공포일자": (el.findtext("공포일자") or "").strip(),
+          # ✅ 절대 URL로 교정
+               "법령상세링크": normalize_law_link(
+                   (el.findtext("법령상세링크") or el.findtext("자치법규상세링크") or el.findtext("조약상세링크") or "").strip()
+    ),
+})
 
         return normalized, last_endpoint, None
 
