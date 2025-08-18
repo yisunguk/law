@@ -679,28 +679,9 @@ def animate_law_results(law_data: list[dict], delay: float = 1.0):
 # =============================
 # 출력 템플릿 · 분류기
 # =============================
-ROUTE_SYS = "질문을 다음 라벨 중 하나로 분류: [단순, 민사, 형사, 행정노무, 복합]. 반드시 라벨 한 단어만 출력."
-def route_label(q: str) -> str:
-    if not client or not AZURE:
-        t = (q or "").lower()
-        if any(k in t for k in ("형사","고소","고발","벌금","기소","수사","압수수색","사기","폭행","절도","음주","약취","보이스피싱")): return "형사"
-        if any(k in t for k in ("민사","손해배상","채무","계약","임대차","유치권","가압류","가처분","소송가액","지연손해금","불법행위")): return "민사"
-        if any(k in t for k in ("행정심판","과징금","과태료","허가","인가","취소처분","해임","징계","해고","근로","연차","퇴직금","산재")): return "행정노무"
-        return "단순"
-    msgs = [{"role":"system","content":ROUTE_SYS},{"role":"user","content": q or ""}]
-    try:
-        resp = client.chat.completions.create(model=AZURE["deployment"], messages=msgs, temperature=0.0, max_tokens=10, stream=False)
-        return (resp.choices[0].message.content or "단순").strip()
-    except Exception:
-        return "단순"
+def choose_output_template(q: str) -> str:
+    return "가능하면 결론·근거·출처를 포함해 간단히 정리하세요.\n"
 
-TEMPLATES = {
-"형사": "## 결론\n## 사실관계(확정/가정 구분)\n## 적용 법령(조문 직접 인용)\n## 판례 요지\n## 법리분석(구성요건·위법성·책임)\n## 절차·전략\n## 출처 링크\n",
-"민사": "## 결론\n## 사실관계(확정/가정 구분)\n## 적용 법령(조문 직접 인용)\n## 판례 요지\n## 법리분석(청구원인·항변·증명책임)\n## 절차·전략\n## 출처 링크\n",
-"행정노무": "## 결론\n## 사실관계(확정/가정 구분)\n## 관련 법령·행정규칙\n## 판례/해석례 요지\n## 법리분석(처분성·적법절차·비례원칙)\n## 구제수단\n## 출처 링크\n",
-"복합": "## 결론\n## 사실관계(확정/가정 구분)\n## 적용 법령 세트(조문 인용)\n## 판례/해석례 교차 요지\n## 쟁점별 법리분석(주장/반박/평가)\n## 절차·전략\n## 출처 링크\n",
-"단순": "## 결론\n## 근거(조문/해석례 링크)\n## 다음 확인이 필요한 사실(질문 2~3개)\n## 출처 링크\n"
-}
 def choose_output_template(q: str) -> str:
     label = route_label(q)
     return TEMPLATES.get(label, TEMPLATES["단순"])
