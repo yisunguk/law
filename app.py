@@ -391,27 +391,29 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
 
     endpoint = f"{MOLEG_BASE}/{target}/{target}SearchList.do"
 
-     # _call_moleg_list(...) 내부
+# serviceKey 무해화
 api_key = (LAW_API_KEY or "").strip().strip('"').strip("'")
 if "%" in api_key and any(t in api_key.upper() for t in ("%2B", "%2F", "%3D")):
     try:
-        api_key = up.unquote(api_key)   # URL 디코딩 1회
+        api_key = up.unquote(api_key)
     except Exception:
         pass
 
 params = {
-    "serviceKey": api_key,  # ← 여기서 api_key 사용 (원래 LAW_API_KEY에서 파생)
+    "serviceKey": api_key,
     "target": target,
     "query": query or "*",
     "numOfRows": max(1, min(10, int(num_rows))),
     "pageNo": max(1, int(page_no)),
 }
-    # 호출
-    try:
-        resp = requests.get(endpoint, params=params, timeout=15)
-        resp.raise_for_status()
-    except Exception as e:
-        return [], endpoint, f"법제처 API 연결 실패: {e}"
+
+# 호출  ← 여기서부터 'params ='와 같은 들여쓰기 레벨!
+try:
+    resp = requests.get(endpoint, params=params, timeout=15)
+    resp.raise_for_status()
+except Exception as e:
+    return [], endpoint, f"법제처 API 연결 실패: {e}"
+
 
     # XML 파싱 + 에러코드 확인(00=성공)
     try:
