@@ -535,7 +535,7 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
             return [], last_endpoint, f"법제처 API 오류 [{result_code}]: {result_msg or 'fail'}"
 
         item_tags = {
-            "law": ["law"], "admrul": ["admrul"], "ordin": ["law"],
+            "law": ["law"], "admrul": ["admrul"], "ordin": ["ordin"],
             "trty": ["Trty","trty"], "expc":["expc"], "detc":["Detc","detc"],
             "licbyl":["licbyl"], "lstrm":["lstrm"],
         }.get(target, ["law"])
@@ -562,14 +562,36 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
     except Exception as e:
         return [], last_endpoint, f"응답 파싱 실패: {e}"
 
+# 통합 미리보기 전용: 과한 문장부호/따옴표 제거 + '법령명 (제n조)'만 추출
+def _clean_query_for_api(q: str) -> str:
+    q = (q or "").strip()
+    q = re.sub(r'[“”"\'‘’.,!?()<>\\[\\]{}:;~…]', ' ', q)
+    q = re.sub(r'\\s+', ' ', q).strip()
+    # 법령명(OO법/령/규칙/조례) + (제n조) 패턴
+    name = re.search(r'([가-힣A-Za-z0-9·\\s]{1,40}?(법|령|규칙|조례))', q)
+    article = re.search(r'제\\d+조(의\\d+)?', q)
+    if name and article: return f"{name.group(0).strip()} {article.group(0)}"
+    if name: return name.group(0).strip()
+    return q
+
+
 # 통합 검색(Expander용)
 def find_all_law_data(query: str, num_rows: int = 3):
+    q = _clean_query_for_api(query)
     targets = {"법령": "law", "행정규칙": "admrul", "자치법규": "ordin", "조약": "trty"}
     results = {}
     for label, target in targets.items():
-        try: laws, endpoint, err = _call_moleg_list(target, query, num_rows=num_rows)
-        except Exception as e: laws, endpoint, err = [], None, f"호출 오류: {e}"
-        results[label] = {"items": laws, "endpoint": endpoint, "error": err}
+        try:
+            items, endpoint, err = _call_moleg_list(target, q, num_rows=num_rows)
+            # 미리보기 한정: 전부 비면 법령명만/첫 토큰으로 한 번 더 시도
+            if not items and " " in q:
+                m = re.search(r'([가-힣A-Za-z0-9·\\s]{1,40}?(법|령|규칙|조례))', q)
+                q2 = (m.group(0).strip() if m else q.split(" ")[0]).strip()
+                if q2 and q2 != q:
+                    items, endpoint, err = _call_moleg_list(target, q2, num_rows=num_rows)
+        except Exception as e:
+            items, endpoint, err = [], None, f"호출 오류: {e}"
+        results[label] = {"items": items, "endpoint": endpoint, "error": err}
     return results
 
 # 캐시된 단일 법령 검색
@@ -638,7 +660,7 @@ LEGAL_SYS = (
 "당신은 대한민국 변호사다. 답변은 **법률 자문 메모** 형식으로 간결하게 작성한다.\n"
 "출력 규칙(강제):\n"
 "- 내부적으로 의도 분석/검색/재검색은 수행하되, **그 절차를 출력하지 말 것**.\n"
-"- 다음 4개 섹션만 출력: 1) 주요내용 2) 근거 요약(조문 1~2문장 인용 가능) 3) 실무 포인트/조치 4) 출처 링크[법령명](URL).\n"
+"- 형식은 사용자의 의도에 맞게 내용을 작성하되 근거 요약(조문 1~2문장 인용 가능), 출처 링크[법령명](URL)는 제공해야 함.\n"
 "- 같은 내용이나 섹션을 **반복 출력 금지**. 메모는 한 번만 쓴다.\n"
 "- 링크는 반드시 www.law.go.kr(또는 glaw.scourt.go.kr)만 사용. 상대경로는 절대URL로.\n"
 "- 확실치 않으면 단정 금지, ‘추가 확인 필요’ 사유를 짧게 적시.\n"
@@ -1031,40 +1053,31 @@ with st.container():
 # 🔻 어시스턴트 답변 출력은 반드시 user_q가 있을 때만 실행 (초기 빈 말풍선 방지)
 if user_q:
     # (선택) 통합 미리보기 — 사용자 경험 유지
+ # 📚 통합 검색 결과 보기
  with st.expander("📚 통합 검색 결과 보기"):
     results = find_all_law_data(user_q, num_rows=3)
+
     for label, pack in results.items():
-        items = pack.get("items", [])
-        err2 = pack.get("error")
-        ep = pack.get("endpoint")
-
         st.subheader(f"🔎 {label}")
+        items = pack.get("items") or []
+        err2 = pack.get("error")
 
-        # ✅ API 호출 내역 표시
-        if ep:
-            st.caption("API 호출 엔드포인트")
-            st.code(ep, language="text")
-            st.caption("요청 파라미터")
-            st.json({
-                "target": {"법령":"law","행정규칙":"admrul","자치법규":"ordin","조약":"trty"}[label],
-                "query": user_q,
-                "numOfRows": 3,
-                "pageNo": 1
-            })
-
-        # 기존 로직
         if err2:
             st.warning(err2)
-        elif not items:
+            continue
+
+        if not items:
             st.caption("검색 결과 없음")
-        else:
-            for i, law in enumerate(items, 1):
-                st.markdown(
-                    f"**{i}. {law['법령명']}** ({law['법령구분명']}) - "
-                    f"소관:{law['소관부처명']} / 시행:{law['시행일자']} / 공포:{law['공포일자']}"
-                )
-                if law.get("법령상세링크"):
-                    st.write(f"[법령 상세보기]({law['법령상세링크']})")
+            continue
+
+        for i, law in enumerate(items, 1):
+            st.markdown(
+                f"**{i}. {law['법령명']}** ({law.get('법령구분','')}) - "
+                f"소관:{law.get('소관부처명','')} / 시행:{law.get('시행일자','')} / 공포:{law.get('공포일자','')}"
+            )
+            if law.get("법령상세링크"):
+                st.write(f"[법령 상세보기]({law['법령상세링크']})")
+
 
 
     # ▶ 본문 답변: LLM 도구(함수콜) 기반
