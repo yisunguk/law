@@ -398,16 +398,13 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
     """
     국가법령정보 공유서비스 목록 API 공통 호출.
     target: law | admrul | ordin | trty | expc | detc | licbyl | lstrm
-    - 인증: serviceKey (REST/GET)
+    - 인증: serviceKey
     - 응답: XML (resultCode/resultMsg 포함)
     """
-    # 시크릿 키 검증
     if not LAW_API_KEY:
         return [], None, "LAW_API_KEY 미설정"
 
-    endpoint = f"{MOLEG_BASE}/{target}/{target}SearchList.do"
-
-    # 1) serviceKey 무해화: 양쪽 따옴표/공백 제거 + (이미 인코딩돼 있으면) 1회 디코딩
+    # API Key 무해화 (따옴표 제거 + 인코딩된 경우 디코딩)
     api_key = (LAW_API_KEY or "").strip().strip('"').strip("'")
     if "%" in api_key and any(t in api_key.upper() for t in ("%2B", "%2F", "%3D")):
         try:
@@ -416,18 +413,21 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
             pass
 
     params = {
-        "serviceKey": api_key,                       # 가이드: serviceKey 사용
-        "target": target,                            # 고정값
-        "query": query or "*",                       # 기본값 *
-        "numOfRows": max(1, min(10, int(num_rows))), # 최대 10건
+        "serviceKey": api_key,
+        "target": target,
+        "query": query or "*",
+        "numOfRows": max(1, min(10, int(num_rows))),
         "pageNo": max(1, int(page_no)),
     }
 
     # 2) 호출 (HTTPS 우선 → SSLError 시 HTTP로 폴백)
     last_err = None
     resp = None
+    last_endpoint = None
+
     for base in MOLEG_BASES:   # ["https://apis.data.go.kr/1170000", "http://apis.data.go.kr/1170000"]
-      
+        endpoint = f"{base}/{target}/{target}SearchList.do"
+        last_endpoint = endpoint
         try:
             sess = requests.Session()
             if base.startswith("https://"):
@@ -440,59 +440,58 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
                 allow_redirects=True,
             )
             resp.raise_for_status()
-            break  # ✅ 성공했으면 반복 종료
+            break  # ✅ 성공하면 루프 종료
         except requests.exceptions.SSLError as e:
             last_err = e
-            continue  # HTTPS 실패 → HTTP로 재시도
+            continue  # HTTPS 실패 → HTTP 재시도
         except Exception as e:
             last_err = e
             continue
 
     if resp is None:
-        return [], None, f"법제처 API 연결 실패: {last_err}"
-
+        return [], last_endpoint, f"법제처 API 연결 실패: {last_err}"
 
     # 3) XML 파싱 + 에러코드 확인(00=성공)
     try:
         root = ET.fromstring(resp.text)
         result_code = (root.findtext(".//resultCode") or "").strip()
-        result_msg  = (root.findtext(".//resultMsg") or "").strip()
+        result_msg = (root.findtext(".//resultMsg") or "").strip()
         if result_code and result_code != "00":
-            return [], endpoint, f"법제처 API 오류 [{result_code}]: {result_msg or 'fail'}"
+            return [], last_endpoint, f"법제처 API 오류 [{result_code}]: {result_msg or 'fail'}"
 
-        # 타깃별 item 태그
+        # 타깃별 item 태그 정의
         item_tags = {
-            "law":    ["law"],                 # 법령
-            "admrul": ["admrul"],              # 행정규칙
-            "ordin":  ["law"],                 # 자치법규는 'law' 태그로 제공
-            "trty":   ["Trty", "trty"],        # 조약
-            "expc":   ["expc"],
-            "detc":   ["Detc", "detc"],
+            "law": ["law"],
+            "admrul": ["admrul"],
+            "ordin": ["law"],          # 자치법규도 law 태그로 제공됨
+            "trty": ["Trty", "trty"],
+            "expc": ["expc"],
+            "detc": ["Detc", "detc"],
             "licbyl": ["licbyl"],
-            "lstrm":  ["lstrm"],
+            "lstrm": ["lstrm"],
         }.get(target, ["law"])
 
         items = []
         for tag in item_tags:
             items.extend(root.findall(f".//{tag}"))
 
-        # 4) 공통 스키마로 정규화
         normalized = []
         for el in items:
             normalized.append({
-                "법령명":       (el.findtext("법령명한글") or el.findtext("자치법규명") or el.findtext("조약명") or "").strip(),
-                "법령약칭명":   (el.findtext("법령약칭명") or "").strip(),
-                "소관부처명":   (el.findtext("소관부처명") or "").strip(),
-                "법령구분명":   (el.findtext("법령구분명") or el.findtext("자치법규종류") or el.findtext("조약구분명") or "").strip(),
-                "시행일자":     (el.findtext("시행일자") or "").strip(),
-                "공포일자":     (el.findtext("공포일자") or "").strip(),
+                "법령명": (el.findtext("법령명한글") or el.findtext("자치법규명") or el.findtext("조약명") or "").strip(),
+                "법령약칭명": (el.findtext("법령약칭명") or "").strip(),
+                "소관부처명": (el.findtext("소관부처명") or "").strip(),
+                "법령구분명": (el.findtext("법령구분명") or el.findtext("자치법규종류") or el.findtext("조약구분명") or "").strip(),
+                "시행일자": (el.findtext("시행일자") or "").strip(),
+                "공포일자": (el.findtext("공포일자") or "").strip(),
                 "법령상세링크": (el.findtext("법령상세링크") or el.findtext("자치법규상세링크") or el.findtext("조약상세링크") or "").strip(),
             })
 
-        return normalized, endpoint, None
+        return normalized, last_endpoint, None
 
     except Exception as e:
-        return [], endpoint, f"응답 파싱 실패: {e}"
+        return [], last_endpoint, f"응답 파싱 실패: {e}"
+
 
 
 # =============================
