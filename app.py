@@ -867,27 +867,29 @@ with st.container():
 # 3) 방금 입력이 있었다면 맨 아래에서 스트리밍
 if user_q:
     with st.spinner("🔎 법제처에서 관련 법령 검색 중..."):
-    law_data, used_endpoint, err, search_mode = find_law_with_fallback(
-        user_q, num_rows=st.session_state.settings["num_rows"]
-    )
-    # ✅ 여기부터 통합검색 미리보기 추가
-    with st.expander("📚 통합 검색 결과 보기"):
-        results = find_all_law_data(user_q, num_rows=3)
-        for label, pack in results.items():
-            items, err2 = pack["items"], pack["error"]
-            st.subheader(f"🔎 {label}")
-            if err2:
-                st.warning(err2)
-            elif not items:
-                st.caption("검색 결과 없음")
-            else:
-                for i, law in enumerate(items, 1):
-                    st.markdown(
-                        f"**{i}. {law['법령명']}** ({law['법령구분명']})"
-                        f" - 소관: {law['소관부처명']} / 시행: {law['시행일자']} / 공포: {law['공포일자']}"
-                    )
-                    if law['법령상세링크']:
-                        st.write(f"[법령 상세보기]({law['법령상세링크']})")
+        law_data, used_endpoint, err, search_mode = find_law_with_fallback(
+            user_q, num_rows=st.session_state.settings["num_rows"]
+        )
+
+        # ✅ 통합검색 미리보기 블록을 여기에 추가 가능
+        with st.expander("📚 통합 검색 결과 보기"):
+            results = find_all_law_data(user_q, num_rows=3)
+            for label, pack in results.items():
+                items, err2 = pack["items"], pack["error"]
+                st.subheader(f"🔎 {label}")
+                if err2:
+                    st.warning(err2)
+                elif not items:
+                    st.caption("검색 결과 없음")
+                else:
+                    for i, law in enumerate(items, 1):
+                        st.markdown(
+                            f"**{i}. {law['법령명']}** ({law['법령구분명']})"
+                            f" - 소관: {law['소관부처명']} / 시행: {law['시행일자']} / 공포: {law['공포일자']}"
+                        )
+                        if law['법령상세링크']:
+                            st.write(f"[법령 상세보기]({law['법령상세링크']})")
+
 
     # ▶ 내부 디버깅용 로그만 남기고 화면에는 노출하지 않음
     if used_endpoint:
