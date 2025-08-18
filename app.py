@@ -374,48 +374,67 @@ if "_last_user_nonce" not in st.session_state: st.session_state["_last_user_nonc
 # =============================
 # MOLEG API (Law Search) — unified, spec-compliant
 # =============================
+import requests
 import xml.etree.ElementTree as ET
 import urllib.parse as up
+import ssl
+from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import PoolManager
 
 MOLEG_BASE = "https://apis.data.go.kr/1170000"
+
+class TLS12HttpAdapter(HTTPAdapter):
+    """Force TLS 1.2 handshake (일부 환경의 SSL 충돌 회피용)."""
+    def init_poolmanager(self, *args, **kwargs):
+        ctx = ssl.create_default_context()
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.maximum_version = ssl.TLSVersion.TLSv1_2
+        self.poolmanager = PoolManager(*args, ssl_context=ctx, **kwargs)
 
 def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int = 1):
     """
     국가법령정보 공유서비스 목록 API 공통 호출.
     target: law | admrul | ordin | trty | expc | detc | licbyl | lstrm
-    - 인증: serviceKey
-    - 방법: REST(GET), XML 응답 (resultCode/resultMsg 포함)
+    - 인증: serviceKey (REST/GET)
+    - 응답: XML (resultCode/resultMsg 포함)
     """
+    # 시크릿 키 검증
     if not LAW_API_KEY:
         return [], None, "LAW_API_KEY 미설정"
 
     endpoint = f"{MOLEG_BASE}/{target}/{target}SearchList.do"
 
-# serviceKey 무해화
-api_key = (LAW_API_KEY or "").strip().strip('"').strip("'")
-if "%" in api_key and any(t in api_key.upper() for t in ("%2B", "%2F", "%3D")):
+    # 1) serviceKey 무해화: 양쪽 따옴표/공백 제거 + (이미 인코딩돼 있으면) 1회 디코딩
+    api_key = (LAW_API_KEY or "").strip().strip('"').strip("'")
+    if "%" in api_key and any(t in api_key.upper() for t in ("%2B", "%2F", "%3D")):
+        try:
+            api_key = up.unquote(api_key)
+        except Exception:
+            pass
+
+    params = {
+        "serviceKey": api_key,                       # 가이드: serviceKey 사용
+        "target": target,                            # 고정값
+        "query": query or "*",                       # 기본값 *
+        "numOfRows": max(1, min(10, int(num_rows))), # 최대 10건
+        "pageNo": max(1, int(page_no)),
+    }
+
+    # 2) 호출 (TLS1.2 강제 세션 사용)
     try:
-        api_key = up.unquote(api_key)
-    except Exception:
-        pass
+        sess = requests.Session()
+        sess.mount("https://", TLS12HttpAdapter())
+        resp = sess.get(
+            endpoint,
+            params=params,
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        return [], endpoint, f"법제처 API 연결 실패: {e}"
 
-params = {
-    "serviceKey": api_key,
-    "target": target,
-    "query": query or "*",
-    "numOfRows": max(1, min(10, int(num_rows))),
-    "pageNo": max(1, int(page_no)),
-}
-
-# 호출  ← 여기서부터 'params ='와 같은 들여쓰기 레벨!
-try:
-    resp = requests.get(endpoint, params=params, timeout=15)
-    resp.raise_for_status()
-except Exception as e:
-    return [], endpoint, f"법제처 API 연결 실패: {e}"
-
-
-    # XML 파싱 + 에러코드 확인(00=성공)
+    # 3) XML 파싱 + 에러코드 확인(00=성공)
     try:
         root = ET.fromstring(resp.text)
         result_code = (root.findtext(".//resultCode") or "").strip()
@@ -425,10 +444,10 @@ except Exception as e:
 
         # 타깃별 item 태그
         item_tags = {
-            "law":    ["law"],               # 법령 목록
-            "admrul": ["admrul"],            # 행정규칙 목록
-            "ordin":  ["law"],               # 자치법규는 item 태그명이 'law'
-            "trty":   ["Trty", "trty"],      # 조약
+            "law":    ["law"],                 # 법령
+            "admrul": ["admrul"],              # 행정규칙
+            "ordin":  ["law"],                 # 자치법규는 'law' 태그로 제공
+            "trty":   ["Trty", "trty"],        # 조약
             "expc":   ["expc"],
             "detc":   ["Detc", "detc"],
             "licbyl": ["licbyl"],
@@ -439,7 +458,7 @@ except Exception as e:
         for tag in item_tags:
             items.extend(root.findall(f".//{tag}"))
 
-        # 화면에서 재사용하기 쉬운 공통 스키마로 정규화
+        # 4) 공통 스키마로 정규화
         normalized = []
         for el in items:
             normalized.append({
@@ -456,6 +475,7 @@ except Exception as e:
 
     except Exception as e:
         return [], endpoint, f"응답 파싱 실패: {e}"
+
 
 # =============================
 # MOLEG API 통합 검색
