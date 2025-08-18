@@ -39,6 +39,15 @@ MINISTRIES = [
     "국가보훈부", "인사혁신처", "원자력안전위원회", "질병관리청",
 ]
 
+# 법령 상세링크를 절대 URL로 보정
+def normalize_law_link(link: str) -> str:
+    if not link:
+        return ""
+    if link.startswith("/"):
+        return "https://www.law.go.kr" + link
+    return link
+
+
 # ==============================
 # 추천 키워드 (탭별) + 헬퍼
 # ==============================
@@ -286,6 +295,10 @@ def expc_public_by_id(expc_id: str) -> str: return f"https://www.law.go.kr/LSW/e
 def lstrm_public_by_id(trm_seqs: str) -> str: return f"https://www.law.go.kr/LSW/lsTrmInfoR.do?trmSeqs={up.quote(trm_seqs)}"
 def licbyl_file_download(fl_seq: str) -> str: return f"https://www.law.go.kr/LSW/flDownload.do?flSeq={up.quote(fl_seq)}"
 
+def make_law_link(law_name: str, mst_id: str) -> str:
+    """MST 기반 법령 상세 링크 생성"""
+    return f"https://www.law.go.kr/법령/{up.quote(law_name)}/{up.quote(mst_id)}"
+
 def extract_case_no(text: str) -> str | None:
     if not text: return None
     m = _CASE_NO_RE.search(text.replace(" ", ""))
@@ -511,16 +524,19 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
         normalized = []
         for el in items:
             normalized.append({
-                "법령명":       (el.findtext("법령명한글") or el.findtext("자치법규명") or el.findtext("조약명") or "").strip(),
-                "법령약칭명":   (el.findtext("법령약칭명") or "").strip(),
-                "소관부처명":   (el.findtext("소관부처명") or "").strip(),
-                "법령구분명":   (el.findtext("법령구분명") or el.findtext("자치법규종류") or el.findtext("조약구분명") or "").strip(),
-                "시행일자":     (el.findtext("시행일자") or "").strip(),
-                "공포일자":     (el.findtext("공포일자") or "").strip(),
+                "법령명": (el.findtext("법령명한글") or el.findtext("자치법규명") or el.findtext("조약명") or "").strip(),
+                "법령명칭ID": (el.findtext("법령명칭ID") or "").strip(),
+                "소관부처명": (el.findtext("소관부처명") or "").strip(),
+                "법령구분": (el.findtext("법령구분") or el.findtext("자치법규종류") or el.findtext("조약구분명") or "").strip(),
+                "시행일자": (el.findtext("시행일자") or "").strip(),
+                "공포일자": (el.findtext("공포일자") or "").strip(),
+                # ✅ 여기 추가 (MST 또는 법령일련번호/법령ID)
+                "MST": (el.findtext("MST") or el.findtext("법령ID") or el.findtext("법령일련번호") or "").strip(),
                 "법령상세링크": normalize_law_link(
                     (el.findtext("법령상세링크") or el.findtext("자치법규상세링크") or el.findtext("조약상세링크") or "").strip()
-                ),
-            })
+    ),
+})
+
         return normalized, last_endpoint, None
     except Exception as e:
         return [], last_endpoint, f"응답 파싱 실패: {e}"
