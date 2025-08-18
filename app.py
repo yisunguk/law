@@ -134,12 +134,18 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 .law-slide {{ border:1px solid rgba(127,127,127,.25); border-radius:12px; padding:12px 14px; margin:8px 0; }}
 [data-theme="light"] .law-slide {{ border-color:#e5e5e5; }}
 </style>
-st.markdown(
-    "<style> [data-testid='column']:nth-child(2){ position: sticky; top: 80px; } </style>",
-    unsafe_allow_html=True
-)
-
 """, unsafe_allow_html=True)
+
+st.markdown("""
+<style>
+[data-testid="column"]:nth-of-type(2) {
+  position: sticky;
+  top: 80px;
+  align-self: flex-start;
+}
+</style>
+""", unsafe_allow_html=True)
+
 
 st.markdown(
     """
