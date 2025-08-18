@@ -374,53 +374,51 @@ if "_last_user_nonce" not in st.session_state: st.session_state["_last_user_nonc
 # =============================
 # MOLEG API (Law Search) — unified, spec-compliant
 # =============================
-import urllib.parse as up
 import xml.etree.ElementTree as ET
+import urllib.parse as up
 
 MOLEG_BASE = "https://apis.data.go.kr/1170000"
 
-# 공통 호출 유틸 (필요 시 4번 통합검색 확장 용이)
 def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int = 1):
     """
+    국가법령정보 공유서비스 목록 API 공통 호출.
     target: law | admrul | ordin | trty | expc | detc | licbyl | lstrm
+    - 인증: serviceKey
+    - 방법: REST(GET), XML 응답 (resultCode/resultMsg 포함)
     """
     if not LAW_API_KEY:
         return [], None, "LAW_API_KEY 미설정"
 
-    # 엔드포인트는 가이드 명칭대로 *SearchList.do
     endpoint = f"{MOLEG_BASE}/{target}/{target}SearchList.do"
-
     params = {
-        "serviceKey": LAW_API_KEY,         # 가이드: serviceKey 인증 사용
-        "target": target,                  # 고정값 (예: law)
-        "query": query or "*",             # 기본값 *
+        "serviceKey": LAW_API_KEY,           # 인증키(URLEncode)
+        "target": target,                    # 고정값
+        "query": query or "*",               # 기본값 *
         "numOfRows": max(1, min(10, int(num_rows))),
         "pageNo": max(1, int(page_no)),
     }
 
+    # 호출
     try:
         resp = requests.get(endpoint, params=params, timeout=15)
         resp.raise_for_status()
     except Exception as e:
         return [], endpoint, f"법제처 API 연결 실패: {e}"
 
-    # XML 파싱
+    # XML 파싱 + 에러코드 확인(00=성공)
     try:
         root = ET.fromstring(resp.text)
-
-        # resultCode / resultMsg 검사 (00이어야 성공)
         result_code = (root.findtext(".//resultCode") or "").strip()
         result_msg  = (root.findtext(".//resultMsg") or "").strip()
         if result_code and result_code != "00":
-            # 가이드의 에러 정의 반영
             return [], endpoint, f"법제처 API 오류 [{result_code}]: {result_msg or 'fail'}"
 
-        # 타깃별 아이템 태그 (가이드 표기를 모두 고려)
+        # 타깃별 item 태그
         item_tags = {
-            "law":    ["law"],
-            "admrul": ["admrul"],
-            "ordin":  ["law"],      # OrdinSearch 안의 항목 태그명이 'law'로 제공됨
-            "trty":   ["Trty", "trty"],
+            "law":    ["law"],               # 법령 목록
+            "admrul": ["admrul"],            # 행정규칙 목록
+            "ordin":  ["law"],               # 자치법규는 item 태그명이 'law'
+            "trty":   ["Trty", "trty"],      # 조약
             "expc":   ["expc"],
             "detc":   ["Detc", "detc"],
             "licbyl": ["licbyl"],
@@ -431,7 +429,7 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
         for tag in item_tags:
             items.extend(root.findall(f".//{tag}"))
 
-        # 최소한 law 화면에 쓰는 공통 구조로 정규화 (법령명/부처/시행·공포/상세링크 등)
+        # 화면에서 재사용하기 쉬운 공통 스키마로 정규화
         normalized = []
         for el in items:
             normalized.append({
@@ -446,10 +444,12 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
 
         return normalized, endpoint, None
 
-    # =============================
-    # MOLEG API 통합 검색
-    # =============================
+    except Exception as e:
+        return [], endpoint, f"응답 파싱 실패: {e}"
 
+# =============================
+# MOLEG API 통합 검색
+# =============================
 def find_all_law_data(query: str, num_rows: int = 3):
     """
     하나의 질의어(query)로 법령, 행정규칙, 자치법규, 조약을 모두 검색.
@@ -460,38 +460,35 @@ def find_all_law_data(query: str, num_rows: int = 3):
         "행정규칙": "admrul",
         "자치법규": "ordin",
         "조약": "trty",
-        # 필요 시 아래도 추가 가능
+        # 필요 시 확장:
         # "법령해석례": "expc",
         # "헌재결정례": "detc",
     }
 
     results = {}
     for label, target in targets.items():
-        laws, endpoint, err = _call_moleg_list(target, query, num_rows=num_rows)
-        results[label] = {
-            "items": laws,
-            "endpoint": endpoint,
-            "error": err
-        }
+        try:
+            laws, endpoint, err = _call_moleg_list(target, query, num_rows=num_rows)
+        except Exception as e:
+            laws, endpoint, err = [], None, f"호출 오류: {e}"
+        results[label] = {"items": laws, "endpoint": endpoint, "error": err}
     return results
 
 @st.cache_data(show_spinner=False, ttl=300)
 def search_law_data(query: str, num_rows: int = 10):
-    """
-    (통일 버전) 가이드 표준에 따라 'law' 타깃을 조회.
-    향후 확장 시 _call_moleg_list()를 재사용.
-    """
+    """(표준 버전) 'law' 타깃 목록 조회. 통합검색은 find_all_law_data() 사용."""
     return _call_moleg_list("law", query, num_rows=num_rows)
 
-
-# ▶ 키워드→대표 법령 매핑으로 2차 검색 시도 (항상 API를 통해 재검색)
 def find_law_with_fallback(user_query: str, num_rows: int = 10):
-    # 1차: 원문 질의 그대로 검색
+    """
+    1차: 사용자가 입력한 질의로 검색
+    2차: 대표 키워드→법령명 매핑으로 재검색 (폴백)
+    ※ Streamlit 로그 출력은 하지 않음(재정의 충돌 방지)
+    """
     laws, endpoint, err = search_law_data(user_query, num_rows=num_rows)
     if laws:
         return laws, endpoint, err, "primary"
 
-    # 2차: 자주 쓰는 키워드를 대표 법령명으로 매핑하여 재검색
     keyword_map = {
         "정당방위": "형법",
         "전세": "주택임대차보호법",
@@ -509,7 +506,6 @@ def find_law_with_fallback(user_query: str, num_rows: int = 10):
             if laws2:
                 return laws2, ep2, err2, f"fallback:{law_name}"
 
-    # 끝까지 못 찾으면 0건 유지
     return [], endpoint, err, "none"
 
 def format_law_context(law_data: list[dict]) -> str:
