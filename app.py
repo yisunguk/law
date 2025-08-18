@@ -28,6 +28,25 @@ from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_tx
 from external_content import is_url, make_url_context
 from external_content import extract_first_url
 
+import streamlit as st
+from datetime import datetime
+
+# 최초 1회: 화면 최상단 어딘가에서 슬롯 생성
+if "answer_slot" not in st.session_state:
+    st.session_state.answer_slot = st.empty()
+
+# ... full_text, collected_laws 생성 이후
+final_text = _normalize_text(full_text)
+final_text = fix_links_with_lawdata(final_text, collected_laws)
+final_text = _dedupe_blocks(final_text)
+
+# ✅ 세션에 저장된 슬롯을 사용
+placeholder = st.session_state.answer_slot
+placeholder.empty()
+with placeholder.container():
+    render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
+
+
 # 행정규칙 소관 부처 드롭다운 옵션
 MINISTRIES = [
     "부처 선택(선택)",
