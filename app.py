@@ -134,6 +134,11 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 .law-slide {{ border:1px solid rgba(127,127,127,.25); border-radius:12px; padding:12px 14px; margin:8px 0; }}
 [data-theme="light"] .law-slide {{ border-color:#e5e5e5; }}
 </style>
+st.markdown(
+    "<style> [data-testid='column']:nth-child(2){ position: sticky; top: 80px; } </style>",
+    unsafe_allow_html=True
+)
+
 """, unsafe_allow_html=True)
 
 st.markdown(
@@ -1051,32 +1056,71 @@ with st.container():
                 st.markdown(m["content"])  # 유저 말풍선엔 복사 버튼 없음
 
 # 🔻 어시스턴트 답변 출력은 반드시 user_q가 있을 때만 실행 (초기 빈 말풍선 방지)
+# ===============================
+# 좌우 분리 레이아웃 (교체용)
+# ===============================
 if user_q:
-    # (선택) 통합 미리보기 — 사용자 경험 유지
- # 📚 통합 검색 결과 보기
- with st.expander("📚 통합 검색 결과 보기"):
-    results = find_all_law_data(user_q, num_rows=3)
+    # 좌: 답변(2), 우: 통합검색(1)
+    col_ans, col_res = st.columns([2, 1], vertical_alignment="top", gap="large")
 
-    for label, pack in results.items():
-        st.subheader(f"🔎 {label}")
-        items = pack.get("items") or []
-        err2 = pack.get("error")
+    # ──────────────── 우측: 통합 검색 결과 (독립 영역)
+    with col_res:
+        st.markdown("<h3 style='margin:6px 0 8px'>📚 통합 검색 결과</h3>", unsafe_allow_html=True)
+        with st.expander("열기/접기", expanded=False):
+            results = find_all_law_data(user_q, num_rows=3)
+            for label, pack in results.items():
+                items, err2 = pack["items"], pack["error"]
+                st.subheader(f"🔎 {label}")
+                if err2:
+                    st.warning(err2)
+                elif not items:
+                    st.caption("검색 결과 없음")
+                else:
+                    for i, law in enumerate(items, 1):
+                        st.markdown(
+                            f"**{i}. {law['법령명']}** ({law['법령구분']}) "
+                            f"- 소관:{law['소관부처명']} / 시행:{law['시행일자']} / 공포:{law['공포일자']}"
+                        )
+                        if law.get('법령상세링크'):
+                            st.write(f"[법령 상세보기]({law['법령상세링크']})")
 
-        if err2:
-            st.warning(err2)
-            continue
+    # ──────────────── 좌측: GPT 답변 말풍선 (기존 로직 그대로)
+    with col_ans:
+        with st.chat_message("assistant"):
+            placeholder = st.empty()
+            full_text, buffer = "", ""
+            collected_laws = []
+            try:
+                placeholder.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다..._")
+                for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
+                    if kind == "delta":
+                        buffer += payload or ""
+                        if len(buffer) >= 200:
+                            full_text += buffer; buffer = ""
+                            placeholder.markdown(_normalize_text(full_text[-1500:]))
+                    elif kind == "final":
+                        full_text += (payload or "")
+                        collected_laws = law_list or []
+                        break
+                if buffer:
+                    full_text += buffer
+            except Exception as e:
+                laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
+                collected_laws = laws
+                law_ctx = format_law_context(laws)
+                tpl = choose_output_template(user_q)
+                full_text = f"{tpl}\n\n{law_ctx}\n\n(오류: {e})"
 
-        if not items:
-            st.caption("검색 결과 없음")
-            continue
+            # 후처리
+            final_text = _normalize_text(full_text)
+            final_text = fix_links_with_lawdata(final_text, collected_laws)
+            final_text = _dedupe_blocks(final_text)
 
-        for i, law in enumerate(items, 1):
-            st.markdown(
-                f"**{i}. {law['법령명']}** ({law.get('법령구분','')}) - "
-                f"소관:{law.get('소관부처명','')} / 시행:{law.get('시행일자','')} / 공포:{law.get('공포일자','')}"
-            )
-            if law.get("법령상세링크"):
-                st.write(f"[법령 상세보기]({law['법령상세링크']})")
+            # 출력 (복사 버튼은 어시스턴트 말풍선에만)
+            placeholder.empty()
+            with placeholder.container():
+                render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
+
 
 
 
