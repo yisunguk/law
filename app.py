@@ -390,14 +390,22 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
         return [], None, "LAW_API_KEY 미설정"
 
     endpoint = f"{MOLEG_BASE}/{target}/{target}SearchList.do"
-    params = {
-        "serviceKey": LAW_API_KEY,           # 인증키(URLEncode)
-        "target": target,                    # 고정값
-        "query": query or "*",               # 기본값 *
-        "numOfRows": max(1, min(10, int(num_rows))),
-        "pageNo": max(1, int(page_no)),
-    }
 
+     # _call_moleg_list(...) 내부
+api_key = (LAW_API_KEY or "").strip().strip('"').strip("'")
+if "%" in api_key and any(t in api_key.upper() for t in ("%2B", "%2F", "%3D")):
+    try:
+        api_key = up.unquote(api_key)   # URL 디코딩 1회
+    except Exception:
+        pass
+
+params = {
+    "serviceKey": api_key,  # ← 여기서 api_key 사용 (원래 LAW_API_KEY에서 파생)
+    "target": target,
+    "query": query or "*",
+    "numOfRows": max(1, min(10, int(num_rows))),
+    "pageNo": max(1, int(page_no)),
+}
     # 호출
     try:
         resp = requests.get(endpoint, params=params, timeout=15)
