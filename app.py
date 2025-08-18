@@ -427,7 +427,7 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
     last_err = None
     resp = None
     for base in MOLEG_BASES:   # ["https://apis.data.go.kr/1170000", "http://apis.data.go.kr/1170000"]
-        endpoint = f"{base}/{target}/{target}SearchList.do"
+      
         try:
             sess = requests.Session()
             if base.startswith("https://"):
