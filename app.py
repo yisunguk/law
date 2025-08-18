@@ -28,25 +28,6 @@ from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_tx
 from external_content import is_url, make_url_context
 from external_content import extract_first_url
 
-import streamlit as st
-from datetime import datetime
-
-# 최초 1회: 화면 최상단 어딘가에서 슬롯 생성
-if "answer_slot" not in st.session_state:
-    st.session_state.answer_slot = st.empty()
-
-# ... full_text, collected_laws 생성 이후
-final_text = _normalize_text(full_text)
-final_text = fix_links_with_lawdata(final_text, collected_laws)
-final_text = _dedupe_blocks(final_text)
-
-# ✅ 세션에 저장된 슬롯을 사용
-placeholder = st.session_state.answer_slot
-placeholder.empty()
-with placeholder.container():
-    render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
-
-
 # 행정규칙 소관 부처 드롭다운 옵션
 MINISTRIES = [
     "부처 선택(선택)",
@@ -214,7 +195,7 @@ def _normalize_text(s: str) -> str:
     while lines and not lines[-1].strip():
         lines.pop()
     merged, i = [], 0
-    num_pat = re.compile(r'^s*((\d+)|([IVXLC]+)|([ivxlc]+))\s*[\.\)]\s*$')
+    num_pat = re.compile(r'^\s*((\d+)|([IVXLC]+)|([ivxlc]+))\s*[\.\)]\s*$')
     while i < len(lines):
         cur = lines[i]; m = num_pat.match(cur)
         if m:
@@ -698,7 +679,7 @@ def format_law_context(law_data: list[dict]) -> str:
     rows = []
     for i, law in enumerate(law_data, 1):
         rows.append(
-            f"{i}. {law['법령명']} ({law['법령구분명']})\n"
+            f"{i}. {law['법령명']} ({law['법령구분']})\n"
             f"   - 소관부처: {law['소관부처명']}\n"
             f"   - 시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}\n"
             f"   - 링크: {law['법령상세링크'] or '없음'}"
@@ -717,7 +698,7 @@ def animate_law_results(law_data: list[dict], delay: float = 1.0):
             st.markdown(
                 f"""
                 <div class='law-slide'>
-                    <div style='font-weight:700'>🔎 {i}. {law['법령명']} <span style='opacity:.7'>({law['법령구분명']})</span></div>
+                    <div style='font-weight:700'>🔎 {i}. {law['법령명']} <span style='opacity:.7'>({law['법령구분']})</span></div>
                     <div style='margin-top:6px'>소관부처: {law['소관부처명']}</div>
                     <div>시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}</div>
                     {f"<div style='margin-top:6px'><a href='{law['법령상세링크']}' target='_blank'>법령 상세보기</a></div>" if law.get('법령상세링크') else ''}
@@ -1136,7 +1117,7 @@ with st.container():
                 if m.get("law"):
                     with st.expander("📋 이 턴에서 참고한 법령 요약"):
                         for j, law in enumerate(m["law"], 1):
-                            st.write(f"**{j}. {law['법령명']}** ({law['법령구분명']})  | 시행 {law['시행일자']}  | 공포 {law['공포일자']}")
+                            st.write(f"**{j}. {law['법령명']}** ({law['법령구분']})  | 시행 {law['시행일자']}  | 공포 {law['공포일자']}")
                             if law.get("법령상세링크"):
                                 st.write(f"- 링크: {law['법령상세링크']}")
             else:
@@ -1153,53 +1134,52 @@ if user_q:
             elif not items: st.caption("검색 결과 없음")
             else:
                 for i, law in enumerate(items, 1):
-                    st.markdown(f"**{i}. {law['법령명']}** ({law['법령구분명']}) - 소관:{law['소관부처명']} / 시행:{law['시행일자']} / 공포:{law['공포일자']}")
+                    st.markdown(f"**{i}. {law['법령명']}** ({law['법령구분']}) - 소관:{law['소관부처명']} / 시행:{law['시행일자']} / 공포:{law['공포일자']}")
                     if law['법령상세링크']: st.write(f"[법령 상세보기]({law['법령상세링크']})")
 
     # ▶ 본문 답변: LLM 도구(함수콜) 기반 — 토글 없이 기본 적용
-    with st.chat_message("assistant"):
-        placeholder = st.empty()
-        full_text, buffer = "", ""
-        collected_laws = []
-        try:
-            placeholder.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다..._")
-            for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
-                if kind == "delta":
-                    buffer += payload
-                    if len(buffer) >= 200:
-                        full_text += buffer; buffer = ""
-                        placeholder.markdown(_normalize_text(full_text[-1500:]))
-                elif kind == "final":
-                    full_text += payload
-                    collected_laws = law_list
-                    break
-            if buffer:
-                full_text += buffer
-            final_text = _normalize_text(full_text)
-        except Exception as e:
-            # 도구 경로 실패 시 폴백
-            laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
-            collected_laws = laws
-            law_ctx = format_law_context(laws)
-            tpl = choose_output_template(user_q)
-            final_text = _normalize_text(f"{tpl}\n\n{law_ctx}\n\n(오류: {e})")
+with st.chat_message("assistant"):
+    placeholder = st.empty()
+    full_text, buffer = "", ""
+    collected_laws = []
+    try:
+        placeholder.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다..._")
+        for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
+            if kind == "delta":
+                buffer += payload
+                if len(buffer) >= 200:
+                    full_text += buffer; buffer = ""
+                    placeholder.markdown(_normalize_text(full_text[-1500:]))
+            elif kind == "final":
+                full_text += payload
+                collected_laws = law_list
+                break
+        if buffer:
+            full_text += buffer
+    except Exception as e:
+        # 도구 실패 폴백
+        laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
+        collected_laws = laws
+        law_ctx = format_law_context(laws)
+        tpl = choose_output_template(user_q)
+        full_text = f"**(오프라인 안내)**\n\n{tpl}\n\n{law_ctx}\n\n(오류: {e})"
 
-        from datetime import datetime
+    # ✅ 후처리(정규화 → 링크교정 → 중복문단 제거)
+    final_text = _normalize_text(full_text)
+    final_text = fix_links_with_lawdata(final_text, collected_laws)
+    final_text = _dedupe_blocks(final_text)
 
-# ... (위에서 final_text 완성하는 부분까지 동일)
-        final_text = _normalize_text(full_text)
-        final_text = fix_links_with_lawdata(final_text, collected_laws)
-        final_text = _dedupe_blocks(final_text)  # 중복 문단 제거
+    # ✅ 출력 (한 번만)
+    placeholder.empty()
+    with placeholder.container():
+        render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
 
-# ✅ 출력 (한 번만)
-placeholder.empty()
-with placeholder.container():
-    render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
-
-
+    # 대화 기록 저장
     st.session_state.messages.append({
-        "role":"assistant","content": final_text, "law": collected_laws, "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "role":"assistant","content": final_text, "law": collected_laws,
+        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
+
 
 # 4) ChatBar (맨 아래 고정)
 submitted, typed_text, files = chatbar(
