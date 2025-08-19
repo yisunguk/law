@@ -595,21 +595,15 @@ def present_url_with_fallback(main_url: str, kind: str, q: str, label_main="새 
         copy_url_button(fb, key=str(abs(hash(fb))))
 
 # ===== Pinned Question helper =====
-def _esc(s: str) -> str:
+def _esc_br(s: str) -> str:
     return html.escape(s or "").replace("\n", "<br>")
 
 def render_pinned_question():
-    last_q = None
-    for m in reversed(st.session_state.get("messages", [])):
-        if m.get("role") == "user":
-            last_q = m.get("content", "")
-            break
-    if not last_q:
-        return
+    # ...
     st.markdown(f"""
     <div class="pinned-q">
       <div class="label">최근 질문</div>
-      <div class="text">{_esc(last_q)}</div>
+      <div class="text">{_esc_br(last_q)}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -918,31 +912,6 @@ import re, json
 def _tok_ko(s: str) -> set[str]:
     """한글 토큰(2자 이상) 집합"""
     return set(re.findall(r"[가-힣]{2,}", (s or "")))
-
-def _filter_plans(user_q: str, plans: list[dict]) -> list[dict]:
-    """
-    LLM이 만든 계획(plans)을 사용자 질문과의 관련성으로 1차 필터링.
-    - 빈 쿼리/무관 주제(예: 난민법) 제거
-    - 중복 제거, 최대 10개
-    """
-    U = _tok_ko(user_q)
-    ALLOW = {"민법","손해","손배","불법행위","주차","주차장","차량","자동차","교통","배상"}
-    NEG = {"난민","난민법"} if ("난민" not in U and "난민법" not in U) else set()
-
-    out, seen = [], set()
-    for p in plans or []:
-        t = (p.get("target") or "").strip()
-        q = (p.get("q") or "").strip()
-        if not t or not q:
-            continue
-        T = _tok_ko(q)
-        if (T & U) or (T & ALLOW):          # 최소 1토큰 이상 겹치거나 허용 토큰 포함
-            if not (T & NEG):               # 금지 토큰(난민*) 없을 때만 채택
-                key = (t, q)
-                if key not in seen:
-                    seen.add(key)
-                    out.append({"target": t, "q": q[:60]})
-    return out[:10]
 
 def _filter_items_by_plan(user_q: str, items: list[dict], plan: dict) -> list[dict]:
     name_get = lambda d: (d.get("법령명") or "")
@@ -1347,36 +1316,43 @@ TOOLS = [
 ]
 
 def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
-    # 0) 메시지 구성
-    msgs = [
-        {"role": "system", "content": LEGAL_SYS},
-        {"role": "user", "content": user_q},
-    ]
+    # ... (메시지/툴콜 준비 동일)
 
-    # 0-1) 관련 법령 프리패치 → 프라이머(system) 1회 주입
-    try:
-        pre_laws = prefetch_law_context(user_q, num_rows_per_law=3)
-        primer = _summarize_laws_for_primer(pre_laws, max_items=6)
-        if primer:
-            msgs.insert(1, {"role": "system", "content": primer})
-    except Exception:
-        pass
+    # 1차 콜 → 툴콜 실행 ... (동일)
 
-    # 1) 1차 호출: 툴콜 유도 (스트리밍 아님)
-    resp1 = safe_chat_completion(
-        client,
-        messages=msgs,
-        model=AZURE["deployment"],
-        stream=False,
-        allow_retry=True,
-        tools=TOOLS,
-        tool_choice="auto",
-        temperature=0.2,
-        max_tokens=1200,
-    )
-    if resp1.get("type") == "blocked_by_content_filter":
-        yield ("final", resp1["message"], [])
+    # 2차 콜 (최종)
+    if stream:
+        resp2 = safe_chat_completion(
+            client, messages=msgs, model=AZURE["deployment"],
+            stream=True, allow_retry=True, temperature=0.2, max_tokens=1400,
+        )
+        if resp2.get("type") == "blocked_by_content_filter":
+            yield ("final", resp2["message"], law_for_links); return
+        out = ""
+        for ch in resp2["stream"]:
+            try:
+                c = ch.choices[0]
+                if getattr(c, "finish_reason", None): break
+                d = getattr(c, "delta", None)
+                txt = getattr(d, "content", None) if d else None
+                if txt:
+                    out += txt
+                    yield ("delta", txt, law_for_links)
+            except Exception:
+                continue
+        yield ("final", out, law_for_links)
         return
+    else:
+        resp2 = safe_chat_completion(
+            client, messages=msgs, model=AZURE["deployment"],
+            stream=False, allow_retry=True, temperature=0.2, max_tokens=1400,
+        )
+        if resp2.get("type") == "blocked_by_content_filter":
+            yield ("final", resp2["message"], law_for_links); return
+        final_text = resp2["resp"].choices[0].message.content or ""
+        yield ("final", final_text, law_for_links)
+        return
+
 
     msg1 = resp1["resp"].choices[0].message
     law_for_links = []
@@ -1775,13 +1751,6 @@ if user_q:
             st.info("현재 모델이 오프라인이거나 오류로 인해 답변을 생성하지 못했습니다.")
     else:
         st.info("답변 엔진이 아직 설정되지 않았습니다. API 키/엔드포인트를 확인해 주세요.")
-
-
-
-        # --- 최종 후처리 ---
-        final_text = _normalize_text(full_text)
-        final_text = fix_links_with_lawdata(final_text, collected_laws)
-        final_text = _dedupe_blocks(final_text)
 
         # --- 빈 답변 가드 ---
         if not final_text.strip():
