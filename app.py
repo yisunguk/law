@@ -828,37 +828,56 @@ def rerank_laws_with_llm(user_q: str, law_items: list[dict], top_k: int = 8) -> 
     except Exception:
         return law_items
 
+def _filter_plans(user_q: str, plans: list[dict]) -> list[dict]:
+    U = set(_canonize(_tok(user_q)))
+    seen=set(); out=[]
+    for p in plans or []:
+        t = (p.get("target") or "").strip()
+        q = (p.get("q") or "").strip()
+        if not t or not q:              # 빈 쿼리 제거(와일드카드 방지)
+            continue
+        # 사용자와 최소 1토큰 이상 겹치거나, must가 비어있지 않은 경우만
+        T = set(_canonize(_tok(q)))
+        if (U & T) or (p.get("must")):
+            key=(t,q)
+            if key not in seen:
+                seen.add(key); out.append(p)
+    return out[:10]
+
+
 # === LLM이 API 호출 계획을 제안: target+query 페어 목록 ===
 # 결과 예: [{"target":"law","q":"형법 제21조 정당방위"},
 #           {"target":"law","q":"형법 정당방위"},
 #           {"target":"admrul","q":"정당방위 지침"}]
 @st.cache_data(show_spinner=False, ttl=180)
 def propose_api_queries_llm(user_q: str) -> list[dict]:
+    """
+    결과 예:
+    {"queries":[
+      {"target":"law","q":"민법 손해배상","must":["민법","손해배상"],"must_not":[]},
+      {"target":"law","q":"주차장법","must":["주차장"],"must_not":[]}
+    ]}
+    """
     if not user_q or client is None:
         return []
 
     SYS = (
-        "너는 한국 법제처(Open API) 검색 쿼리를 설계하는 도우미야. "
-        "반드시 JSON만 반환해. 설명/코드펜스 금지.\n"
-        '형식: {"queries":[{"target":"law|admrul|ordin|trty","q":"검색어"}, ...]}\n'
-        "- target는 반드시 위 4개 중 하나만 사용\n"
-        "- 검색어는 1~8개, 너무 길지 않게 (3~20자 정도)\n"
-        "- 사건 핵심을 드러내는 조합어를 우선(예: \"형법 제21조 정당방위\", \"주차장법 주차장 손해\")"
+        "너는 한국 법제처(Open API) 검색 쿼리를 설계한다. JSON ONLY.\n"
+        '형식: {"queries":[{"target":"law|admrul|ordin|trty","q":"검색어",'
+        '"must":["반드시 포함할 단어들"], "must_not":["제외할 단어들"]}, ...]}\n'
+        "- 사용자 질문과 직접 관련된 단어만 사용(문맥 밖 금지).\n"
+        "- must에는 사용자의 핵심 용어(예: 손해배상, 주차장, 자동차) 1~3개만 넣어 간결하게.\n"
+        "- must_not에는 분명히 무관한 축(예: 난민/군/조세 등)을 필요시 넣어라(없으면 빈 배열)."
     )
     try:
         resp = client.chat.completions.create(
             model=AZURE["deployment"],
-            messages=[
-                {"role":"system","content": SYS},
-                {"role":"user","content": user_q.strip()},
-            ],
-            temperature=0.0,
-            max_tokens=200,
+            messages=[{"role":"system","content": SYS},
+                      {"role":"user","content": user_q.strip()}],
+            temperature=0.0, max_tokens=220,
         )
         txt = (resp.choices[0].message.content or "").strip()
-
-        # JSON만 추출(코드펜스/잡텍스트 안정 파서)
-        import re, json as _json
+        # JSON만 추출
         if "```" in txt:
             m = re.search(r"```(?:json)?\s*([\s\S]*?)```", txt)
             if m: txt = m.group(1).strip()
@@ -866,21 +885,20 @@ def propose_api_queries_llm(user_q: str) -> list[dict]:
             m = re.search(r"\{[\s\S]*\}", txt)
             if m: txt = m.group(0)
 
-        data = _json.loads(txt) if txt else {}
-        arr = data.get("queries", []) or []
-
-        # 정합성/중복 정리
-        allowed = {"law","admrul","ordin","trty"}
-        out, seen = [], set()
+        data = json.loads(txt) if txt else {}
+        arr = (data.get("queries") or [])
+        out=[]
         for it in arr:
             t = (it.get("target") or "").strip()
             q = (it.get("q") or "").strip()
-            if t in allowed and q and (t, q) not in seen:
-                seen.add((t, q))
-                out.append({"target": t, "q": q[:60]})
+            must = [x.strip() for x in (it.get("must") or []) if x.strip()]
+            must_not = [x.strip() for x in (it.get("must_not") or []) if x.strip()]
+            if t in {"law","admrul","ordin","trty"} and q:
+                out.append({"target":t,"q":q[:60],"must":must[:4],"must_not":must_not[:6]})
         return out[:10]
     except Exception:
         return []
+
 
 # === add/replace: 법령명 후보 추출기 (LLM, 견고 버전) ===
 @st.cache_data(show_spinner=False, ttl=300)
@@ -990,6 +1008,31 @@ def _filter_plans(user_q: str, plans: list[dict]) -> list[dict]:
                     out.append({"target": t, "q": q[:60]})
     return out[:10]
 
+def _filter_items_by_plan(user_q: str, items: list[dict], plan: dict) -> list[dict]:
+    """
+    - plan.must 에 든 토큰은 '법령명'에 최소 1개 이상 존재해야 함(모두가 아니어도 됨: 지나친 탈락 방지)
+    - plan.must_not 토큰이 '법령명'에 보이면 제외
+    - 그 뒤 관련도 스코어로 정렬
+    """
+    name_get = lambda d: (d.get("법령명") or "")
+    must = set(_canonize(plan.get("must") or []))
+    must_not = set(_canonize(plan.get("must_not") or []))
+
+    kept=[]
+    for it in (items or []):
+        nm = name_get(it)
+        N = set(_canonize(_tok(nm)))
+        if must and not (N & must):          # must가 있으면 최소 1개 겹쳐야 함
+            continue
+        if must_not and (N & must_not):      # must_not에 걸리면 제거
+            continue
+        kept.append(it)
+
+    # 스코어 정렬
+    kept.sort(key=lambda d: _rel_score(user_q, name_get(d), plan.get("q","")))
+    return kept
+
+
 @st.cache_data(show_spinner=False, ttl=180)
 def propose_api_queries_llm(user_q: str) -> list[dict]:
     """
@@ -1035,77 +1078,82 @@ def propose_api_queries_llm(user_q: str) -> list[dict]:
     except Exception:
         return []
 
+# --- 한글/숫자/영문 2자+ 토큰 추출
+def _tok(s: str) -> list[str]:
+    return re.findall(r"[가-힣A-Za-z0-9]{2,}", (s or ""))
+
+# --- 토큰 표준화(간단 동의어/축약 정리: 필요시 확장)
+_CANON = {
+    "손배":"손해배상", "차량":"자동차", "교특법":"교통사고처리", "주차장법":"주차장법",
+}
+def _canonize(tokens: list[str]) -> list[str]:
+    out=[]
+    for t in tokens:
+        out.append(_CANON.get(t, t))
+    return out
+
+# --- 관련도 스코어(작을수록 관련)
+def _rel_score(user_q: str, item_name: str, plan_q: str) -> int:
+    U = set(_canonize(_tok(user_q)))
+    I = set(_canonize(_tok(item_name)))
+    P = set(_canonize(_tok(plan_q)))
+    if not I:
+        return 999
+    # 교집합이 많고, 사용자·플랜 토큰과 겹칠수록 가점
+    inter_ui = len(U & I)
+    inter_pi = len(P & I)
+    score = 100 - 10*inter_ui - 5*inter_pi
+    # 완전 무관(교집합 0)이라면 큰 패널티
+    if inter_ui == 0 and inter_pi == 0:
+        score += 100
+    return max(score, 0)
 
 
-# === LLM-주도 통합 검색 ===
 def find_all_law_data(query: str, num_rows: int = 3):
     results = {}
 
-    # 0) LLM 플랜 생성 + 1차 필터
-    plans = propose_api_queries_llm(query)
-    plans = _filter_plans(query, plans)
+    # 0) LLM 플랜 → 정합성 필터
+    plans = _filter_plans(query, propose_api_queries_llm(query))
 
-    # 0-1) 플랜이 비면 아주 얇은 폴백(키워드 bigram → law 타겟)
+    # 0-1) 완전 실패 시 얇은 폴백(키워드 bigram → law)
     if not plans:
         kw = (extract_keywords_llm(query) or [])[:5]
-        tmp = []
+        tmp=[]
         for i in range(len(kw)):
             for j in range(i+1, len(kw)):
-                tmp.append({"target":"law", "q": f"{kw[i]} {kw[j]}"})
+                tmp.append({"target":"law","q":f"{kw[i]} {kw[j]}","must":[kw[i],kw[j]],"must_not":[]})
         plans = tmp[:8]
 
-    tried, err_logs = [], []
-    buckets = {
-        "법령": ("law",   []),
-        "행정규칙": ("admrul",[]),
-        "자치법규": ("ordin", []),
-        "조약": ("trty",  []),
-    }
+    tried, err = [], []
+    buckets = {"법령":("law",[]), "행정규칙":("admrul",[]), "자치법규":("ordin",[]), "조약":("trty",[])}
 
-    # 군 맥락 판단(없으면 군 관련 1차 소거)
-    has_mil = any(x in (query or "") for x in ["군","국방","군인","부대","장병","군사"])
-
-    # 1) 실행 루프
+    # 1) 실행
     for plan in plans:
         t, qx = plan["target"], plan["q"]
-        if not qx.strip():
-            err_logs.append(f"{t}:(blank) → dropped")
-            continue
         tried.append(f"{t}:{qx}")
-
+        if not qx.strip():
+            err.append(f"{t}:(blank) dropped"); continue
         try:
-            items, endpoint, err = _call_moleg_list(t, qx, num_rows=num_rows)
+            items, endpoint, e = _call_moleg_list(t, qx, num_rows=num_rows)
+            # 아이템 단계 일반화 필터 + 정렬
+            items = _filter_items_by_plan(query, items, plan)
+            if items:
+                for label,(tt,arr) in buckets.items():
+                    if t==tt: arr.extend(items)
+            if e: err.append(f"{t}:{qx} → {e}")
+        except Exception as ex:
+            err.append(f"{t}:{qx} → {ex}")
 
-            # 군 맥락 없으면 1차 소거
-            if not has_mil and t == "law":
-                items = [
-                    it for it in (items or [])
-                    if (it.get("소관부처명") or "") != "국방부"
-                       and not any(k in (it.get("법령명") or "") for k in ["군형법","군수용자","군사","군인","군에서"])
-                ]
-
-            # 버킷 누적
-            for label, (tt, arr) in buckets.items():
-                if t == tt and items:
-                    arr.extend(items)
-
-            if err:
-                err_logs.append(f"{t}:{qx} → {err}")
-
-        except Exception as e:
-            err_logs.append(f"{t}:{qx} → {e}")
-
-    # 2) 리랭크/패킹
-    for label, (tt, arr) in buckets.items():
-        if arr and tt == "law" and len(arr) >= 3:
+    # 2) 리랭크/패킹(법령만)
+    for label,(tt,arr) in buckets.items():
+        if arr and tt=="law" and len(arr)>=2:
             arr = rerank_laws_with_llm(query, arr, top_k=8)
         results[label] = {
             "items": arr,
             "endpoint": None,
-            "error": "; ".join(err_logs) if err_logs else None,
+            "error": "; ".join(err) if err else None,
             "debug": {"plans": plans, "tried": tried},
         }
-
     return results
 
 # 캐시된 단일 법령 검색
