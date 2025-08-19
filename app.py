@@ -1096,55 +1096,44 @@ TOOLS = [
 ]
 
 def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
-
+    # 0) 메시지 구성
     msgs = [
         {"role": "system", "content": LEGAL_SYS},
         {"role": "user", "content": user_q},
     ]
 
-    # === LLM 호출 전에 프라이머 주입 ===
+    # 0-1) 관련 법령 프리패치 → 프라이머(system) 1회 주입
     try:
         pre_laws = prefetch_law_context(user_q, num_rows_per_law=3)
         primer = _summarize_laws_for_primer(pre_laws, max_items=6)
         if primer:
-            # system 역할로 primer 삽입
             msgs.insert(1, {"role": "system", "content": primer})
     except Exception:
         pass
 
-    # 이후: 기존과 동일하게 chat.completions 호출
-    resp = client.chat.completions.create(
-        model=AZURE["deployment"],
-        messages=msgs,
-        temperature=0.2,
-        stream=True,
-        max_tokens=512,
-    )
-    ...
-
-    # ---------- [변경1] 1차 호출: safe_chat_completion 사용 ----------
-    resp_dict = safe_chat_completion(
+    # 1) 1차 호출: 툴콜 유도 (스트리밍 아님)
+    resp1 = safe_chat_completion(
         client,
         messages=msgs,
         model=AZURE["deployment"],
-        stream=False,               # 1차는 스트리밍 아님
+        stream=False,
         allow_retry=True,
         tools=TOOLS,
         tool_choice="auto",
         temperature=0.2,
         max_tokens=1200,
     )
-    if resp_dict.get("type") == "blocked_by_content_filter":
-        yield ("final", resp_dict["message"], [])
+    if resp1.get("type") == "blocked_by_content_filter":
+        yield ("final", resp1["message"], [])
         return
 
-    resp = resp_dict["resp"]   # 🔹원래 OpenAI 응답 객체
-    msg = resp.choices[0].message
+    msg1 = resp1["resp"].choices[0].message
     law_for_links = []
 
-    if msg.tool_calls:
-        msgs.append({"role":"assistant","tool_calls": msg.tool_calls})
-        for call in msg.tool_calls:
+    # 2) 툴 실행 (있을 때)
+    if getattr(msg1, "tool_calls", None):
+        msgs.append({"role": "assistant", "tool_calls": msg1.tool_calls})
+        for call in msg1.tool_calls:
             name = call.function.name
             args = json.loads(call.function.arguments or "{}")
             if name == "search_one":
@@ -1153,103 +1142,65 @@ def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
                 result = tool_search_multi(**args)
             else:
                 result = {"error": f"unknown tool: {name}"}
-            # 링크 교정용 법령 수집
+
+            # 링크 교정용 법령 누적
             if isinstance(result, dict) and result.get("items"):
                 law_for_links.extend(result["items"])
             elif isinstance(result, list):
                 for r in result:
-                    if r.get("items"): law_for_links.extend(r["items"])
-            msgs.append({"role":"tool","tool_call_id": call.id, "content": json.dumps(result, ensure_ascii=False)})
+                    if r.get("items"):
+                        law_for_links.extend(r["items"])
 
-        # ---------- [변경2] 2차 호출: 스트리밍/비스트리밍 모두 safe_* ----------
-        if stream:
-            resp2 = safe_chat_completion(
-                client,
-                messages=msgs,
-                model=AZURE["deployment"],
-                stream=True,
-                allow_retry=True,
-                temperature=0.2,
-                max_tokens=1400,
-            )
-            if resp2.get("type") == "blocked_by_content_filter":
-                yield ("final", resp2["message"], law_for_links)
-                return
+            msgs.append({
+                "role": "tool",
+                "tool_call_id": call.id,
+                "content": json.dumps(result, ensure_ascii=False)
+            })
 
-            stream_resp = resp2["stream"]
-            out = ""
-            for ch in stream_resp:
-                try:
-                    c = ch.choices[0]
-                    if getattr(c,"finish_reason",None): break
-                    d = getattr(c,"delta",None); txt = getattr(d,"content",None) if d else None
-                    if txt:
-                        out += txt
-                        yield ("delta", txt, law_for_links)
-                except Exception:
-                    continue
-            yield ("final", out, law_for_links)
-        else:
-            resp2 = safe_chat_completion(
-                client,
-                messages=msgs,
-                model=AZURE["deployment"],
-                stream=False,
-                allow_retry=True,
-                temperature=0.2,
-                max_tokens=1400,
-            )
-            if resp2.get("type") == "blocked_by_content_filter":
-                yield ("final", resp2["message"], law_for_links)
-                return
-            final_text = extract_text(resp2["resp"])
-            yield ("final", final_text, law_for_links)
+    # 3) 2차 호출: 최종 답변 생성 (stream 여부에 따라)
+    if stream:
+        resp2 = safe_chat_completion(
+            client,
+            messages=msgs,
+            model=AZURE["deployment"],
+            stream=True,
+            allow_retry=True,
+            temperature=0.2,
+            max_tokens=1400,
+        )
+        if resp2.get("type") == "blocked_by_content_filter":
+            yield ("final", resp2["message"], law_for_links)
+            return
 
+        out = ""
+        for ch in resp2["stream"]:
+            try:
+                c = ch.choices[0]
+                if getattr(c, "finish_reason", None):
+                    break
+                d = getattr(c, "delta", None)
+                txt = getattr(d, "content", None) if d else None
+                if txt:
+                    out += txt
+                    yield ("delta", txt, law_for_links)
+            except Exception:
+                continue
+        yield ("final", out, law_for_links)
     else:
-        # 함수콜 없이 바로 답변
-        if stream:
-            resp2 = safe_chat_completion(
-                client,
-                messages=msgs,
-                model=AZURE["deployment"],
-                stream=True,
-                allow_retry=True,
-                temperature=0.2,
-                max_tokens=1200,
-            )
-            if resp2.get("type") == "blocked_by_content_filter":
-                yield ("final", resp2["message"], [])
-                return
-
-            stream_resp = resp2["stream"]
-            out = ""
-            for ch in stream_resp:
-                try:
-                    c = ch.choices[0]
-                    if getattr(c,"finish_reason",None): break
-                    d = getattr(c,"delta",None); txt = getattr(d,"content",None) if d else None
-                    if txt:
-                        out += txt
-                        yield ("delta", txt, [])
-                except Exception:
-                    continue
-            yield ("final", out, [])
-        else:
-            resp2 = safe_chat_completion(
-                client,
-                messages=msgs,
-                model=AZURE["deployment"],
-                stream=False,
-                allow_retry=True,
-                temperature=0.2,
-                max_tokens=1200,
-            )
-            if resp2.get("type") == "blocked_by_content_filter":
-                yield ("final", resp2["message"], [])
-                return
-            final_text = extract_text(resp2["resp"])
-            yield ("final", final_text, [])
-
+        resp2 = safe_chat_completion(
+            client,
+            messages=msgs,
+            model=AZURE["deployment"],
+            stream=False,
+            allow_retry=True,
+            temperature=0.2,
+            max_tokens=1400,
+        )
+        if resp2.get("type") == "blocked_by_content_filter":
+            yield ("final", resp2["message"], law_for_links)
+            return
+        final_text = resp2["resp"].choices[0].message.content or ""
+        yield ("final", final_text, law_for_links)
 
     # === add: LLM 호출 전에 '여러 법령 컨텍스트' 프라이머를 시스템 메시지로 주입 ===
     try:
