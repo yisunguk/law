@@ -820,6 +820,82 @@ def rerank_laws_with_llm(user_q: str, law_items: list[dict], top_k: int = 8) -> 
     except Exception:
         return law_items
 
+# === add/replace: 법령명 후보 추출기 (LLM, 견고 버전) ===
+@st.cache_data(show_spinner=False, ttl=300)
+def extract_law_candidates_llm(q: str) -> list[str]:
+    """
+    사용자 서술에서 관련 '법령명'만 1~3개 추출.
+    - JSON 외 텍스트/코드펜스가 섞여도 파싱
+    - 1차 실패 시 엄격 프롬프트로 1회 재시도
+    """
+    if not q or (client is None):
+        return []
+
+    def _parse_json_laws(txt: str) -> list[str]:
+        import re, json as _json
+        t = (txt or "").strip()
+        # ```json ... ``` 또는 ``` ... ``` 제거
+        if "```" in t:
+            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", t)
+            if m:
+                t = m.group(1).strip()
+        # 본문 중 JSON 블록만 추출
+        if not t.startswith("{"):
+            m = re.search(r"\{[\s\S]*\}", t)
+            if m:
+                t = m.group(0)
+        data = _json.loads(t)
+        laws = [s.strip() for s in (data.get("laws", []) or []) if s and s.strip()]
+        # 중복/길이 정리
+        seen, out = set(), []
+        for name in laws:
+            nm = name[:40]
+            if nm and nm not in seen:
+                seen.add(nm); out.append(nm)
+        return out
+
+    # 1) 일반 프롬프트
+    try:
+        SYSTEM_EXTRACT1 = (
+            "너는 한국 사건 설명에서 '관련 법령명'만 1~3개 추출하는 도우미다. "
+            "설명 없이 JSON만 반환하라.\n"
+            '형식: {"laws":["형법","산업안전보건법"]}'
+        )
+        resp = client.chat.completions.create(
+            model=AZURE["deployment"],
+            messages=[{"role":"system","content": SYSTEM_EXTRACT1},
+                      {"role":"user","content": q.strip()}],
+            temperature=0.0,
+            max_tokens=128,
+        )
+        laws = _parse_json_laws(resp.choices[0].message.content)
+        if laws:
+            return laws[:3]
+    except Exception:
+        pass
+
+    # 2) 엄격 프롬프트로 1회 재시도
+    try:
+        SYSTEM_EXTRACT2 = (
+            "JSON ONLY. No code fences. No commentary. "
+            'Return exactly: {"laws":["법령명1","법령명2"]}'
+        )
+        resp2 = client.chat.completions.create(
+            model=AZURE["deployment"],
+            messages=[{"role":"system","content": SYSTEM_EXTRACT2},
+                      {"role":"user","content": q.strip()}],
+            temperature=0.0,
+            max_tokens=96,
+        )
+        laws2 = _parse_json_laws(resp2.choices[0].message.content)
+        if laws2:
+            return laws2[:3]
+    except Exception:
+        pass
+
+    # 실패 시 빈 리스트
+    return []
+
 
 
 # 통합 검색(Expander용) — 교체본
