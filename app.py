@@ -515,23 +515,6 @@ def _summarize_laws_for_primer(law_items: list[dict], max_items: int = 6) -> str
         "가능하면 각 법령을 분리된 소제목으로 정리하고, 핵심 조문(1~2개)만 간단 인용하라."
     )
 
-# === AdviceEngine 인스턴스 ===
-# secrets가 없을 때 Streamlit 재실행 오류를 피하려면 가드를 둡니다.
-if client and AZURE:
-    engine = AdviceEngine(
-        client=client,
-        model=AZURE["deployment"],
-        tools=TOOLS,
-        safe_chat_completion=safe_chat_completion,
-        tool_search_one=tool_search_one,
-        tool_search_multi=tool_search_multi,
-        prefetch_law_context=prefetch_law_context,            # 있으면 그대로
-        summarize_laws_for_primer=_summarize_laws_for_primer   # 있으면 그대로
-    )
-else:
-    engine = None
-
-
 # === add: LLM-우선 후보 → 각 후보로 MOLEG API 다건 조회/누적 ===
 def prefetch_law_context(user_q: str, num_rows_per_law: int = 3) -> list[dict]:
     """
