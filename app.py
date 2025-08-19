@@ -1,6 +1,78 @@
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
+# ===========================================
+# [PATCH] AdviceEngine 연결 (NameError-safe)
+# 붙여넣는 위치: import 구역 아래 아무 곳(권장: 사이드바 렌더링 시작 직전)
+# 기존의 `engine = AdviceEngine(...)` 라인은 삭제하세요.
+# ===========================================
+
 from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
+
+# 지연 초기화: 필요한 전역들이 준비된 뒤에 한 번만 엔진 생성
+def _init_engine_lazy():
+    import streamlit as st
+    if "engine" in st.session_state and st.session_state.engine is not None:
+        return st.session_state.engine
+
+    g = globals()
+    c      = g.get("client")
+    az     = g.get("AZURE")
+    tools  = g.get("TOOLS")
+    scc    = g.get("safe_chat_completion")
+    t_one  = g.get("tool_search_one")
+    t_multi= g.get("tool_search_multi")
+    pre    = g.get("prefetch_law_context")
+    summar = g.get("_summarize_laws_for_primer")
+
+    # 필수 구성요소가 아직 준비 안 되었으면 None을 캐시하고 리턴
+    if not (c and az and tools and scc and t_one and t_multi):
+        st.session_state.engine = None
+        return None
+
+    st.session_state.engine = AdviceEngine(
+        client=c,
+        model=az["deployment"],
+        tools=tools,
+        safe_chat_completion=scc,
+        tool_search_one=t_one,
+        tool_search_multi=t_multi,
+        prefetch_law_context=pre,             # 있으면 그대로
+        summarize_laws_for_primer=summar,     # 있으면 그대로
+        temperature=0.2,
+    )
+    return st.session_state.engine
+
+# 기존 ask_llm_with_tools를 얇은 래퍼로 교체
+def ask_llm_with_tools(
+    user_q: str,
+    num_rows: int = 5,
+    stream: bool = True,
+    forced_mode: str | None = None,  # 'quick' | 'lawfinder' | 'memo' | 'draft'
+    brief: bool = False,             # 간단 모드 토글
+):
+    """
+    UI에서 호출하는 진입점.
+    AdviceEngine이 내부에서
+      - 의도 분류/모드 결정(Quick/LawFinder/Memo/Draft)
+      - 모드별 시스템 프롬프트 합성
+      - (필요 시) 법령 검색 툴콜 실행
+      - 조문 직링크 블록 자동 생성
+    까지 모두 수행합니다.
+    """
+    engine = _init_engine_lazy()
+    if engine is None:
+        yield ("final", "엔진이 아직 초기화되지 않았습니다. (client/AZURE/TOOLS 준비 전)", [])
+        return
+
+    # 엔진 스트리밍 출력 그대로 중계
+    yield from engine.generate(
+        user_q,
+        num_rows=num_rows,
+        stream=stream,
+        forced_mode=forced_mode,
+        brief=brief,
+    )
+
 import io, os, re, json, time, html
 def _esc(s: str) -> str:
     """HTML escape only"""
@@ -1350,27 +1422,6 @@ def animate_law_results(law_data: list[dict], delay: float = 1.0):
         prog.progress(i / n, text=f"관련 법령 미리보기 {i}/{n}")
         time.sleep(max(0.0, delay))
     prog.empty()
-
-# =============================
-# 출력 템플릿 · 분류기 (강제 최소화)
-# =============================
-def choose_output_template(q: str) -> str:
-    return "가능하면 대한민국의 최고 변호사처럼 답변해 주세요.\n"
-
-# =============================
-# System prompt (법률 메모 + 도구 사용 규칙)
-# =============================
-LEGAL_SYS = (
-"당신은 대한민국 변호사다. 답변은 **법률 자문 메모** 형식으로 간결하게 작성한다.\n"
-"출력 규칙(강제):\n"
-"- 내부적으로 의도 분석/검색/재검색은 수행하되, **그 절차를 출력하지 말 것**.\n"
-"- 형식은 사용자의 의도에 맞게 내용을 작성하되 근거 요약(조문 1~2문장 인용 가능), 출처 링크[법령명](URL)는 제공해야 함.\n"
-"- 같은 내용이나 섹션을 **반복 출력 금지**. 메모는 한 번만 쓴다.\n"
-"- 링크는 반드시 www.law.go.kr(또는 glaw.scourt.go.kr)만 사용. 상대경로는 절대URL로.\n"
-"- 확실치 않으면 단정 금지, ‘추가 확인 필요’ 사유를 짧게 적시.\n"
-"- 어구: 과장/군더더기 금지, 문장은 짧게.\n"
-"\n"
-)
 
 # =============================
 # Azure 함수콜(툴) — 래퍼 & 스키마 & 오케스트레이션
