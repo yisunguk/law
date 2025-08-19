@@ -35,6 +35,7 @@ from chatbar import chatbar
 from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_txt, sanitize
 from external_content import is_url, make_url_context
 from external_content import extract_first_url
+from typing import Iterable, List
 
 # 행정규칙 소관 부처 드롭다운 옵션
 MINISTRIES = [
@@ -175,14 +176,27 @@ def _inject_right_rail_css():
     """, unsafe_allow_html=True)
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
-def _tok(s: str) -> list[str]:
-    return re.findall(r"[가-힣A-Za-z0-9]{2,}", (s or ""))
+# === Tokenize & Canonicalize (유틸 최상단에 배치) ===
+import re
+from typing import Iterable, List
+
+TOKEN_RE = re.compile(r"[가-힣A-Za-z0-9]{2,}")
+
+def _tok(s: str) -> List[str]:
+    """한글/영문/숫자 2자 이상 토큰만 추출"""
+    return TOKEN_RE.findall(s or "")
 
 _CANON = {
-    "손배":"손해배상", "차량":"자동차", "교특법":"교통사고처리",  # 필요시 확장
+    # 자주 나오는 축약/동의어만 최소화 (필요 시 확장)
+    "손배": "손해배상",
+    "차량": "자동차",
+    "교특법": "교통사고처리",
 }
-def _canonize(tokens: list[str]) -> list[str]:
+
+def _canonize(tokens: Iterable[str]) -> List[str]:
+    """토큰을 표준형으로 치환"""
     return [_CANON.get(t, t) for t in tokens]
+
 
 # --- 레벤슈타인: 1글자 이내 오탈자 교정용(가벼운 구현) ---
 def _lev1(a: str, b: str) -> int:
@@ -970,10 +984,6 @@ def extract_law_candidates_llm(q: str) -> list[str]:
 # === LLM 플래너 & 플랜 필터 ===
 import re, json
 
-def _tok_ko(s: str) -> set[str]:
-    """한글 토큰(2자 이상) 집합"""
-    return set(re.findall(r"[가-힣]{2,}", (s or "")))
-
 def _filter_items_by_plan(user_q: str, items: list[dict], plan: dict) -> list[dict]:
     name_get = lambda d: (d.get("법령명") or "")
     must = set(_canonize(plan.get("must") or []))
@@ -1040,19 +1050,10 @@ def propose_api_queries_llm(user_q: str) -> list[dict]:
     except Exception:
         return []
 
-# --- 한글/숫자/영문 2자+ 토큰 추출
-def _tok(s: str) -> list[str]:
-    return re.findall(r"[가-힣A-Za-z0-9]{2,}", (s or ""))
-
 # --- 토큰 표준화(간단 동의어/축약 정리: 필요시 확장)
 _CANON = {
     "손배":"손해배상", "차량":"자동차", "교특법":"교통사고처리", "주차장법":"주차장법",
 }
-def _canonize(tokens: list[str]) -> list[str]:
-    out=[]
-    for t in tokens:
-        out.append(_CANON.get(t, t))
-    return out
 
 # --- 관련도 스코어(작을수록 관련)
 def _rel_score(user_q: str, item_name: str, plan_q: str) -> int:
@@ -1075,58 +1076,43 @@ _LAWISH_RE = re.compile(r"(법|령|규칙|조례|법률)|제\d+조")
 def _lawish(q: str) -> bool:
     return bool(_LAWISH_RE.search(q or ""))
 
-# find_all_law_data()의 플랜 생성부 바로 아래에 추가/교체
-plans = propose_api_queries_llm(query)
-
-# 오탈자 보정(이미 있음)
-for p in plans or []:
-    p["q"] = _sanitize_plan_q(query, p.get("q", ""))
-
-# 0-1) 정합성 필터
-plans = _filter_plans(query, plans)
-
-# 0-2) ★ 법령형 품질 검사 + 구제
-good = [p for p in (plans or []) if _lawish(p.get("q",""))]
-if not good:
-    # 1) LLM로 법령명 후보를 우선 추출
-    names = extract_law_candidates_llm(query) or []
-    # 2) 키워드→법령 맵 폴백
-    if not names:
-        names = [v for k, v in KEYWORD_TO_LAW.items() if k in (query or "")]
-    # 3) 그래도 없으면 키워드 bigram(최후)
-    if names:
-        plans = [{"target":"law","q":n,"must":[n],"must_not":[]} for n in names][:6]
-    else:
-        kws = (extract_keywords_llm(query) or [])[:5]
-        plans = [
-            {"target":"law","q":f"{kws[i]} {kws[j]}","must":[kws[i],kws[j]],"must_not":[]}
-            for i in range(len(kws)) for j in range(i+1,len(kws))
-        ][:8]
-else:
-    plans = good[:10]
-
-
 def find_all_law_data(query: str, num_rows: int = 3):
     results = {}
 
     # 0) LLM 플랜 생성
     plans = propose_api_queries_llm(query)
 
-    # ✅ 오탈자 교정 레이어: 사용자 문장에 맞춰 plan.q를 보정
+    # 오탈자 보정
     for p in plans or []:
         p["q"] = _sanitize_plan_q(query, p.get("q", ""))
 
-    # 0-1) 정합성 필터(제약 보존!)
+    # 0-1) 정합성 필터
     plans = _filter_plans(query, plans)
 
-      # 0-1) 완전 실패 시 얇은 폴백(키워드 bigram → law)
-    if not plans:
-        kw = (extract_keywords_llm(query) or [])[:5]
-        tmp=[]
-        for i in range(len(kw)):
-            for j in range(i+1, len(kw)):
-                tmp.append({"target":"law","q":f"{kw[i]} {kw[j]}","must":[kw[i],kw[j]],"must_not":[]})
-        plans = tmp[:8]
+    # ✅ 0-2) "법령형" 플랜만 우선 사용(법/령/규칙/조례/제n조 토큰 포함)
+    good = [p for p in (plans or []) if _lawish(p.get("q",""))]
+    if good:
+        plans = good[:10]
+    else:
+        # 후보 법령명 → 키워드 맵 → 키워드 bigram 순으로 구제
+        names = extract_law_candidates_llm(query) or []
+        if not names:
+            names = [v for k, v in KEYWORD_TO_LAW.items() if k in (query or "")]
+        if names:
+            plans = [{"target":"law","q":n,"must":[n],"must_not":[]} for n in names][:6]
+        else:
+            kw = (extract_keywords_llm(query) or [])[:5]
+            tmp=[]
+            for i in range(len(kw)):
+                for j in range(i+1, len(kw)):
+                    tmp.append({"target":"law","q":f"{kw[i]} {kw[j]}","must":[kw[i],kw[j]],"must_not":[]})
+            plans = tmp[:8]
+
+    # (이하 기존 실행/리랭크/패킹은 그대로)
+    tried, err = [], []
+    buckets = {"법령":("law",[]), "행정규칙":("admrul",[]), "자치법규":("ordin",[]), "조약":("trty",[])}
+    ...
+
 
     tried, err = [], []
     buckets = {"법령":("law",[]), "행정규칙":("admrul",[]), "자치법규":("ordin",[]), "조약":("trty",[])}
