@@ -1,6 +1,6 @@
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
-
+from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
 import io, os, re, json, time, html
 def _esc(s: str) -> str:
     """HTML escape only"""
@@ -442,6 +442,23 @@ def _summarize_laws_for_primer(law_items: list[dict], max_items: int = 6) -> str
         f"{body}\n"
         "가능하면 각 법령을 분리된 소제목으로 정리하고, 핵심 조문(1~2개)만 간단 인용하라."
     )
+
+# === AdviceEngine 인스턴스 ===
+# secrets가 없을 때 Streamlit 재실행 오류를 피하려면 가드를 둡니다.
+if client and AZURE:
+    engine = AdviceEngine(
+        client=client,
+        model=AZURE["deployment"],
+        tools=TOOLS,
+        safe_chat_completion=safe_chat_completion,
+        tool_search_one=tool_search_one,
+        tool_search_multi=tool_search_multi,
+        prefetch_law_context=prefetch_law_context,            # 있으면 그대로
+        summarize_laws_for_primer=_summarize_laws_for_primer   # 있으면 그대로
+    )
+else:
+    engine = None
+
 
 # === add: LLM-우선 후보 → 각 후보로 MOLEG API 다건 조회/누적 ===
 def prefetch_law_context(user_q: str, num_rows_per_law: int = 3) -> list[dict]:
@@ -1417,131 +1434,69 @@ TOOLS = [
     }
 ]
 
-def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
-    """
-    좌측 답변 생성을 위한 LLM 호출 + 툴콜 실행.
-    반환: 제너레이터. ("delta"| "final", text, law_links)
-    """
-    if client is None or not AZURE:
-        yield ("final", "엔진이 설정되지 않았습니다.", []); return
+# ============================
+# [GPT PATCH] app.py 연결부
+# 붙여넣는 위치: client/AZURE/TOOLS 등 준비가 끝난 "아래",
+#               사이드바/레이아웃 렌더링이 시작되기 "위"
+# ============================
 
-    # 0) 메시지 준비
-    msgs = [{"role": "system", "content": LEGAL_SYS}]
-    try:
-        # (선택) 법령 프라이머 주입
-        pre_laws = prefetch_law_context(user_q, num_rows_per_law=3)
-        primer = _summarize_laws_for_primer(pre_laws, max_items=6)
-        if primer:
-            msgs.append({"role": "system", "content": primer})
-    except Exception:
-        pass
-    msgs.append({"role": "user", "content": user_q})
+# 1) imports
+from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
 
-    # 1) 1차 호출(툴콜 허용)
-    resp1 = safe_chat_completion(
-        client,
-        messages=msgs,
-        model=AZURE["deployment"],
-        stream=False,
-        allow_retry=True,
-        tools=TOOLS,
-        tool_choice="auto",
-        temperature=0.2,
-        max_tokens=800,
+# 2) 엔진 생성 (한 번만)
+engine = None
+try:
+    # 아래 객체들은 app.py 상단에서 이미 정의되어 있어야 합니다.
+    # - client, AZURE, TOOLS
+    # - safe_chat_completion
+    # - tool_search_one, tool_search_multi
+    # - prefetch_law_context, _summarize_laws_for_primer
+    if client and AZURE and TOOLS:
+        engine = AdviceEngine(
+            client=client,
+            model=AZURE["deployment"],
+            tools=TOOLS,
+            safe_chat_completion=safe_chat_completion,
+            tool_search_one=tool_search_one,
+            tool_search_multi=tool_search_multi,
+            prefetch_law_context=prefetch_law_context,            # 있으면 그대로
+            summarize_laws_for_primer=_summarize_laws_for_primer, # 있으면 그대로
+            temperature=0.2,
+        )
+except NameError:
+    # 만약 위 객체들이 아직 정의되기 전 위치라면,
+    # 이 패치를 해당 정의 '아래'로 옮겨 붙이세요.
+    pass
+
+# 3) 기존 ask_llm_with_tools 를 얇은 래퍼로 교체
+def ask_llm_with_tools(
+    user_q: str,
+    num_rows: int = 5,
+    stream: bool = True,
+    forced_mode: str | None = None,  # 'quick' | 'lawfinder' | 'memo' | 'draft'
+    brief: bool = False,             # 간단 모드 토글
+):
+    """
+    UI에서 호출하는 진입점.
+    modules.AdviceEngine 이 내부에서:
+      - 의도 분류/모드 결정(Quick/LawFinder/Memo/Draft)
+      - 모드별 시스템 프롬프트 합성
+      - (필요 시) 법령 검색 툴콜 실행
+      - 조문 직링크 블록 자동 생성
+    까지 모두 처리합니다.
+    """
+    if engine is None:
+        yield ("final", "엔진이 설정되지 않았습니다. (client/AZURE/TOOLS 확인)", [])
+        return
+
+    # 엔진 스트리밍 출력 그대로 전달
+    yield from engine.generate(
+        user_q,
+        num_rows=num_rows,
+        stream=stream,
+        forced_mode=forced_mode,
+        brief=brief,
     )
-
-    # ✅ 가드: 콘텐츠 필터/오류 처리
-    t1 = resp1.get("type")
-    if t1 == "blocked_by_content_filter":
-        yield ("final", resp1.get("message") or "안전정책으로 답변을 생성할 수 없습니다.", [])
-        return
-    if "resp" not in resp1:
-        yield ("final", "모델이 일시적으로 응답하지 않습니다. 잠시 뒤 다시 시도해 주세요.", [])
-        return
-
-    msg1 = resp1["resp"].choices[0].message
-    law_for_links: list[dict] = []  # ← 링크 교정을 위한 누적 버킷
-
-    # 2) 툴 실행
-    if getattr(msg1, "tool_calls", None):
-        msgs.append({"role": "assistant", "tool_calls": msg1.tool_calls})
-        for call in msg1.tool_calls:
-            args = {}
-            try:
-                args = json.loads(call.function.arguments or "{}")
-            except Exception:
-                pass
-
-            if call.function.name == "search_one":
-                result = tool_search_one(**args)
-            elif call.function.name == "search_multi":
-                result = tool_search_multi(**args)
-            else:
-                result = {"error": f"unknown tool: {call.function.name}"}
-
-            # 링크 후보 누적
-            if isinstance(result, dict) and result.get("items"):
-                law_for_links.extend(result["items"])
-            elif isinstance(result, list):
-                for r in result:
-                    if isinstance(r, dict) and r.get("items"):
-                        law_for_links.extend(r["items"])
-
-            msgs.append({
-                "role": "tool",
-                "tool_call_id": call.id,
-                "content": json.dumps(result, ensure_ascii=False)
-            })
-
-    # 3) 2차 호출(최종 답변)
-    if stream:
-        resp2 = safe_chat_completion(
-            client, messages=msgs, model=AZURE["deployment"],
-            stream=True, allow_retry=True, temperature=0.2, max_tokens=1400,
-        )
-        if resp2.get("type") == "blocked_by_content_filter":
-            yield ("final", resp2.get("message") or "안전정책으로 답변을 생성할 수 없습니다.", law_for_links)
-            return
-
-        out = ""
-        for ch in resp2["stream"]:
-            try:
-                c = ch.choices[0]
-                if getattr(c, "finish_reason", None):
-                    break
-                d = getattr(c, "delta", None)
-                txt = getattr(d, "content", None) if d else None
-                if txt:
-                    out += txt
-                    yield ("delta", txt, law_for_links)
-            except Exception:
-                continue
-        yield ("final", out, law_for_links)
-        return
-
-    else:
-        resp2 = safe_chat_completion(
-            client, messages=msgs, model=AZURE["deployment"],
-            stream=False, allow_retry=True, temperature=0.2, max_tokens=1400,
-        )
-        if resp2.get("type") == "blocked_by_content_filter":
-            yield ("final", resp2.get("message") or "안전정책으로 답변을 생성할 수 없습니다.", law_for_links)
-            return
-
-        final_text = resp2["resp"].choices[0].message.content or ""
-        yield ("final", final_text, law_for_links)
-        return
-
-
-    # === add: LLM 호출 전에 '여러 법령 컨텍스트' 프라이머를 시스템 메시지로 주입 ===
-    try:
-        pre_laws = prefetch_law_context(user_q, num_rows_per_law=3)   # 위에서 만든 프리패치
-        primer = _summarize_laws_for_primer(pre_laws, max_items=6)
-        if primer:
-            msgs.insert(1, {"role":"system","content": primer})
-    except Exception:
-        pass  # 프리패치 실패 시 조용히 진행
-
     
 # =============================
 # Sidebar: 링크 생성기 (무인증)
