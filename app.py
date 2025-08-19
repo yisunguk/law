@@ -10,6 +10,9 @@ def _esc_br(s: str) -> str:
     """HTML escape + 줄바꿈을 <br>로"""
     return _esc(s).replace("\n", "<br>")
 
+from datetime import datetime            # _push_user_from_pending, 저장 시각 등에 필요
+import urllib.parse as up                # normalize_law_link, quote 등에서 사용
+import xml.etree.ElementTree as ET       # _call_moleg_list() XML 파싱에 필요
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
@@ -592,10 +595,6 @@ def present_url_with_fallback(main_url: str, kind: str, q: str, label_main="새 
         st.code(fb, language="text")
         st.link_button("대체 검색 링크 열기", fb, use_container_width=True)
         copy_url_button(fb, key=str(abs(hash(fb))))
-
-# ===== Pinned Question helper =====
-def _esc_br(s: str) -> str:
-    return html.escape(s or "").replace("\n", "<br>")
 
 def render_pinned_question():
     last_q = (st.session_state.get("last_q") or "").strip()
@@ -1321,11 +1320,63 @@ TOOLS = [
 ]
 
 def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
-    # ... (메시지/툴콜 준비 동일)
+    if client is None or not AZURE:
+        yield ("final", "엔진이 설정되지 않았습니다.", []); return
 
-    # 1차 콜 → 툴콜 실행 ... (동일)
+    # 0) 메시지 준비
+    msgs = [{"role": "system", "content": LEGAL_SYS}]
+    # (선택) 법령 후보를 미리 요약해 시스템 프롬프트로 주입
+    try:
+        pre_laws = prefetch_law_context(user_q, num_rows_per_law=3)
+        primer = _summarize_laws_for_primer(pre_laws, max_items=6)
+        if primer:
+            msgs.append({"role": "system", "content": primer})
+    except Exception:
+        pass
+    msgs.append({"role": "user", "content": user_q})
 
-    # 2차 콜 (최종)
+    # 1) 1차 호출(툴콜 허용)
+    resp1 = safe_chat_completion(
+        client,
+        messages=msgs,
+        model=AZURE["deployment"],
+        stream=False,
+        allow_retry=True,
+        tools=TOOLS,
+        tool_choice="auto",
+        temperature=0.2,
+        max_tokens=800,
+    )
+    msg1 = resp1["resp"].choices[0].message
+    law_for_links = []
+
+    # 2) 툴 실행
+    if getattr(msg1, "tool_calls", None):
+        msgs.append({"role": "assistant", "tool_calls": msg1.tool_calls})
+        for call in msg1.tool_calls:
+            args = json.loads(call.function.arguments or "{}")
+            if call.function.name == "search_one":
+                result = tool_search_one(**args)
+            elif call.function.name == "search_multi":
+                result = tool_search_multi(**args)
+            else:
+                result = {"error": f"unknown tool: {call.function.name}"}
+
+            # 링크 교정용 법령 누적
+            if isinstance(result, dict) and result.get("items"):
+                law_for_links.extend(result["items"])
+            elif isinstance(result, list):
+                for r in result:
+                    if r.get("items"):
+                        law_for_links.extend(r["items"])
+
+            msgs.append({
+                "role": "tool",
+                "tool_call_id": call.id,
+                "content": json.dumps(result, ensure_ascii=False)
+            })
+
+    # 3) 2차 호출(최종 답변)
     if stream:
         resp2 = safe_chat_completion(
             client, messages=msgs, model=AZURE["deployment"],
@@ -1346,7 +1397,6 @@ def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
             except Exception:
                 continue
         yield ("final", out, law_for_links)
-        return
     else:
         resp2 = safe_chat_completion(
             client, messages=msgs, model=AZURE["deployment"],
@@ -1354,83 +1404,6 @@ def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
         )
         if resp2.get("type") == "blocked_by_content_filter":
             yield ("final", resp2["message"], law_for_links); return
-        final_text = resp2["resp"].choices[0].message.content or ""
-        yield ("final", final_text, law_for_links)
-        return
-
-
-    msg1 = resp1["resp"].choices[0].message
-    law_for_links = []
-
-    # 2) 툴 실행 (있을 때)
-    if getattr(msg1, "tool_calls", None):
-        msgs.append({"role": "assistant", "tool_calls": msg1.tool_calls})
-        for call in msg1.tool_calls:
-            name = call.function.name
-            args = json.loads(call.function.arguments or "{}")
-            if name == "search_one":
-                result = tool_search_one(**args)
-            elif name == "search_multi":
-                result = tool_search_multi(**args)
-            else:
-                result = {"error": f"unknown tool: {name}"}
-
-            # 링크 교정용 법령 누적
-            if isinstance(result, dict) and result.get("items"):
-                law_for_links.extend(result["items"])
-            elif isinstance(result, list):
-                for r in result:
-                    if r.get("items"):
-                        law_for_links.extend(r["items"])
-
-            msgs.append({
-                "role": "tool",
-                "tool_call_id": call.id,
-                "content": json.dumps(result, ensure_ascii=False)
-            })
-
-    # 3) 2차 호출: 최종 답변 생성 (stream 여부에 따라)
-    if stream:
-        resp2 = safe_chat_completion(
-            client,
-            messages=msgs,
-            model=AZURE["deployment"],
-            stream=True,
-            allow_retry=True,
-            temperature=0.2,
-            max_tokens=1400,
-        )
-        if resp2.get("type") == "blocked_by_content_filter":
-            yield ("final", resp2["message"], law_for_links)
-            return
-
-        out = ""
-        for ch in resp2["stream"]:
-            try:
-                c = ch.choices[0]
-                if getattr(c, "finish_reason", None):
-                    break
-                d = getattr(c, "delta", None)
-                txt = getattr(d, "content", None) if d else None
-                if txt:
-                    out += txt
-                    yield ("delta", txt, law_for_links)
-            except Exception:
-                continue
-        yield ("final", out, law_for_links)
-    else:
-        resp2 = safe_chat_completion(
-            client,
-            messages=msgs,
-            model=AZURE["deployment"],
-            stream=False,
-            allow_retry=True,
-            temperature=0.2,
-            max_tokens=1400,
-        )
-        if resp2.get("type") == "blocked_by_content_filter":
-            yield ("final", resp2["message"], law_for_links)
-            return
         final_text = resp2["resp"].choices[0].message.content or ""
         yield ("final", final_text, law_for_links)
 
@@ -1757,27 +1730,7 @@ if user_q:
     else:
         st.info("답변 엔진이 아직 설정되지 않았습니다. API 키/엔드포인트를 확인해 주세요.")
 
-        # --- 빈 답변 가드 ---
-        if not final_text.strip():
-            # 스트리밍 중 띄운 문구만 지우고, 빈 말풍선은 남기지 않음
-            placeholder.empty()
-            st.info("현재 모델이 오프라인이거나 오류로 인해 답변을 생성하지 못했습니다.")
-        else:
-            # 로딩/중간 출력 지우기 → 최종 말풍선 렌더
-            placeholder.empty()
-            with placeholder.container():
-                render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
-
-            # 대화 기록 저장 (내용 있을 때만)
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": final_text,
-                    "law": collected_laws,
-                    "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                }
-            )
-
+      
    # 4) ChatBar (맨 아래 고정)
 submitted, typed_text, files = chatbar(
     placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
