@@ -998,12 +998,6 @@ def _filter_items_by_plan(user_q: str, items: list[dict], plan: dict) -> list[di
 
 @st.cache_data(show_spinner=False, ttl=180)
 def propose_api_queries_llm(user_q: str) -> list[dict]:
-    """
-    {"queries":[
-      {"target":"law","q":"민법 손해배상","must":["민법","손해배상"],"must_not":[]},
-      {"target":"law","q":"주차장법","must":["주차장"],"must_not":[]}
-    ]}
-    """
     if not user_q or client is None:
         return []
 
@@ -1011,10 +1005,13 @@ def propose_api_queries_llm(user_q: str) -> list[dict]:
         "너는 한국 법제처(Open API) 검색 쿼리를 설계한다. JSON ONLY.\n"
         '형식: {"queries":[{"target":"law|admrul|ordin|trty","q":"검색어",'
         '"must":["반드시 포함"], "must_not":["제외할 단어"]}, ...]}\n'
-        "- 사용자 질문과 직접 관련된 핵심어만 사용. "
+        # ★ 핵심 지시
+        "- **반드시 `법령명`(예: 형법, 민법, 도로교통법, 교통사고처리 특례법) 또는 "
+        "'법령명 + 핵심어(예: 형법 과실치상)` 형태로 질의를 만들 것.**\n"
+        "- **사건 서술(예: 지하 주차장에서 과속…) 자체를 질의로 사용하지 말 것.**\n"
         "- must는 1~3개로 간결하게, must_not은 분명히 다른 축일 때만."
-        "- 용어는 반드시 사용자 질문에 등장한 형태 그대로 쓸 것(오탈자/임의변형 금지). "
     )
+   
     try:
         resp = client.chat.completions.create(
             model=AZURE["deployment"],
@@ -1072,6 +1069,41 @@ def _rel_score(user_q: str, item_name: str, plan_q: str) -> int:
     if inter_ui == 0 and inter_pi == 0:
         score += 100
     return max(score, 0)
+
+# 파일 상단 아무 곳(유틸 근처)에 추가
+_LAWISH_RE = re.compile(r"(법|령|규칙|조례|법률)|제\d+조")
+def _lawish(q: str) -> bool:
+    return bool(_LAWISH_RE.search(q or ""))
+
+# find_all_law_data()의 플랜 생성부 바로 아래에 추가/교체
+plans = propose_api_queries_llm(query)
+
+# 오탈자 보정(이미 있음)
+for p in plans or []:
+    p["q"] = _sanitize_plan_q(query, p.get("q", ""))
+
+# 0-1) 정합성 필터
+plans = _filter_plans(query, plans)
+
+# 0-2) ★ 법령형 품질 검사 + 구제
+good = [p for p in (plans or []) if _lawish(p.get("q",""))]
+if not good:
+    # 1) LLM로 법령명 후보를 우선 추출
+    names = extract_law_candidates_llm(query) or []
+    # 2) 키워드→법령 맵 폴백
+    if not names:
+        names = [v for k, v in KEYWORD_TO_LAW.items() if k in (query or "")]
+    # 3) 그래도 없으면 키워드 bigram(최후)
+    if names:
+        plans = [{"target":"law","q":n,"must":[n],"must_not":[]} for n in names][:6]
+    else:
+        kws = (extract_keywords_llm(query) or [])[:5]
+        plans = [
+            {"target":"law","q":f"{kws[i]} {kws[j]}","must":[kws[i],kws[j]],"must_not":[]}
+            for i in range(len(kws)) for j in range(i+1,len(kws))
+        ][:8]
+else:
+    plans = good[:10]
 
 
 def find_all_law_data(query: str, num_rows: int = 3):
@@ -1140,8 +1172,14 @@ KEYWORD_TO_LAW = {
     "개인정보": "개인정보 보호법",
     "명함": "개인정보 보호법",
     "고객정보": "개인정보 보호법",
-    # 필요 시 확장...
+    # === 교통사고 계열(추가) ===
+    "교통사고": "교통사고처리 특례법",
+    "과실치상": "형법",          # LLM이 '형법 과실치상'으로 확장
+    "과속": "도로교통법",
+    "음주운전": "도로교통법",
+    "주차장": "도로교통법",
 }
+
 
 SYSTEM_EXTRACT = """너는 한국 법령명을 추출하는 도우미야.
 사용자 질문에서 관련 '법령명(공식명)' 후보를 1~3개 뽑아 JSON으로만 응답해.
@@ -1481,21 +1519,7 @@ def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
     except Exception:
         pass  # 프리패치 실패 시 조용히 진행
 
-    # ---------- [변경 없음] 이후 기존 safe_chat_completion 로직, tools, 스트리밍 등 유지 ----------
-    resp_dict = safe_chat_completion(
-        client,
-        messages=msgs,
-        model=AZURE["deployment"],
-        stream=False,
-        allow_retry=True,
-        tools=TOOLS,
-        tool_choice="auto",
-        temperature=0.2,
-        max_tokens=1200,
-    )
-    # 이하 원래 코드 그대로...
-
-
+    
 # =============================
 # Sidebar: 링크 생성기 (무인증)
 # =============================
