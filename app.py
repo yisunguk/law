@@ -775,6 +775,51 @@ def extract_keywords_llm(q: str) -> list[str]:
     except Exception:
         return []
 
+# === add: LLM 리랭커(맥락 필터) ===
+def rerank_laws_with_llm(user_q: str, law_items: list[dict], top_k: int = 8) -> list[dict]:
+    if not law_items or client is None:
+        return law_items
+    names = [d.get("법령명","").strip() for d in law_items if d.get("법령명")]
+    names_txt = "\n".join(f"- {n}" for n in names[:25])
+
+    SYS = (
+        "너는 사건과 관련된 '법령명'만 남기는 필터야. 질문 맥락과 무관하면 제외하고, JSON만 반환해.\n"
+        '형식: {"pick":["형법","산업안전보건법"]}'
+    )
+    prompt = (
+        "사용자 질문:\n" + (user_q or "") + "\n\n"
+        "후보 법령 목록:\n" + names_txt + "\n\n"
+        "사건에 직접 관련된 것만 3~8개 고르고 나머지는 제외해."
+    )
+
+    try:
+        resp = client.chat.completions.create(
+            model=AZURE["deployment"],
+            messages=[{"role":"system","content": SYS},
+                      {"role":"user","content": prompt}],
+            temperature=0.0, max_tokens=96,
+        )
+        txt = (resp.choices[0].message.content or "").strip()
+        import re, json as _json
+        if "```" in txt:
+            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", txt); 
+            if m: txt = m.group(1).strip()
+        if not txt.startswith("{"):
+            m = re.search(r"\{[\s\S]*\}", txt); 
+            if m: txt = m.group(0)
+        data = _json.loads(txt)
+        picks = [s.strip() for s in data.get("pick", []) if s.strip()]
+        if not picks:
+            return law_items
+        name_to_item = {}
+        for d in law_items:
+            nm = d.get("법령명","").strip()
+            if nm and nm not in name_to_item:
+                name_to_item[nm] = d
+        return [name_to_item[n] for n in picks if n in name_to_item][:top_k]
+    except Exception:
+        return law_items
+
 
 
 # 통합 검색(Expander용)
@@ -782,31 +827,42 @@ def find_all_law_data(query: str, num_rows: int = 3):
     results = {}
 
     # --- 1) 키워드 기반 질의 세트 준비 ---
-    kw_list = extract_keywords_llm(query)              # 새로 추가한 키워드 추출기 사용
-    q_clean = _clean_query_for_api(query)              # 기존 전처리(폴백)
-    law_name_candidates = extract_law_candidates_llm(query) or []  # 법령명 후보(보조)
+    kw_list = extract_keywords_llm(query)
+    q_clean = _clean_query_for_api(query)
+    law_name_candidates = extract_law_candidates_llm(query) or []
 
-    # 키워드 → 질의어 조합 (과도한 폭주 방지: 상위 3~5개만)
+    # --- 키워드 bigram/trigram 조합 ---
+    top = kw_list[:5]
     keyword_queries = []
-    for k in kw_list[:5]:
-        # (예) "건설현장 사망사고", "현장소장 살인" 등 2~3개 조합도 가능
-        keyword_queries.append(k)
-    # 폴백/보조 질의들 뒤에 추가
+    for i in range(len(top)):
+        for j in range(i+1, len(top)):
+            keyword_queries.append(f"{top[i]} {top[j]}")
+        for j in range(i+1, len(top)):
+            for k in range(j+1, len(top)):
+                keyword_queries.append(f"{top[i]} {top[j]} {top[k]}")
+
+    # --- 후보 + 클린쿼리 폴백 추가 ---
     if law_name_candidates:
         keyword_queries.extend([nm for nm in law_name_candidates if nm not in keyword_queries])
     if q_clean and q_clean not in keyword_queries:
         keyword_queries.append(q_clean)
 
-    # --- 2) '법령' 섹션: 키워드/후보들을 순차 조회, 누적 ---
+    # --- 키워드→법령 매핑 폴백 ---
+    for kw, mapped in KEYWORD_TO_LAW.items():
+        if kw in query and mapped not in keyword_queries:
+            keyword_queries.append(mapped)
+
+    # --- 2) '법령' 섹션 검색 ---
     law_items_all, law_errs, law_endpoint = [], [], None
-    for qx in keyword_queries:
+    for qx in keyword_queries[:10]:  # 상위 10개만
         try:
             items, endpoint, err = _call_moleg_list("law", qx, num_rows=num_rows)
+            # 🔽 군법 과잉 매칭 필터
+            items = [it for it in (items or []) if not it.get("법령명","").startswith("군")]
             if items:
                 law_items_all.extend(items)
                 law_endpoint = endpoint
-            if err:
-                law_errs.append(f"{qx}: {err}")
+            if err: law_errs.append(f"{qx}: {err}")
         except Exception as e:
             law_errs.append(f"{qx}: {e}")
 
@@ -816,19 +872,12 @@ def find_all_law_data(query: str, num_rows: int = 3):
         "error": "; ".join(law_errs) if law_errs else None,
     }
 
-    # --- 3) 나머지 섹션(행정규칙/자치법규/조약)도 같은 키워드 세트로 조회 ---
-    for label, target in {"행정규칙": "admrul", "자치법규": "ordin", "조약": "trty"}.items():
-        try:
-            merged, endpoint = [], None
-            for qx in keyword_queries[:5]:
-                items, ep, err = _call_moleg_list(target, qx, num_rows=num_rows)
-                if items:
-                    merged.extend(items); endpoint = ep
-            results[label] = {"items": merged, "endpoint": endpoint, "error": None}
-        except Exception as e:
-            results[label] = {"items": [], "endpoint": None, "error": f"호출 오류: {e}"}
-
     return results
+
+# --- 2) '법령' 섹션: ... 누적 완료 후 바로 아래 추가 ---
+if law_items_all:
+    law_items_all = rerank_laws_with_llm(query, law_items_all, top_k=8)
+
 
 # 캐시된 단일 법령 검색
 @st.cache_data(show_spinner=False, ttl=300)
@@ -1021,17 +1070,31 @@ TOOLS = [
     }
 ]
 
-def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
-    """스트리밍 제너레이터: ("delta", 토막, law_list) 또는 ("final", 전체, law_list)"""
-    # ✅ 오프라인/미설정: 메인창에 아무것도 출력하지 않도록 빈 결과만 전달
-    if client is None or AZURE is None:
-        yield ("final", "", [])
-        return
-
+def ask_llm_with_tools(user_q: str):
     msgs = [
-        {"role":"system","content": LEGAL_SYS},
-        {"role":"user","content": user_q},
+        {"role": "system", "content": SYSTEM_ROLE},
+        {"role": "user", "content": user_q},
     ]
+
+    # === LLM 호출 전에 프라이머 주입 ===
+    try:
+        pre_laws = prefetch_law_context(user_q, num_rows_per_law=3)
+        primer = _summarize_laws_for_primer(pre_laws, max_items=6)
+        if primer:
+            # system 역할로 primer 삽입
+            msgs.insert(1, {"role": "system", "content": primer})
+    except Exception:
+        pass
+
+    # 이후: 기존과 동일하게 chat.completions 호출
+    resp = client.chat.completions.create(
+        model=AZURE["deployment"],
+        messages=msgs,
+        temperature=0.2,
+        stream=True,
+        max_tokens=512,
+    )
+    ...
 
     # ---------- [변경1] 1차 호출: safe_chat_completion 사용 ----------
     resp_dict = safe_chat_completion(
