@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import io, os, re, json, time, html
 def _esc(s: str) -> str:
-    try:
-        return html.escape(str(s))
-    except Exception:
-        return str(s)
-from datetime import datetime
-import urllib.parse as up
-import xml.etree.ElementTree as ET
+    """HTML escape only"""
+    return html.escape("" if s is None else str(s))
+
+def _esc_br(s: str) -> str:
+    """HTML escape + 줄바꿈을 <br>로"""
+    return _esc(s).replace("\n", "<br>")
 
 import requests
 import streamlit as st
@@ -599,13 +598,19 @@ def _esc_br(s: str) -> str:
     return html.escape(s or "").replace("\n", "<br>")
 
 def render_pinned_question():
-    # ...
-    st.markdown(f"""
-    <div class="pinned-q">
-      <div class="label">최근 질문</div>
-      <div class="text">{_esc_br(last_q)}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    last_q = (st.session_state.get("last_q") or "").strip()
+    if not last_q:
+        return
+
+    st.markdown(
+        f"""
+        <div class="pinned-q">
+          <div class="label">최근 질문</div>
+          <div class="text">{_esc_br(last_q)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 # 답변 내 링크를 수집된 법령 상세링크로 교정
 def fix_links_with_lawdata(markdown: str, law_data: list[dict]) -> str:
