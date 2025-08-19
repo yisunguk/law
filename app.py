@@ -173,7 +173,7 @@ def _inject_right_rail_css():
     """, unsafe_allow_html=True)
 
 # ---- 오른쪽 플로팅 패널 렌더러 ----
-def render_search_flyout(user_q: str, num_rows: int = 3):
+def render_search_flyout(user_q: str, num_rows: int = 8):
     """오른쪽 고정 패널: 통합 검색 결과 (순수 HTML 렌더링)"""
     results = find_all_law_data(user_q, num_rows=num_rows)
 
@@ -182,31 +182,31 @@ def render_search_flyout(user_q: str, num_rows: int = 3):
     html_parts.append('<div id="search-flyout">')
     html_parts.append('<h3>📚 통합 검색 결과</h3>')
     html_parts.append('<details open><summary style="cursor:pointer;font-weight:600">열기/접기</summary>')
-    # >>> DEBUG: LLM이 실제로 시도한 쿼리/플랜 표시
-    dbg = (pack or {}).get("debug") or {}
-    tried = dbg.get("tried") or []      # 예: ["law:민법 손해배상", "law:주차장법", ...]
-    plans = dbg.get("plans") or []      # 예: [{"target":"law","q":"..."}, ...]
 
-    if tried:
-        tried_txt = " | ".join(tried[:6])  # 너무 길면 앞 6개만
-        html_parts.append(
-            f'<div style="opacity:.6;font-size:.85em;margin-top:4px">'
-            f'시도: {_esc(tried_txt)}</div>'
-        )
-
-    if plans:
-        plan_txt = " | ".join(
-            f"{p.get('target','')}:{p.get('q','')}" for p in plans[:6]
-        )
-        html_parts.append(
-            f'<div style="opacity:.6;font-size:.85em">'
-            f'LLM plans: {_esc(plan_txt)}</div>'
-        )
-    # <<< DEBUG
-
+    # ✅ 섹션 루프 안에서 pack을 만든 뒤, 그 다음에 디버그 정보를 읽는다.
     for label, pack in results.items():
         items = pack.get("items") or []
         err   = pack.get("error")
+
+        # --- DEBUG: 실제 시도 쿼리/플랜 표시(옵션) ---
+        dbg   = (pack.get("debug") or {})
+        tried = dbg.get("tried") or []      # 예: ["law:민법 손해배상", "law:주차장법", ...]
+        plans = dbg.get("plans") or []      # 예: [{"target":"law","q":"..."}, ...]
+        if tried:
+            tried_txt = " | ".join(tried[:6])
+            html_parts.append(
+                f'<div style="opacity:.6;font-size:.85em;margin-top:4px">'
+                f'시도: {esc(tried_txt)}</div>'
+            )
+        if plans:
+            plan_txt = " | ".join(
+                f"{p.get('target','')}:{p.get('q','')}" for p in plans[:6]
+            )
+            html_parts.append(
+                f'<div style="opacity:.6;font-size:.85em">'
+                f'LLM plans: {esc(plan_txt)}</div>'
+            )
+        # -------------------------------------------
 
         html_parts.append(f'<h4 style="margin:10px 0 6px">🔎 {esc(label)}</h4>')
 
@@ -216,7 +216,7 @@ def render_search_flyout(user_q: str, num_rows: int = 3):
         if not items:
             html_parts.append('<div style="opacity:.65">검색 결과 없음</div>')
             continue
-        
+
         # 결과 카드 목록
         for i, law in enumerate(items, 1):
             nm   = esc(law.get("법령명",""))
@@ -226,22 +226,27 @@ def render_search_flyout(user_q: str, num_rows: int = 3):
             pub  = esc(law.get("공포일자","-"))
             link = law.get("법령상세링크")
 
-            html_parts.append('<div style="border:1px solid rgba(127,127,127,.25);'
-                              'border-radius:12px;padding:10px 12px;margin:8px 0">')
+            html_parts.append(
+                '<div style="border:1px solid rgba(127,127,127,.25);'
+                'border-radius:12px;padding:10px 12px;margin:8px 0">'
+            )
             html_parts.append(f'<div style="font-weight:700">{i}. {nm} '
                               f'<span style="opacity:.7">({kind})</span></div>')
             html_parts.append(f'<div style="margin-top:4px">소관부처: {dept}</div>')
             html_parts.append(f'<div>시행일자: {eff} / 공포일자: {pub}</div>')
             if link:
-                html_parts.append(f'<div style="margin-top:6px">'
-                                  f'<a href="{esc(link)}" target="_blank">법령 상세보기</a>'
-                                  f'</div>')
+                html_parts.append(
+                    f'<div style="margin-top:6px">'
+                    f'<a href="{esc(link)}" target="_blank">법령 상세보기</a>'
+                    f'</div>'
+                )
             html_parts.append('</div>')
 
     html_parts.append('</details>')
     html_parts.append('</div>')  # #search-flyout
 
     st.markdown("\n".join(html_parts), unsafe_allow_html=True)
+
 
 
 st.markdown(
