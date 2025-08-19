@@ -174,6 +174,63 @@ def _inject_right_rail_css():
     </style>
     """, unsafe_allow_html=True)
 
+# --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
+def _tok(s: str) -> list[str]:
+    return re.findall(r"[가-힣A-Za-z0-9]{2,}", (s or ""))
+
+_CANON = {
+    "손배":"손해배상", "차량":"자동차", "교특법":"교통사고처리",  # 필요시 확장
+}
+def _canonize(tokens: list[str]) -> list[str]:
+    return [_CANON.get(t, t) for t in tokens]
+
+# --- 레벤슈타인: 1글자 이내 오탈자 교정용(가벼운 구현) ---
+def _lev1(a: str, b: str) -> int:
+    # 거리 0/1/2만 빠르게 판별
+    if a == b: return 0
+    if abs(len(a) - len(b)) > 1: return 2
+    # 같은 길이: 치환 1회 이내 검사
+    if len(a) == len(b):
+        diff = sum(1 for x, y in zip(a, b) if x != y)
+        return 1 if diff == 1 else 2
+    # 하나 길이 차: 삽입/삭제 1회 이내 검사
+    if len(a) > len(b): a, b = b, a
+    i = j = edits = 0
+    while i < len(a) and j < len(b):
+        if a[i] == b[j]:
+            i += 1; j += 1
+        else:
+            edits += 1; j += 1
+            if edits > 1: return 2
+    return 1 if edits <= 1 else 2
+
+def _closest_token_1edit(t: str, U: set[str]) -> str | None:
+    best = None; best_d = 2
+    for u in U:
+        d = _lev1(t, u)
+        if d < best_d:
+            best, best_d = u, d
+            if best_d == 0: break
+    return best if best_d <= 1 else None
+
+def _sanitize_plan_q(user_q: str, q: str) -> str:
+    """
+    플랜 q 안의 토큰 중 사용자 질문에 없는 토큰을
+    '한 글자 이내'로 가까운 사용자 토큰으로 교체(예: 주차자 → 주차장).
+    """
+    U = set(_canonize(_tok(user_q)))
+    T = _canonize(_tok(q))
+    repl = {}
+    for t in T:
+        if t not in U and len(t) >= 2:
+            cand = _closest_token_1edit(t, U)
+            if cand:
+                repl[t] = cand
+    # 한국어는 \b 경계가 약하므로 단순 치환(부분치환 위험 낮음)
+    for a, b in repl.items():
+        q = q.replace(a, b)
+    return q
+
 # ---- 오른쪽 플로팅 패널 렌더러 ----
 def render_search_flyout(user_q: str, num_rows: int = 8):
     """오른쪽 고정 패널: 통합 검색 결과 (순수 HTML 렌더링)"""
@@ -1019,10 +1076,17 @@ def _rel_score(user_q: str, item_name: str, plan_q: str) -> int:
 def find_all_law_data(query: str, num_rows: int = 3):
     results = {}
 
-    # 0) LLM 플랜 → 정합성 필터
-    plans = _filter_plans(query, propose_api_queries_llm(query))
+    # 0) LLM 플랜 생성
+    plans = propose_api_queries_llm(query)
 
-    # 0-1) 완전 실패 시 얇은 폴백(키워드 bigram → law)
+    # ✅ 오탈자 교정 레이어: 사용자 문장에 맞춰 plan.q를 보정
+    for p in plans or []:
+        p["q"] = _sanitize_plan_q(query, p.get("q", ""))
+
+    # 0-1) 정합성 필터(제약 보존!)
+    plans = _filter_plans(query, plans)
+
+      # 0-1) 완전 실패 시 얇은 폴백(키워드 bigram → law)
     if not plans:
         kw = (extract_keywords_llm(query) or [])[:5]
         tmp=[]
