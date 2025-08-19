@@ -1807,7 +1807,6 @@ if user_q:
                         full_text += buffer; buffer = ""
                         stream_box.markdown(_normalize_text(full_text[-1500:]))
                 elif kind == "final":
-                    full_text += (payload or "")
                     collected_laws = law_list or []
                     break
             if buffer:
