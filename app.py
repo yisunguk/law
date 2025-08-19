@@ -1098,7 +1098,7 @@ TOOLS = [
 def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
 
     msgs = [
-        {"role": "system", "content": SYSTEM_ROLE},
+        {"role": "system", "content": LEGAL_SYS},
         {"role": "user", "content": user_q},
     ]
 
