@@ -984,27 +984,39 @@ def extract_law_candidates_llm(q: str) -> list[str]:
 # === LLM 플래너 & 플랜 필터 ===
 import re, json
 
+# === LLM 플래너 & 플랜 필터 ===
 def _filter_items_by_plan(user_q: str, items: list[dict], plan: dict) -> list[dict]:
     name_get = lambda d: (d.get("법령명") or "")
     must = set(_canonize(plan.get("must") or []))
     must_not = set(_canonize(plan.get("must_not") or []))
-    qtok = set(_canonize(_tok(plan.get("q",""))))  # 질의 토큰
+    qtok = set(_canonize(_tok(plan.get("q",""))))
+    target = (plan.get("target") or "").strip()
 
-    kept=[]
+    kept = []
     for it in (items or []):
         nm = name_get(it)
         N = set(_canonize(_tok(nm)))
-        if must and not (N & must):          # must가 있으면 최소 1개 이상 겹쳐야
-            continue
-        if not must and qtok and not (N & qtok):  # must가 없어도, 질의토큰과는 최소 1개 겹쳐야
-            continue
-        if must_not and (N & must_not):      # 제외 토큰에 걸리면 버림
-            continue
-        kept.append(it)
 
-    kept.sort(key=lambda d: _rel_score(user_q, name_get(d), plan.get("q","")))
-    return kept
+        # 1) q 토큰은 하드 필터 (최소한의 정합성 확보)
+        if qtok and not (N & qtok):
+            continue
 
+        # 2) 제외 토큰은 계속 하드 필터
+        if must_not and (N & must_not):
+            continue
+
+        # 3) must는 '랭킹용'으로만 사용 (하드 필터 제거)
+        kept.append((it, N))
+
+    # 랭킹: 사용자/플랜 관련도 + must 매칭 보너스(-3씩)
+    def score(pair):
+        it, N = pair
+        base = _rel_score(user_q, name_get(it), plan.get("q",""))
+        bonus = -3 * len(N & must)
+        return base + bonus
+
+    kept.sort(key=score)
+    return [it for it, _ in kept]
 
 @st.cache_data(show_spinner=False, ttl=180)
 def propose_api_queries_llm(user_q: str) -> list[dict]:
