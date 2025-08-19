@@ -1050,11 +1050,6 @@ def propose_api_queries_llm(user_q: str) -> list[dict]:
     except Exception:
         return []
 
-# --- 토큰 표준화(간단 동의어/축약 정리: 필요시 확장)
-_CANON = {
-    "손배":"손해배상", "차량":"자동차", "교특법":"교통사고처리", "주차장법":"주차장법",
-}
-
 # --- 관련도 스코어(작을수록 관련)
 def _rel_score(user_q: str, item_name: str, plan_q: str) -> int:
     U = set(_canonize(_tok(user_q)))
@@ -1111,12 +1106,7 @@ def find_all_law_data(query: str, num_rows: int = 3):
     # (이하 기존 실행/리랭크/패킹은 그대로)
     tried, err = [], []
     buckets = {"법령":("law",[]), "행정규칙":("admrul",[]), "자치법규":("ordin",[]), "조약":("trty",[])}
-    ...
-
-
-    tried, err = [], []
-    buckets = {"법령":("law",[]), "행정규칙":("admrul",[]), "자치법규":("ordin",[]), "조약":("trty",[])}
-
+   
     # 1) 실행
     for plan in plans:
         t, qx = plan["target"], plan["q"]
@@ -1409,13 +1399,17 @@ TOOLS = [
 ]
 
 def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
+    """
+    좌측 답변 생성을 위한 LLM 호출 + 툴콜 실행.
+    반환: 제너레이터. ("delta"| "final", text, law_links)
+    """
     if client is None or not AZURE:
         yield ("final", "엔진이 설정되지 않았습니다.", []); return
 
     # 0) 메시지 준비
     msgs = [{"role": "system", "content": LEGAL_SYS}]
-    # (선택) 법령 후보를 미리 요약해 시스템 프롬프트로 주입
     try:
+        # (선택) 법령 프라이머 주입
         pre_laws = prefetch_law_context(user_q, num_rows_per_law=3)
         primer = _summarize_laws_for_primer(pre_laws, max_items=6)
         if primer:
@@ -1436,14 +1430,29 @@ def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
         temperature=0.2,
         max_tokens=800,
     )
+
+    # ✅ 가드: 콘텐츠 필터/오류 처리
+    t1 = resp1.get("type")
+    if t1 == "blocked_by_content_filter":
+        yield ("final", resp1.get("message") or "안전정책으로 답변을 생성할 수 없습니다.", [])
+        return
+    if "resp" not in resp1:
+        yield ("final", "모델이 일시적으로 응답하지 않습니다. 잠시 뒤 다시 시도해 주세요.", [])
+        return
+
     msg1 = resp1["resp"].choices[0].message
-    law_for_links = []
+    law_for_links: list[dict] = []  # ← 링크 교정을 위한 누적 버킷
 
     # 2) 툴 실행
     if getattr(msg1, "tool_calls", None):
         msgs.append({"role": "assistant", "tool_calls": msg1.tool_calls})
         for call in msg1.tool_calls:
-            args = json.loads(call.function.arguments or "{}")
+            args = {}
+            try:
+                args = json.loads(call.function.arguments or "{}")
+            except Exception:
+                pass
+
             if call.function.name == "search_one":
                 result = tool_search_one(**args)
             elif call.function.name == "search_multi":
@@ -1451,12 +1460,12 @@ def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
             else:
                 result = {"error": f"unknown tool: {call.function.name}"}
 
-            # 링크 교정용 법령 누적
+            # 링크 후보 누적
             if isinstance(result, dict) and result.get("items"):
                 law_for_links.extend(result["items"])
             elif isinstance(result, list):
                 for r in result:
-                    if r.get("items"):
+                    if isinstance(r, dict) and r.get("items"):
                         law_for_links.extend(r["items"])
 
             msgs.append({
@@ -1472,12 +1481,15 @@ def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
             stream=True, allow_retry=True, temperature=0.2, max_tokens=1400,
         )
         if resp2.get("type") == "blocked_by_content_filter":
-            yield ("final", resp2["message"], law_for_links); return
+            yield ("final", resp2.get("message") or "안전정책으로 답변을 생성할 수 없습니다.", law_for_links)
+            return
+
         out = ""
         for ch in resp2["stream"]:
             try:
                 c = ch.choices[0]
-                if getattr(c, "finish_reason", None): break
+                if getattr(c, "finish_reason", None):
+                    break
                 d = getattr(c, "delta", None)
                 txt = getattr(d, "content", None) if d else None
                 if txt:
@@ -1486,15 +1498,21 @@ def ask_llm_with_tools(user_q: str, num_rows: int = 5, stream: bool = True):
             except Exception:
                 continue
         yield ("final", out, law_for_links)
+        return
+
     else:
         resp2 = safe_chat_completion(
             client, messages=msgs, model=AZURE["deployment"],
             stream=False, allow_retry=True, temperature=0.2, max_tokens=1400,
         )
         if resp2.get("type") == "blocked_by_content_filter":
-            yield ("final", resp2["message"], law_for_links); return
+            yield ("final", resp2.get("message") or "안전정책으로 답변을 생성할 수 없습니다.", law_for_links)
+            return
+
         final_text = resp2["resp"].choices[0].message.content or ""
         yield ("final", final_text, law_for_links)
+        return
+
 
     # === add: LLM 호출 전에 '여러 법령 컨텍스트' 프라이머를 시스템 메시지로 주입 ===
     try:
