@@ -822,50 +822,80 @@ def rerank_laws_with_llm(user_q: str, law_items: list[dict], top_k: int = 8) -> 
 
 
 
-# 통합 검색(Expander용)
+# 통합 검색(Expander용) — 교체본
 def find_all_law_data(query: str, num_rows: int = 3):
     results = {}
 
-    # --- 1) 키워드 기반 질의 세트 준비 ---
-    kw_list = extract_keywords_llm(query)
-    q_clean = _clean_query_for_api(query)
-    law_name_candidates = extract_law_candidates_llm(query) or []
+    # --- 1) 키워드/후보 준비 ---
+    kw_list = extract_keywords_llm(query)                         # LLM 키워드 추출
+    q_clean = _clean_query_for_api(query)                         # 폴백 전처리
+    law_name_candidates = extract_law_candidates_llm(query) or [] # 법령명 후보
 
-    # --- 키워드 bigram/trigram 조합 ---
+    # --- 2) 키워드 → 복합(2~3그램) 질의어 생성 ---
     top = kw_list[:5]
-    keyword_queries = []
+    keyword_queries: list[str] = []
+
+    # bigrams
     for i in range(len(top)):
-        for j in range(i+1, len(top)):
+        for j in range(i + 1, len(top)):
             keyword_queries.append(f"{top[i]} {top[j]}")
-        for j in range(i+1, len(top)):
-            for k in range(j+1, len(top)):
+
+    # trigrams (최대 3개만 사용)
+    for i in range(min(3, len(top))):
+        for j in range(i + 1, min(3, len(top))):
+            for k in range(j + 1, min(3, len(top))):
                 keyword_queries.append(f"{top[i]} {top[j]} {top[k]}")
 
-    # --- 후보 + 클린쿼리 폴백 추가 ---
-    if law_name_candidates:
-        keyword_queries.extend([nm for nm in law_name_candidates if nm not in keyword_queries])
-    if q_clean and q_clean not in keyword_queries:
+    # 중복 제거(순서 보존) + 개수 제한
+    _seen = set()
+    keyword_queries = [q for q in keyword_queries if not (q in _seen or _seen.add(q))]
+    keyword_queries = keyword_queries[:10]
+
+    # --- 3) 법령명 후보(LLM) 보조 추가 ---
+    for nm in law_name_candidates:
+        if nm and nm not in keyword_queries:
+            keyword_queries.append(nm)
+
+    # --- 4) 폴백은 '아무 후보도 없을 때만' ---
+    if not keyword_queries and q_clean:
         keyword_queries.append(q_clean)
 
-    # --- 키워드→법령 매핑 폴백 ---
+    # (선택) 키워드→대표 법령명 맵 보조
     for kw, mapped in KEYWORD_TO_LAW.items():
-        if kw in query and mapped not in keyword_queries:
+        if kw in (query or "") and mapped not in keyword_queries:
             keyword_queries.append(mapped)
 
-    # --- 2) '법령' 섹션 검색 ---
+    # --- 5) '법령' 섹션 검색 ---
     law_items_all, law_errs, law_endpoint = [], [], None
-    for qx in keyword_queries[:10]:  # 상위 10개만
+    for qx in keyword_queries[:10]:
         try:
             items, endpoint, err = _call_moleg_list("law", qx, num_rows=num_rows)
-            # 🔽 군법 과잉 매칭 필터
-            items = [it for it in (items or []) if not it.get("법령명","").startswith("군")]
             if items:
                 law_items_all.extend(items)
                 law_endpoint = endpoint
-            if err: law_errs.append(f"{qx}: {err}")
+            if err:
+                law_errs.append(f"{qx}: {err}")
         except Exception as e:
             law_errs.append(f"{qx}: {e}")
 
+    # --- 6) LLM 리랭커(맥락 필터) + 소프트 정렬 ---
+    if law_items_all:
+        # LLM이 질문 맥락과 무관한 법령(예: 군/국방) 제외/후순위
+        law_items_all = rerank_laws_with_llm(query, law_items_all, top_k=8)
+
+        # 군 맥락이 없으면 군/국방 계열을 뒤로 미는 소프트 스코어
+        def _score_by_ctx(item: dict) -> int:
+            name = (item.get("법령명") or "")
+            dept = (item.get("소관부처명") or "")
+            score = 0
+            has_mil = any(x in (query or "") for x in ["군", "국방", "군인", "부대", "장병"])
+            if not has_mil and ("국방부" in dept or any(x in name for x in ["군에서", "군형법", "군사", "군인"])):
+                score += 50
+            return score
+
+        law_items_all.sort(key=_score_by_ctx)
+
+    # --- 7) 패킹 ---
     results["법령"] = {
         "items": law_items_all,
         "endpoint": law_endpoint,
@@ -873,11 +903,6 @@ def find_all_law_data(query: str, num_rows: int = 3):
     }
 
     return results
-
-# --- 2) '법령' 섹션: ... 누적 완료 후 바로 아래 추가 ---
-if law_items_all:
-    law_items_all = rerank_laws_with_llm(query, law_items_all, top_k=8)
-
 
 # 캐시된 단일 법령 검색
 @st.cache_data(show_spinner=False, ttl=300)
