@@ -650,18 +650,26 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
     if not LAW_API_KEY:
         return [], None, "LAW_API_KEY 미설정"
 
-    api_key = (LAW_API_KEY or "").strip().strip('"').strip("'")
+    api_key = (LAW_API_KEY or "").strip().strip("'").strip('"')
     if "%" in api_key and any(t in api_key.upper() for t in ("%2B", "%2F", "%3D")):
-        try: api_key = up.unquote(api_key)
-        except Exception: pass
+        try:
+            api_key = up.unquote(api_key)
+        except Exception:
+            pass
+
+    # === 추가: 빈 질의어(와일드카드) 호출 차단 ===
+    q = (query or "").strip()
+    if not q:
+        return [], None, "빈 질의어로 호출되어 무시함"
 
     params = {
         "serviceKey": api_key,
         "target": target,
-        "query": query or "*",
+        "query": q,  # <-- 기존의 (query or "*") 를 q 로 교체
         "numOfRows": max(1, min(10, int(num_rows))),
         "pageNo": max(1, int(page_no)),
     }
+    # ... 이하 기존 로직 그대로 ...
 
     last_err = None
     resp = None
@@ -950,36 +958,121 @@ def extract_law_candidates_llm(q: str) -> list[str]:
     # 실패 시 빈 리스트
     return []
 
+# === LLM 플래너 & 플랜 필터 ===
+import re, json
+
+def _tok_ko(s: str) -> set[str]:
+    """한글 토큰(2자 이상) 집합"""
+    return set(re.findall(r"[가-힣]{2,}", (s or "")))
+
+def _filter_plans(user_q: str, plans: list[dict]) -> list[dict]:
+    """
+    LLM이 만든 계획(plans)을 사용자 질문과의 관련성으로 1차 필터링.
+    - 빈 쿼리/무관 주제(예: 난민법) 제거
+    - 중복 제거, 최대 10개
+    """
+    U = _tok_ko(user_q)
+    ALLOW = {"민법","손해","손배","불법행위","주차","주차장","차량","자동차","교통","배상"}
+    NEG = {"난민","난민법"} if ("난민" not in U and "난민법" not in U) else set()
+
+    out, seen = [], set()
+    for p in plans or []:
+        t = (p.get("target") or "").strip()
+        q = (p.get("q") or "").strip()
+        if not t or not q:
+            continue
+        T = _tok_ko(q)
+        if (T & U) or (T & ALLOW):          # 최소 1토큰 이상 겹치거나 허용 토큰 포함
+            if not (T & NEG):               # 금지 토큰(난민*) 없을 때만 채택
+                key = (t, q)
+                if key not in seen:
+                    seen.add(key)
+                    out.append({"target": t, "q": q[:60]})
+    return out[:10]
+
+@st.cache_data(show_spinner=False, ttl=180)
+def propose_api_queries_llm(user_q: str) -> list[dict]:
+    """
+    LLM에게 '어떤 타겟(law/admrul/ordin/trty)을 어떤 질의(q)로 칠지'를 제안받는다.
+    JSON만 파싱하고, 결과는 _filter_plans로 1차 정제한다.
+    """
+    if not user_q or client is None:
+        return []
+
+    SYS = (
+        "너는 한국 법제처(Open API) 검색 쿼리를 설계하는 도우미야. "
+        "반드시 JSON만 반환해. 설명/코드펜스 금지.\n"
+        '형식: {"queries":[{"target":"law|admrul|ordin|trty","q":"검색어"}, ...]}\n'
+        "- 사용자 질문과 직접 연결되는 단어만 사용(문맥 밖 주제 금지). "
+        "- 예: 주차·차량·손해·배상·민법 관련이면 '민법 손해배상', '민법 제750조', '주차장법' 등만. "
+        "- 사용자가 언급하지 않은 '난민/난민법' 등은 절대 포함하지 말 것."
+    )
+
+    try:
+        resp = client.chat.completions.create(
+            model=AZURE["deployment"],
+            messages=[{"role":"system","content": SYS},
+                      {"role":"user","content": user_q.strip()}],
+            temperature=0.0, max_tokens=200,
+        )
+        txt = (resp.choices[0].message.content or "").strip()
+
+        # JSON만 추출(코드펜스/잡텍스트 제거)
+        if "```" in txt:
+            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", txt)
+            if m: txt = m.group(1).strip()
+        if not txt.startswith("{"):
+            m = re.search(r"\{[\s\S]*\}", txt)
+            if m: txt = m.group(0)
+
+        data = json.loads(txt) if txt else {}
+        arr = (data.get("queries") or [])
+        allowed = {"law","admrul","ordin","trty"}
+        plans = [{"target": (it.get("target") or "").strip(),
+                  "q":      (it.get("q") or "").strip()[:60]}
+                 for it in arr if (it.get("target") or "").strip() in allowed and (it.get("q") or "").strip()]
+        return _filter_plans(user_q, plans)
+    except Exception:
+        return []
+
 
 
 # === LLM-주도 통합 검색 ===
 def find_all_law_data(query: str, num_rows: int = 3):
     results = {}
 
-    # 0) LLM에게 '어떤 타겟을 어떤 질의로 칠지' 먼저 물어본다
+    # 0) LLM 플랜 생성 + 1차 필터
     plans = propose_api_queries_llm(query)
+    plans = _filter_plans(query, plans)
 
-    # 0-1) LLM이 실패(빈 리스트)했을 때만 아주 가벼운 폴백
+    # 0-1) 플랜이 비면 아주 얇은 폴백(키워드 bigram → law 타겟)
     if not plans:
-        kw = extract_keywords_llm(query)[:5]  # 이미 있으신 견고 버전 추천
-        # bigram 위주로 간단 조합 → 'law' 타겟에 한해 5~8개 정도
+        kw = (extract_keywords_llm(query) or [])[:5]
         tmp = []
         for i in range(len(kw)):
             for j in range(i+1, len(kw)):
                 tmp.append({"target":"law", "q": f"{kw[i]} {kw[j]}"})
         plans = tmp[:8]
 
-    # 1) 수집 루프
     tried, err_logs = [], []
-    buckets = {"법령": ("law", []), "행정규칙": ("admrul", []),
-               "자치법규": ("ordin", []), "조약": ("trty", [])}
+    buckets = {
+        "법령": ("law",   []),
+        "행정규칙": ("admrul",[]),
+        "자치법규": ("ordin", []),
+        "조약": ("trty",  []),
+    }
 
-    # 군 맥락 판단(질문에 군/국방이 없으면 군 관련은 수집단계에서 소거)
+    # 군 맥락 판단(없으면 군 관련 1차 소거)
     has_mil = any(x in (query or "") for x in ["군","국방","군인","부대","장병","군사"])
 
+    # 1) 실행 루프
     for plan in plans:
         t, qx = plan["target"], plan["q"]
+        if not qx.strip():
+            err_logs.append(f"{t}:(blank) → dropped")
+            continue
         tried.append(f"{t}:{qx}")
+
         try:
             items, endpoint, err = _call_moleg_list(t, qx, num_rows=num_rows)
 
@@ -988,26 +1081,27 @@ def find_all_law_data(query: str, num_rows: int = 3):
                 items = [
                     it for it in (items or [])
                     if (it.get("소관부처명") or "") != "국방부"
-                       and not any(k in (it.get("법령명") or "") for k in
-                                   ["군형법","군수용자","군사","군인","군에서"])
+                       and not any(k in (it.get("법령명") or "") for k in ["군형법","군수용자","군사","군인","군에서"])
                 ]
 
-            # 버킷에 누적
+            # 버킷 누적
             for label, (tt, arr) in buckets.items():
                 if t == tt and items:
                     arr.extend(items)
+
             if err:
                 err_logs.append(f"{t}:{qx} → {err}")
+
         except Exception as e:
             err_logs.append(f"{t}:{qx} → {e}")
 
     # 2) 리랭크/패킹
     for label, (tt, arr) in buckets.items():
         if arr and tt == "law" and len(arr) >= 3:
-            arr = rerank_laws_with_llm(query, arr, top_k=8)  # 이미 있으신 함수
+            arr = rerank_laws_with_llm(query, arr, top_k=8)
         results[label] = {
             "items": arr,
-            "endpoint": None,                 # 필요시 마지막 endpoint를 저장
+            "endpoint": None,
             "error": "; ".join(err_logs) if err_logs else None,
             "debug": {"plans": plans, "tried": tried},
         }
