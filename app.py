@@ -1013,6 +1013,7 @@ def propose_api_queries_llm(user_q: str) -> list[dict]:
         '"must":["반드시 포함"], "must_not":["제외할 단어"]}, ...]}\n'
         "- 사용자 질문과 직접 관련된 핵심어만 사용. "
         "- must는 1~3개로 간결하게, must_not은 분명히 다른 축일 때만."
+        "- 용어는 반드시 사용자 질문에 등장한 형태 그대로 쓸 것(오탈자/임의변형 금지). "
     )
     try:
         resp = client.chat.completions.create(
