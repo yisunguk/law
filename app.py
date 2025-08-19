@@ -925,43 +925,108 @@ SYSTEM_EXTRACT = """너는 한국 법령명을 추출하는 도우미야.
 법령명이 애매하면 가장 유력한 것 1개만.
 """
 
+# ===== 강건한 키워드 추출기 (교체) =====
 @st.cache_data(show_spinner=False, ttl=300)
-def extract_law_candidates_llm(q: str) -> list[str]:
+def extract_keywords_llm(q: str) -> list[str]:
+    """
+    사용자 질문에서 핵심 키워드 2~6개를 안정적으로 추출한다.
+    파이프라인: LLM(표준) -> LLM(엄격 재시도) -> 규칙 기반 폴백.
+    """
     if not q or (client is None):
         return []
+
+    def _parse_json_keywords(txt: str) -> list[str]:
+        # 코드펜스/잡텍스트 제거 + JSON 블럭만 추출
+        import re, json as _json
+        t = (txt or "").strip()
+        if "```" in t:
+            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", t)
+            if m:
+                t = m.group(1).strip()
+        if not t.startswith("{"):
+            m = re.search(r"\{[\s\S]*\}", t)
+            if m:
+                t = m.group(0)
+        data = _json.loads(t)
+        kws = [s.strip() for s in (data.get("keywords", []) or []) if s and s.strip()]
+        # 간단 정규화/중복제거
+        seen, out = set(), []
+        for k in kws:
+            k2 = k[:20]  # 과도한 길이 컷
+            if len(k2) >= 2 and k2 not in seen:
+                seen.add(k2); out.append(k2)
+        return out
+
+    # 1) LLM 1차
     try:
+        SYSTEM_KW = (
+            "너는 한국 법률 질의의 핵심 키워드만 추출하는 도우미야. "
+            "반드시 JSON만 반환하고, 설명/코드블록/주석은 금지.\n"
+            '형식: {"keywords":["폭행","위협","정당방위","과잉방위","병원 이송"]}'
+        )
         resp = client.chat.completions.create(
             model=AZURE["deployment"],
-            messages=[
-                {"role": "system", "content": SYSTEM_EXTRACT},
-                {"role": "user", "content": q.strip()},
-            ],
-            temperature=0.0,
-            max_tokens=128,
+            messages=[{"role":"system","content": SYSTEM_KW},
+                      {"role":"user","content": q.strip()}],
+            temperature=0.0, max_tokens=96,
         )
-        txt = (resp.choices[0].message.content or "").strip()
+        kws = _parse_json_keywords(resp.choices[0].message.content)
+        if kws:
+            return kws[:6]
+    except Exception as e:
+        st.session_state["_kw_extract_err1"] = str(e)
 
-        # --- 추가: 코드펜스/잡텍스트 제거 ---
-        if "```" in txt:
-            import re
-            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", txt)
-            if m:
-                txt = m.group(1).strip()
+    # 2) LLM 2차(엄격 재시도)
+    try:
+        SYSTEM_KW_STRICT = (
+            "JSON ONLY. No code fences, no commentary. "
+            'Format: {"keywords":["키워드1","키워드2","키워드3"]} '
+            "키워드는 2~6개, 명사/짧은 구 중심."
+        )
+        resp2 = client.chat.completions.create(
+            model=AZURE["deployment"],
+            messages=[{"role":"system","content": SYSTEM_KW_STRICT},
+                      {"role":"user","content": q.strip()}],
+            temperature=0.0, max_tokens=96,
+        )
+        kws2 = _parse_json_keywords(resp2.choices[0].message.content)
+        if kws2:
+            return kws2[:6]
+    except Exception as e:
+        st.session_state["_kw_extract_err2"] = str(e)
 
-        if not txt.startswith("{"):
-            import re
-            m = re.search(r"\{[\s\S]*\}", txt)
-            if m:
-                txt = m.group(0)
+    # 3) 규칙 기반 폴백(LLM 실패/차단/네트워크 예외 대비)
+    def _rule_based_kw(text: str) -> list[str]:
+        t = (text or "")
+        # 도메인 화이트리스트 매칭(등장하는 것만 채택)
+        WL = [
+            "폭행", "상해", "협박", "위협", "제지", "정당방위", "과잉방위",
+            "살인", "사망", "부상", "응급", "병원", "이송", "경찰", "신고",
+            "건설현장", "현장소장", "근로자", "산업안전", "중대재해",
+        ]
+        hits = [w for w in WL if w in t]
+        # 추가: 간단 한글 토큰(2~6자) 추출로 빈칸 막기
+        import re
+        tokens = re.findall(r"[가-힣]{2,6}", t)
+        # 기능어/불용어(간단) 제거
+        STOP = {"그리고","하지만","그러나","때문","경우","관련","문제","어떤","어떻게","있는지"}
+        tokens = [x for x in tokens if x not in STOP]
+        # 합치고 중복 제거
+        combined = hits + tokens
+        seen, out = set(), []
+        for k in combined:
+            if k not in seen:
+                seen.add(k); out.append(k)
+        return out[:6]
 
-        # --- JSON 파싱 ---
-        data = json.loads(txt)
-        laws = [s.strip() for s in data.get("laws", []) if s.strip()]
-        return laws[:3]
+    kws3 = _rule_based_kw(q)
+    if kws3:
+        # 빈 결과를 캐시에 남기지 않도록: 빈 리스트면 바로 반환 말고 예외로 흘리기
+        return kws3
 
-    except Exception:
-        return []
-
+    # 최종적으로도 비면 캐시 방지용 디버그 힌트만 남기고 빈 리스트
+    st.session_state["_kw_extract_debug"] = "all_stages_failed"
+    return []
 
 
 # 간단 폴백(예비 — 도구 모드 기본이므로 최소화)
