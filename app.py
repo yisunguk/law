@@ -845,61 +845,6 @@ def _filter_plans(user_q: str, plans: list[dict]) -> list[dict]:
     return out[:10]
 
 
-# === LLM이 API 호출 계획을 제안: target+query 페어 목록 ===
-# 결과 예: [{"target":"law","q":"형법 제21조 정당방위"},
-#           {"target":"law","q":"형법 정당방위"},
-#           {"target":"admrul","q":"정당방위 지침"}]
-@st.cache_data(show_spinner=False, ttl=180)
-def propose_api_queries_llm(user_q: str) -> list[dict]:
-    """
-    결과 예:
-    {"queries":[
-      {"target":"law","q":"민법 손해배상","must":["민법","손해배상"],"must_not":[]},
-      {"target":"law","q":"주차장법","must":["주차장"],"must_not":[]}
-    ]}
-    """
-    if not user_q or client is None:
-        return []
-
-    SYS = (
-        "너는 한국 법제처(Open API) 검색 쿼리를 설계한다. JSON ONLY.\n"
-        '형식: {"queries":[{"target":"law|admrul|ordin|trty","q":"검색어",'
-        '"must":["반드시 포함할 단어들"], "must_not":["제외할 단어들"]}, ...]}\n'
-        "- 사용자 질문과 직접 관련된 단어만 사용(문맥 밖 금지).\n"
-        "- must에는 사용자의 핵심 용어(예: 손해배상, 주차장, 자동차) 1~3개만 넣어 간결하게.\n"
-        "- must_not에는 분명히 무관한 축(예: 난민/군/조세 등)을 필요시 넣어라(없으면 빈 배열)."
-    )
-    try:
-        resp = client.chat.completions.create(
-            model=AZURE["deployment"],
-            messages=[{"role":"system","content": SYS},
-                      {"role":"user","content": user_q.strip()}],
-            temperature=0.0, max_tokens=220,
-        )
-        txt = (resp.choices[0].message.content or "").strip()
-        # JSON만 추출
-        if "```" in txt:
-            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", txt)
-            if m: txt = m.group(1).strip()
-        if not txt.startswith("{"):
-            m = re.search(r"\{[\s\S]*\}", txt)
-            if m: txt = m.group(0)
-
-        data = json.loads(txt) if txt else {}
-        arr = (data.get("queries") or [])
-        out=[]
-        for it in arr:
-            t = (it.get("target") or "").strip()
-            q = (it.get("q") or "").strip()
-            must = [x.strip() for x in (it.get("must") or []) if x.strip()]
-            must_not = [x.strip() for x in (it.get("must_not") or []) if x.strip()]
-            if t in {"law","admrul","ordin","trty"} and q:
-                out.append({"target":t,"q":q[:60],"must":must[:4],"must_not":must_not[:6]})
-        return out[:10]
-    except Exception:
-        return []
-
-
 # === add/replace: 법령명 후보 추출기 (LLM, 견고 버전) ===
 @st.cache_data(show_spinner=False, ttl=300)
 def extract_law_candidates_llm(q: str) -> list[str]:
@@ -1009,72 +954,74 @@ def _filter_plans(user_q: str, plans: list[dict]) -> list[dict]:
     return out[:10]
 
 def _filter_items_by_plan(user_q: str, items: list[dict], plan: dict) -> list[dict]:
-    """
-    - plan.must 에 든 토큰은 '법령명'에 최소 1개 이상 존재해야 함(모두가 아니어도 됨: 지나친 탈락 방지)
-    - plan.must_not 토큰이 '법령명'에 보이면 제외
-    - 그 뒤 관련도 스코어로 정렬
-    """
     name_get = lambda d: (d.get("법령명") or "")
     must = set(_canonize(plan.get("must") or []))
     must_not = set(_canonize(plan.get("must_not") or []))
+    qtok = set(_canonize(_tok(plan.get("q",""))))  # ← 질의 토큰
 
     kept=[]
     for it in (items or []):
         nm = name_get(it)
         N = set(_canonize(_tok(nm)))
-        if must and not (N & must):          # must가 있으면 최소 1개 겹쳐야 함
+        # (1) must가 있으면 최소 1개 이상 겹쳐야
+        if must and not (N & must):
             continue
-        if must_not and (N & must_not):      # must_not에 걸리면 제거
+        # (2) must가 비어있더라도, 질의 토큰과는 최소 1개 겹쳐야
+        if not must and qtok and not (N & qtok):
+            continue
+        # (3) must_not에 걸리면 제외
+        if must_not and (N & must_not):
             continue
         kept.append(it)
 
-    # 스코어 정렬
     kept.sort(key=lambda d: _rel_score(user_q, name_get(d), plan.get("q","")))
     return kept
+
 
 
 @st.cache_data(show_spinner=False, ttl=180)
 def propose_api_queries_llm(user_q: str) -> list[dict]:
     """
-    LLM에게 '어떤 타겟(law/admrul/ordin/trty)을 어떤 질의(q)로 칠지'를 제안받는다.
-    JSON만 파싱하고, 결과는 _filter_plans로 1차 정제한다.
+    {"queries":[
+      {"target":"law","q":"민법 손해배상","must":["민법","손해배상"],"must_not":[]},
+      {"target":"law","q":"주차장법","must":["주차장"],"must_not":[]}
+    ]}
     """
     if not user_q or client is None:
         return []
 
     SYS = (
-        "너는 한국 법제처(Open API) 검색 쿼리를 설계하는 도우미야. "
-        "반드시 JSON만 반환해. 설명/코드펜스 금지.\n"
-        '형식: {"queries":[{"target":"law|admrul|ordin|trty","q":"검색어"}, ...]}\n'
-        "- 사용자 질문과 직접 연결되는 단어만 사용(문맥 밖 주제 금지). "
-        "- 예: 주차·차량·손해·배상·민법 관련이면 '민법 손해배상', '민법 제750조', '주차장법' 등만. "
-        "- 사용자가 언급하지 않은 '난민/난민법' 등은 절대 포함하지 말 것."
+        "너는 한국 법제처(Open API) 검색 쿼리를 설계한다. JSON ONLY.\n"
+        '형식: {"queries":[{"target":"law|admrul|ordin|trty","q":"검색어",'
+        '"must":["반드시 포함"], "must_not":["제외할 단어"]}, ...]}\n'
+        "- 사용자 질문과 직접 관련된 핵심어만 사용. "
+        "- must는 1~3개로 간결하게, must_not은 분명히 다른 축일 때만."
     )
-
     try:
         resp = client.chat.completions.create(
             model=AZURE["deployment"],
             messages=[{"role":"system","content": SYS},
                       {"role":"user","content": user_q.strip()}],
-            temperature=0.0, max_tokens=200,
+            temperature=0.0, max_tokens=220,
         )
         txt = (resp.choices[0].message.content or "").strip()
-
-        # JSON만 추출(코드펜스/잡텍스트 제거)
         if "```" in txt:
-            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", txt)
+            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", txt); 
             if m: txt = m.group(1).strip()
         if not txt.startswith("{"):
-            m = re.search(r"\{[\s\S]*\}", txt)
+            m = re.search(r"\{[\s\S]*\}", txt); 
             if m: txt = m.group(0)
 
         data = json.loads(txt) if txt else {}
-        arr = (data.get("queries") or [])
-        allowed = {"law","admrul","ordin","trty"}
-        plans = [{"target": (it.get("target") or "").strip(),
-                  "q":      (it.get("q") or "").strip()[:60]}
-                 for it in arr if (it.get("target") or "").strip() in allowed and (it.get("q") or "").strip()]
-        return _filter_plans(user_q, plans)
+        out=[]
+        for it in (data.get("queries") or []):
+            t = (it.get("target") or "").strip()
+            q = (it.get("q") or "").strip()
+            must = [x.strip() for x in (it.get("must") or []) if x.strip()]
+            must_not = [x.strip() for x in (it.get("must_not") or []) if x.strip()]
+            if t in {"law","admrul","ordin","trty"} and q:
+                out.append({"target":t,"q":q[:60],"must":must[:4],"must_not":must_not[:6]})
+        return out[:10]
     except Exception:
         return []
 
