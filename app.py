@@ -465,6 +465,42 @@ _CASE_NO_RE = re.compile(r'(19|20)\d{2}[가-힣]{1,3}\d{1,6}')
 _HBASE = "https://www.law.go.kr"
 LAW_PORTAL_BASE = "https://www.law.go.kr/"
 
+# --- 최종 후처리 유틸: 답변 본문을 정리하고 조문에 인라인 링크를 붙인다 ---
+def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
+    # 1) normalize (fallback 포함)
+    try:
+        ft = _normalize_text(full_text)
+    except NameError:
+        import re as _re
+        def _normalize_text(s: str) -> str:
+            s = (s or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+            s = _re.sub(r"\n{3,}", "\n\n", s)
+            s = _re.sub(r"[ \t]+\n", "\n", s)
+            return s
+        ft = _normalize_text(full_text)
+
+    # 2) 불릿 문자 통일: •, * → -  (인라인 링크 치환 누락 방지)
+    ft = (
+        ft.replace("\u2022 ", "- ")  # 유니코드 불릿
+          .replace("• ", "- ")
+          .replace("* ", "- ")
+    )
+
+    # 3) 조문 인라인 링크 변환:  - 민법 제839조의2 → [민법 제839조의2](...)
+    ft = link_inline_articles_in_bullets(ft)
+
+    # 4) 본문 내 [법령명](URL) 교정(법제처 공식 링크로)
+    ft = fix_links_with_lawdata(ft, collected_laws)
+
+    # 5) 맨 아래 '참고 링크(조문)' 섹션 제거(중복 방지)
+    ft = strip_reference_links_block(ft)
+
+    # 6) 중복/빈 줄 정리
+    ft = _dedupe_blocks(ft)
+
+    return ft
+
+
 
 # --- 답변(마크다운)에서 '법령명'들을 추출(복수) ---
 
@@ -1976,11 +2012,7 @@ if user_q:
                 s = _re.sub(r"\n{3,}", "\n\n", s)
                 s = _re.sub(r"[ \t]+\n", "\n", s)
                 return s
-            final_text = _normalize_text(full_text)
-            final_text = link_inline_articles_in_bullets(final_text)
-            final_text = strip_reference_links_block(final_text)
-            final_text = fix_links_with_lawdata(final_text, collected_laws)
-            final_text = _dedupe_blocks(final_text)
+            final_text = apply_final_postprocess(full_text, collected_laws)
 
         # 프리뷰 컨테이너 비우기
         if stream_box is not None:
