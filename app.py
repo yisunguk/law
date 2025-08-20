@@ -458,6 +458,40 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# --- 작동 키워드 목록(필요시 보강/수정) ---
+LINKGEN_KEYWORDS = {
+    "법령": ["제정", "전부개정", "개정", "폐지", "부칙", "정정", "시행", "별표", "별지서식"],
+    "행정규칙": ["훈령", "예규", "고시", "지침", "공고", "전부개정", "개정", "정정", "폐지"],
+    "자치법규": ["조례", "규칙", "훈령", "예규", "전부개정", "개정", "정정", "폐지"],
+    "조약": ["서명", "비준", "발효", "공포", "폐기"],
+    "판례": ["대법원", "전원합의체", "하급심", "손해배상", "불법행위"],
+    "헌재": ["위헌", "합헌", "한정위헌", "한정합헌", "헌법불합치"],
+    "해석례": ["유권해석", "법령해석", "질의회신"],
+    "용어/별표": ["용어", "정의", "별표", "서식"],
+}
+
+# --- 키워드 위젯 헬퍼: st_tags가 있으면 사용, 없으면 multiselect로 대체 ---
+try:
+    from streamlit_tags import st_tags
+    def kw_input(label, options, key):
+        return st_tags(
+            label=label,
+            text="쉼표(,) 또는 Enter로 추가/삭제",
+            value=options,           # ✅ 기본값: 전부 채움
+            suggestions=options,
+            maxtags=len(options),
+            key=key,
+        )
+except Exception:
+    import streamlit as st
+    def kw_input(label, options, key):
+        return st.multiselect(
+            label, options=options, default=options,  # ✅ 기본값: 전부 선택
+            key=key, help="필요 없는 키워드는 선택 해제하세요."
+        )
+
+
+
 # =============================
 # Utilities
 # =============================
@@ -1705,7 +1739,40 @@ except NameError:
     # 만약 위 객체들이 아직 정의되기 전 위치라면,
     # 이 패치를 해당 정의 '아래'로 옮겨 붙이세요.
     pass
- 
+
+# --- 작동 키워드 목록(필요시 보강/수정) ---
+LINKGEN_KEYWORDS = {
+    "법령": ["제정", "전부개정", "개정", "폐지", "부칙", "정정", "시행", "별표", "별지서식"],
+    "행정규칙": ["훈령", "예규", "고시", "지침", "공고", "전부개정", "개정", "정정", "폐지"],
+    "자치법규": ["조례", "규칙", "훈령", "예규", "전부개정", "개정", "정정", "폐지"],
+    "조약": ["서명", "비준", "발효", "공포", "폐기"],
+    "판례": ["대법원", "전원합의체", "하급심", "손해배상", "불법행위"],
+    "헌재": ["위헌", "합헌", "한정위헌", "한정합헌", "헌법불합치"],
+    "해석례": ["유권해석", "법령해석", "질의회신"],
+    "용어/별표": ["용어", "정의", "별표", "서식"],
+}
+
+# --- 키워드 위젯 헬퍼: st_tags가 있으면 사용, 없으면 multiselect로 대체 ---
+try:
+    from streamlit_tags import st_tags
+    def kw_input(label, options, key):
+        return st_tags(
+            label=label,
+            text="쉼표(,) 또는 Enter로 추가/삭제",
+            value=options,           # ✅ 기본값: 전부 채움
+            suggestions=options,
+            maxtags=len(options),
+            key=key,
+        )
+except Exception:
+    import streamlit as st
+    def kw_input(label, options, key):
+        return st.multiselect(
+            label, options=options, default=options,  # ✅ 기본값: 전부 선택
+            key=key, help="필요 없는 키워드는 선택 해제하세요."
+        )
+
+
 # =============================
 # Sidebar: 링크 생성기 (무인증)
 # =============================
@@ -1744,6 +1811,7 @@ with st.sidebar:
     # ───────────────────────── 행정규칙
     with tabs[1]:
         adm_name = st.text_input("행정규칙명", value="수입통관사무처리에관한고시", key="sb_adm_name")
+        admin_keywords = kw_input("키워드(자동 추천)", LINKGEN_KEYWORDS["행정규칙"], key="kw_admin")
         dept     = st.selectbox("소관 부처(선택)", MINISTRIES, index=0, key="sb_adm_dept")
 
         colA, colB = st.columns(2)
@@ -1778,6 +1846,7 @@ with st.sidebar:
     # ───────────────────────── 자치법규
     with tabs[2]:
         ordin_name = st.text_input("자치법규명", value="서울특별시경관조례", key="sb_ordin_name")
+        local_keys_ms = st.multiselect("키워드(자동 추천)", options=local_suggest, default=local_suggest, key="sb_local_keys_ms")
         colA, colB = st.columns(2)
         with colA: ordin_no = st.text_input("공포번호(선택)", value="", key="sb_ordin_no")
         with colB: ordin_dt = st.text_input("공포일자(YYYYMMDD, 선택)", value="", key="sb_ordin_dt")
