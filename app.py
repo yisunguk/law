@@ -1988,8 +1988,14 @@ if user_q:
                     if len(buffer) >= 200:
                         full_text += buffer
                         buffer = ""
-                        stream_box.markdown(_normalize_text(full_text[-1500:]))
+                        if stream_box is not None :
+                            stream_box.markdown(_normalize_text(full_text[-1500:]))
                 elif kind == "final":
+                    if buffer: 
+                         full_text +=buffer
+                         buffer = ""
+                    if payload:
+                        full_text += payload
                     collected_laws = law_list or []
                     break
             if buffer:
