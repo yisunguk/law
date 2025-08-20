@@ -120,6 +120,12 @@ from external_content import is_url, make_url_context
 from external_content import extract_first_url
 from typing import Iterable, List
 
+import hashlib
+
+def _hash_text(s: str) -> str:
+    return hashlib.md5((s or "").encode("utf-8")).hexdigest()
+
+
 # 행정규칙 소관 부처 드롭다운 옵션
 MINISTRIES = [
     "부처 선택(선택)",
@@ -1925,31 +1931,32 @@ if user_q:
             title = "법률 자문 메모"  # ← choose_output_template() 대신 안전한 문자열
             full_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
 
-        # --- ✅ 최종 후처리: 정상/예외 공통 적용 ---
-        final_text = _normalize_text(full_text)
-        final_text = link_inline_articles_in_bullets(final_text)      # 불릿 내 '민법 제839조의2' 등 → 인라인 조문 링크
-        final_text = strip_reference_links_block(final_text)          # 맨 아래 '참고 링크(조문)' 섹션 제거
-        final_text = fix_links_with_lawdata(final_text, collected_laws)  # 본문 내 [법령명](…) 링크를 공식 상세링크로 교정
-        final_text = _dedupe_blocks(final_text)                       # 중복 문단/빈 줄 정리
-        hint_from_ans  = extract_law_names_from_answer(final_text)            # 답변에서 실제 인용된 법령(복수)
-        hint_from_q_llm = extract_law_candidates_llm(user_q)                  # 질문에서 LLM이 뽑은 후보(복수):contentReference[oaicite:11]{index=11}
-        hint_laws = list(dict.fromkeys((hint_from_ans or []) + (hint_from_q_llm or [])))  # 중복 제거/순서 유지
-        render_search_flyout(user_q, num_rows=8, hint_laws=hint_laws, show_debug=SHOW_SEARCH_DEBUG)
-        render_search_flyout(user_q, num_rows=8, hint_laws=hint_laws)         # 우측 패널 재렌더 (민법+가사소송법+기타)
+        # --- 최종 후처리 (기존 동일) ---
+final_text = _normalize_text(full_text)
+final_text = link_inline_articles_in_bullets(final_text)
+final_text = strip_reference_links_block(final_text)
+final_text = fix_links_with_lawdata(final_text, collected_laws)
+final_text = _dedupe_blocks(final_text)
 
-        stream_box.empty()
+# 프리뷰 컨테이너 정리
+if stream_box is not None:
+    stream_box.empty()
 
-        if final_text.strip():
-            with st.chat_message("assistant"):
-                render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": final_text,
-                "law": collected_laws,
-                "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            })
-        else:
-            st.info("현재 모델이 오프라인이거나 오류로 인해 답변을 생성하지 못했습니다.")
+# ✅ 즉시 렌더(채팅 말풍선) 제거하고, 세션 메시지에만 1회 추가 → rerun
+if final_text.strip():
+    ans_hash = _hash_text(final_text)
+    if st.session_state.get("_last_ans_hash") != ans_hash:
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": final_text,
+            "law": collected_laws,
+            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
+        st.session_state["_last_ans_hash"] = ans_hash
+        st.rerun()
+else:
+    st.info("현재 모델이 오프라인이거나 오류로 인해 답변을 생성하지 못했습니다.")
+
 
 # 4) ChatBar (맨 아래 고정)  ← 반드시 최상위 레벨(들여쓰기 없음)
 submitted, typed_text, files = chatbar(
