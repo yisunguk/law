@@ -334,6 +334,39 @@ def _inject_right_rail_css():
       }
     </style>
     """, unsafe_allow_html=True)
+# 🔧 라이트모드: 패널/페이지 배경 최종 오버라이드
+
+st.markdown("""
+<style>
+/* 1) 리셋 규칙 수정: 컨테이너(#search-flyout)는 배경 유지, 내부만 리셋 */
+#search-flyout * {
+  background: none !important;
+  -webkit-background-clip: initial !important;
+  -webkit-text-fill-color: inherit !important;
+  mix-blend-mode: normal !important;
+  text-shadow: none !important;
+}
+
+/* 2) 라이트모드 전역 배경 톤다운(페이지 전체) */
+:where([data-theme="light"]) .stApp,
+:where([data-theme="light"]) .stAppViewContainer,
+:where([data-theme="light"]) section.main {
+  background-color: #f5f5f5 !important;
+}
+
+/* 3) 라이트모드 패널/컨테이너 톤 매칭 */
+:where([data-theme="light"]) #search-flyout {
+  background: #fafafa !important;
+  border: 1px solid #ddd !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,.08) !important;
+}
+
+/* 4) 본문 컨테이너는 투명 처리(페이지 배경이 비치도록) */
+:where([data-theme="light"]) .block-container {
+  background: transparent !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
