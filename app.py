@@ -241,7 +241,8 @@ def _inject_right_rail_css():
       height: calc(100vh - 130px); overflow: auto;
       border-radius: 12px; padding: 12px 14px; z-index: 1000;
       border: 1px solid rgba(127,127,127,.25);
-      background: rgba(0,0,0,.35); backdrop-filter: blur(6px);
+      background: transparent !important;
+      backdrop-filter: none !important;
     }
     [data-theme="light"] #search-flyout {
       background: #fff; color: #222; border-color: #e5e5e5;
