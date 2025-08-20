@@ -2000,6 +2000,7 @@ if user_q:
             law_ctx = format_law_context(laws)
             title = "법률 자문 메모"
             full_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
+            final_text = apply_final_postprocess(full_text, collected_laws)
 
         # --- ✅ 최종 후처리: 반드시 if user_q 블록 안에서만 실행 ---
         try:
@@ -2012,7 +2013,7 @@ if user_q:
                 s = _re.sub(r"\n{3,}", "\n\n", s)
                 s = _re.sub(r"[ \t]+\n", "\n", s)
                 return s
-            final_text = apply_final_postprocess(full_text, collected_laws)
+           
 
         # 프리뷰 컨테이너 비우기
         if stream_box is not None:
