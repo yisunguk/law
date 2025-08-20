@@ -243,6 +243,42 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 </style>
 """, unsafe_allow_html=True)
 
+# 🔽 라이트모드 전용 UI 개선 패치
+st.markdown("""
+<style>
+/* 라이트모드 개선 패치 */
+
+/* 채팅 말풍선 */
+[data-theme="light"] .stMarkdown > div {
+  --bubble-bg:#fafafa;   /* 완전 흰색 대신 은은한 회색 */
+  --bubble-fg:#222;
+  border:1px solid #e0e0e0;
+  box-shadow:0 2px 6px rgba(0,0,0,.08);
+}
+
+/* 고정된 최근 질문 */
+[data-theme="light"] .pinned-q {
+  background:#fdfdfd;
+  border:1px solid #ddd;
+  box-shadow:0 1px 4px rgba(0,0,0,.05);
+}
+
+/* 오른쪽 검색 패널 */
+[data-theme="light"] #search-flyout {
+  background:#fefefe;
+  border:1px solid #ddd;
+  box-shadow:0 4px 12px rgba(0,0,0,.08);
+}
+
+/* 복사 버튼 */
+[data-theme="light"] .copy-btn {
+  background:#f9f9f9;
+  border:1px solid #ccc;
+  box-shadow:0 1px 3px rgba(0,0,0,.05);
+}
+</style>
+""", unsafe_allow_html=True)
+
 # ---- 오른쪽 플로팅 패널용 CSS ----
 def _inject_right_rail_css():
     st.markdown("""
