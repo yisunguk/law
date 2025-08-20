@@ -1982,22 +1982,28 @@ if user_q:
 
         try:
             stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
+
             for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
                 if kind == "delta":
                     buffer += (payload or "")
                     if len(buffer) >= 200:
                         full_text += buffer
                         buffer = ""
-                        if stream_box is not None :
+                        # ✅ 미리보기는 옵션일 때만
+                        if SHOW_STREAM_PREVIEW and stream_box is not None:
                             stream_box.markdown(_normalize_text(full_text[-1500:]))
+
                 elif kind == "final":
-                    if buffer: 
-                         full_text +=buffer
-                         buffer = ""
+                    # ✅ 어떤 엔진은 전체 답변을 'final' payload로만 보냄 → 합쳐주기
+                    if buffer:
+                        full_text += buffer
+                        buffer = ""
                     if payload:
                         full_text += payload
                     collected_laws = law_list or []
                     break
+
+            # 루프 종료 후 남은 버퍼 반영
             if buffer:
                 full_text += buffer
 
@@ -2008,7 +2014,12 @@ if user_q:
             law_ctx = format_law_context(laws)
             title = "법률 자문 메모"
             full_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
-            final_text = apply_final_postprocess(full_text, collected_laws) 
+            final_text = apply_final_postprocess(full_text, collected_laws)
+
+        # --- ✅ 정상 경로 후처리: 항상 실행되도록 보장 ---
+        if not final_text.strip():
+            final_text = apply_final_postprocess(full_text, collected_laws)
+
            
 
         # 프리뷰 컨테이너 비우기
