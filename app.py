@@ -1584,36 +1584,7 @@ except NameError:
     # 이 패치를 해당 정의 '아래'로 옮겨 붙이세요.
     pass
 
-# 3) 기존 ask_llm_with_tools 를 얇은 래퍼로 교체
-def ask_llm_with_tools(
-    user_q: str,
-    num_rows: int = 5,
-    stream: bool = True,
-    forced_mode: str | None = None,  # 'quick' | 'lawfinder' | 'memo' | 'draft'
-    brief: bool = False,             # 간단 모드 토글
-):
-    """
-    UI에서 호출하는 진입점.
-    modules.AdviceEngine 이 내부에서:
-      - 의도 분류/모드 결정(Quick/LawFinder/Memo/Draft)
-      - 모드별 시스템 프롬프트 합성
-      - (필요 시) 법령 검색 툴콜 실행
-      - 조문 직링크 블록 자동 생성
-    까지 모두 처리합니다.
-    """
-    if engine is None:
-        yield ("final", "엔진이 설정되지 않았습니다. (client/AZURE/TOOLS 확인)", [])
-        return
-
-    # 엔진 스트리밍 출력 그대로 전달
-    yield from engine.generate(
-        user_q,
-        num_rows=num_rows,
-        stream=stream,
-        forced_mode=forced_mode,
-        brief=brief,
-    )
-    
+  
 # =============================
 # Sidebar: 링크 생성기 (무인증)
 # =============================
@@ -1854,66 +1825,66 @@ with st.container():
                 st.markdown(content)
 
 
-# 🔻 어시스턴트 답변 출력은 반드시 user_q가 있을 때만 실행 (초기 빈 말풍선 방지)
-# ===============================
-# 좌우 분리 레이아웃 (교체용)
-# ===============================
 # ===============================
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
 # ===============================
-# ===============================
-# 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
-# ===============================
-if client and AZURE:
-    # 1) 말풍선 없이 임시 컨테이너로 스트리밍
-    stream_box = st.empty()
-    full_text, buffer, collected_laws = "", "", []
-    final_text = ""   # ✅ 미리 초기화 (NameError 방지)
-    try:
-        stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
-        for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
-            if kind == "delta":
-                buffer += (payload or "")
-                if len(buffer) >= 200:
-                    full_text += buffer
-                    buffer = ""
-                    stream_box.markdown(_normalize_text(full_text[-1500:]))
-            elif kind == "final":
-                collected_laws = law_list or []
-                break
-        if buffer:
-            full_text += buffer
+# 🔻 어시스턴트 답변 출력은 반드시 user_q가 있을 때만 실행
+# 🔻 어시스턴트 답변 출력은 반드시 user_q가 있을 때만 실행
+# 🔻 어시스턴트 답변 출력은 반드시 user_q가 있을 때만 실행
+if user_q:
+    _inject_right_rail_css()
+    render_search_flyout(user_q, num_rows=8)
 
-    except Exception as e:
-        # 예외 시 폴백
-        laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
-        collected_laws = laws
-        law_ctx = format_law_context(laws)
-        tpl = choose_output_template(user_q)
-        full_text = f"{tpl}\n\n{law_ctx}\n\n(오류: {e})"
+    if client and AZURE:
+        # 1) 말풍선 없이 임시 컨테이너로 스트리밍
+        stream_box = st.empty()
+        full_text, buffer, collected_laws = "", "", []
+        final_text = ""   # NameError 방지
+        try:
+            stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
+            for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
+                if kind == "delta":
+                    buffer += (payload or "")
+                    if len(buffer) >= 200:
+                        full_text += buffer
+                        buffer = ""
+                        stream_box.markdown(_normalize_text(full_text[-1500:]))
+                elif kind == "final":
+                    collected_laws = law_list or []
+                    break
+            if buffer:
+                full_text += buffer
 
-    # --- ✅ 후처리: 정상/예외 모두 공통 ---
-    final_text = _normalize_text(full_text)
-    final_text = link_inline_articles_in_bullets(final_text)
-    final_text = strip_reference_links_block(final_text)
-    final_text = fix_links_with_lawdata(final_text, collected_laws)
-    final_text = _dedupe_blocks(final_text)
+        except Exception as e:
+            # 예외 시 폴백(검색 요약 + 간단 타이틀)
+            laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
+            collected_laws = laws
+            law_ctx = format_law_context(laws)
+            title = "법률 자문 메모"  # ← choose_output_template() 대신 안전한 문자열
+            full_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
 
-    stream_box.empty()
+        # --- ✅ 최종 후처리: 정상/예외 공통 적용 ---
+        final_text = _normalize_text(full_text)
+        final_text = link_inline_articles_in_bullets(final_text)      # 불릿 내 '민법 제839조의2' 등 → 인라인 조문 링크
+        final_text = strip_reference_links_block(final_text)          # 맨 아래 '참고 링크(조문)' 섹션 제거
+        final_text = fix_links_with_lawdata(final_text, collected_laws)  # 본문 내 [법령명](…) 링크를 공식 상세링크로 교정
+        final_text = _dedupe_blocks(final_text)                       # 중복 문단/빈 줄 정리
 
-    if final_text.strip():
-        with st.chat_message("assistant"):
-            render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": final_text,
-            "law": collected_laws,
-            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        })
-    else:
-        st.info("현재 모델이 오프라인이거나 오류로 인해 답변을 생성하지 못했습니다.")
-      
-   # 4) ChatBar (맨 아래 고정)
+        stream_box.empty()
+
+        if final_text.strip():
+            with st.chat_message("assistant"):
+                render_bubble_with_copy(final_text, key=f"ans-{datetime.now().timestamp()}")
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": final_text,
+                "law": collected_laws,
+                "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            })
+        else:
+            st.info("현재 모델이 오프라인이거나 오류로 인해 답변을 생성하지 못했습니다.")
+
+# 4) ChatBar (맨 아래 고정)  ← 반드시 최상위 레벨(들여쓰기 없음)
 submitted, typed_text, files = chatbar(
     placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
     accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
