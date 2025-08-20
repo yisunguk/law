@@ -1715,7 +1715,6 @@ except NameError:
 # =============================
 with st.sidebar:
     # --- 사이드바: 새 대화 버튼 (↙ 링크 생성기 위에 배치) ---
-    st.markdown("### 💬 대화", help="현재 대화를 초기화합니다.")
     if st.button("🆕 새 대화", type="primary", use_container_width=True, key="__btn_new_chat__"):
         # 대화 관련 상태만 안전하게 초기화 (설정/시크릿/클라이언트는 유지)
         for k in ("messages", "_last_user_nonce", "_pending_user_q", "_pending_user_nonce", "_last_ans_hash"):
