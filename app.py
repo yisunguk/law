@@ -43,34 +43,44 @@ def _init_engine_lazy():
     return st.session_state.engine
 
 # 기존 ask_llm_with_tools를 얇은 래퍼로 교체
+from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
+
 def ask_llm_with_tools(
     user_q: str,
     num_rows: int = 5,
     stream: bool = True,
-    forced_mode: str | None = None,  # 'quick' | 'lawfinder' | 'memo' | 'draft'
-    brief: bool = False,             # 간단 모드 토글
+    forced_mode: str | None = None,  # 유지해도 됨: 아래에서 직접 처리
+    brief: bool = False,
 ):
     """
-    UI에서 호출하는 진입점.
-    AdviceEngine이 내부에서
-      - 의도 분류/모드 결정(Quick/LawFinder/Memo/Draft)
-      - 모드별 시스템 프롬프트 합성
-      - (필요 시) 법령 검색 툴콜 실행
-      - 조문 직링크 블록 자동 생성
-    까지 모두 수행합니다.
+    UI 진입점: 의도→모드 결정, 시스템 프롬프트 합성, 툴 사용 여부 결정 후
+    AdviceEngine.generate()에 맞는 인자(system_prompt, allow_tools)로 호출.
     """
-    engine = _init_engine_lazy()
+    engine = _init_engine_lazy() if "_init_engine_lazy" in globals() else globals().get("engine")
     if engine is None:
-        yield ("final", "엔진이 아직 초기화되지 않았습니다. (client/AZURE/TOOLS 준비 전)", [])
+        yield ("final", "엔진이 아직 초기화되지 않았습니다. (client/AZURE/TOOLS 확인)", [])
         return
 
-    # 엔진 스트리밍 출력 그대로 중계
+    # 1) 모드 결정
+    det_intent, conf = classify_intent(user_q)
+    try:
+        valid = {m.value for m in Intent}
+        mode = Intent(forced_mode) if forced_mode in valid else pick_mode(det_intent, conf)
+    except Exception:
+        mode = pick_mode(det_intent, conf)
+
+    # 2) 프롬프트/툴 사용 여부
+    use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
+    sys_prompt = build_sys_for_mode(mode, brief=brief)
+
+    # 3) 엔진 호출 (새 시그니처에 맞게)
     yield from engine.generate(
         user_q,
+        system_prompt=sys_prompt,
+        allow_tools=use_tools,
         num_rows=num_rows,
         stream=stream,
-        forced_mode=forced_mode,
-        brief=brief,
+        primer_enable=True,
     )
 
 import io, os, re, json, time, html
