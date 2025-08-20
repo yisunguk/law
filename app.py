@@ -1913,14 +1913,20 @@ with st.container():
 # 🔻 어시스턴트 답변 출력은 반드시 user_q가 있을 때만 실행
 # 🔻 어시스턴트 답변 출력은 반드시 user_q가 있을 때만 실행
 # 🔻 어시스턴트 답변 출력은 반드시 user_q가 있을 때만 실행
+# (위쪽 내용 동일)
+
+# ===============================
+# 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
+# ===============================
 if user_q:
     _inject_right_rail_css()
 
     if client and AZURE:
-        # 1) 말풍선 없이 임시 컨테이너로 스트리밍
+        # 스트리밍 프리뷰 컨테이너
         stream_box = st.empty()
         full_text, buffer, collected_laws = "", "", []
-        final_text = ""   # NameError 방지
+        final_text = ""   # ✅ 미리 초기화 (NameError 방지)
+
         try:
             stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
             for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
@@ -1937,44 +1943,50 @@ if user_q:
                 full_text += buffer
 
         except Exception as e:
-            # 예외 시 폴백(검색 요약 + 간단 타이틀)
+            # 예외 시 폴백
             laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
             collected_laws = laws
             law_ctx = format_law_context(laws)
-            title = "법률 자문 메모"  # ← choose_output_template() 대신 안전한 문자열
+            title = "법률 자문 메모"
             full_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
 
-        # --- 최종 후처리 (기존 동일) ---
-final_text = _normalize_text(full_text)
-# _normalize_text가 혹시 다른 모듈에만 있을 때 fallback
-try:
-    final_text = _normalize_text(full_text)
-except NameError:
-    final_text = (full_text or "")
+        # --- ✅ 최종 후처리: 반드시 if user_q 블록 안에서만 실행 ---
+        try:
+            final_text = _normalize_text(full_text)
+        except NameError:
+            # 혹시 상단 정의가 빠졌을 때의 안전 폴백
+            import re as _re
+            def _normalize_text(s: str) -> str:
+                s = (s or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+                s = _re.sub(r"\n{3,}", "\n\n", s)
+                s = _re.sub(r"[ \t]+\n", "\n", s)
+                return s
+            final_text = _normalize_text(full_text)
 
-final_text = link_inline_articles_in_bullets(final_text)
-final_text = strip_reference_links_block(final_text)
-final_text = fix_links_with_lawdata(final_text, collected_laws)
-final_text = _dedupe_blocks(final_text)
+        final_text = link_inline_articles_in_bullets(final_text)
+        final_text = strip_reference_links_block(final_text)
+        final_text = fix_links_with_lawdata(final_text, collected_laws)
+        final_text = _dedupe_blocks(final_text)
 
-# 프리뷰 컨테이너 정리
-if stream_box is not None:
-    stream_box.empty()
+        # 프리뷰 컨테이너 비우기
+        if stream_box is not None:
+            stream_box.empty()
 
-# ✅ 즉시 렌더(채팅 말풍선) 제거하고, 세션 메시지에만 1회 추가 → rerun
-if final_text.strip():
-    ans_hash = _hash_text(final_text)
-    if st.session_state.get("_last_ans_hash") != ans_hash:
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": final_text,
-            "law": collected_laws,
-            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        })
-        st.session_state["_last_ans_hash"] = ans_hash
-        st.rerun()
-else:
-    st.info("현재 모델이 오프라인이거나 오류로 인해 답변을 생성하지 못했습니다.")
+        # 세션 메시지에만 1회 추가 → rerun
+        if final_text.strip():
+            ans_hash = _hash_text(final_text)
+            if st.session_state.get("_last_ans_hash") != ans_hash:
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": final_text,
+                    "law": collected_laws,
+                    "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                })
+                st.session_state["_last_ans_hash"] = ans_hash
+                st.rerun()
+        else:
+            st.info("현재 모델이 오프라인이거나 오류로 인해 답변을 생성하지 못했습니다.")
+
 
 
 # 4) ChatBar (맨 아래 고정)  ← 반드시 최상위 레벨(들여쓰기 없음)
