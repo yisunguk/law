@@ -226,52 +226,60 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 
 # ---- 오른쪽 플로팅 패널용 CSS ----
 def _inject_right_rail_css():
-    # 소소한 타이포/간격
-    st.markdown("""
-    <style>
-      #search-flyout details { margin-top: 6px; }
-      #search-flyout h4 { font-size: 1rem; }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # 오른쪽 플로팅 패널 레이아웃/CSS
     st.markdown("""
     <style>
       /* 본문이 가려지지 않도록 오른쪽 여백 확보 */
       .block-container { padding-right: 380px !important; }
 
-      /* 플로팅 패널 공통 */
+      /* 플로팅 패널 */
       #search-flyout {
-        position: fixed;
-        right: 16px; top: 88px; bottom: 16px;
-        width: 360px;
-        overflow: auto;
-        z-index: 1000;
-        border-radius: 12px;
-        border: 1px solid rgba(127,127,127,.25);
+        position: fixed; right: 16px; top: 88px; bottom: 16px;
+        width: 360px; overflow: auto; z-index: 1000;
+        border-radius: 12px; border: 1px solid rgba(127,127,127,.25);
         box-shadow: 0 8px 28px rgba(0,0,0,.25);
-        /* 투명 금지: 테마별 배경이 항상 보이도록 */
-        background: inherit;           /* 기본값은 무시되게 */
-        backdrop-filter: none !important;
-        mix-blend-mode: normal;
       }
+      [data-theme="light"] #search-flyout { background: #fff;  border-color:#e5e5e5; }
+      [data-theme="dark"]  #search-flyout { background: #1f1f1f; border-color:rgba(255,255,255,.12); }
 
-      /* 라이트/다크 테마별 확실한 배경(우선순위 고정) */
-      [data-theme="light"] #search-flyout {
-        background: #fff !important;
-        border-color: #e5e5e5 !important;
-      }
-      [data-theme="dark"] #search-flyout {
-        background: #1f1f1f !important;
-        border-color: rgba(255,255,255,.12) !important;
-      }
+      /* 패널 내부 타이포 */
+      #search-flyout h3 { margin: 12px 12px 6px; font-size: 1.05rem; }
+      #search-flyout h4 { margin: 10px 12px 6px; font-size: .95rem; }
+      #search-flyout p  { margin: 6px 12px; line-height: 1.4; }
 
-      /* 내부 카드 간격 보완(겹침 방지) */
-      #search-flyout .stExpander, #search-flyout .stMarkdown {
-        margin-bottom: 8px;
+      /* details/summary: 기본 마커만 쓰고, 텍스트에는 '▼' 쓰지 않음 */
+      #search-flyout details { margin: 6px 8px 12px; }
+      #search-flyout summary {
+        cursor: pointer; padding: 6px 8px; border-radius: 8px;
+        background: rgba(127,127,127,.08);
       }
+      /* 필요시 기본 마커 숨기고 커스텀 마커 쓰고 싶다면 아래 주석 해제
+      #search-flyout summary::-webkit-details-marker { display:none; }
+      #search-flyout summary::before { content:"▸"; margin-right:6px; }
+      #search-flyout details[open] summary::before { content:"▾"; }
+      */
+
+      /* 법령 리스트 카드 */
+      #search-flyout ol.law-list { 
+        counter-reset: law; list-style:none; padding: 0 12px 8px 12px; margin: 0;
+      }
+      #search-flyout ol.law-list > li {
+        counter-increment: law;
+        padding: 10px 10px; margin: 8px 0;
+        border: 1px solid rgba(127,127,127,.25);
+        border-radius: 10px;
+      }
+      #search-flyout ol.law-list > li .title {
+        display:block; font-weight: 700; margin-bottom: 4px;
+      }
+      #search-flyout ol.law-list > li .title::before {
+        content: counter(law) ". "; font-weight: 700;
+      }
+      #search-flyout .meta { font-size: .9rem; opacity: .9; margin: 2px 0 6px; }
+      #search-flyout a { text-decoration: underline; }
+      #search-flyout small.debug { display:none; } /* 디버그 기본 숨김 */
     </style>
     """, unsafe_allow_html=True)
+
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
@@ -347,82 +355,62 @@ def _sanitize_plan_q(user_q: str, q: str) -> str:
 def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | None = None, show_debug: bool = False):
     results = find_all_law_data(user_q, num_rows=num_rows, hint_laws=hint_laws)
 
-    def _pick(*candidates):
-        for c in candidates:
+    def _pick(*cands):
+        for c in cands:
             if isinstance(c, str) and c.strip():
                 return c.strip()
         return ""
 
     def _build_law_link(it, eff):
-        # 1) 항목에 직접 링크가 있으면 사용
         link = _pick(it.get("url"), it.get("link"), it.get("detail_url"), it.get("상세링크"))
-        if link:
-            return link
-        # 2) DRF lawService 규격으로 생성 (MST + 시행일자)
+        if link: return link
         mst = _pick(it.get("MST"), it.get("mst"), it.get("LawMST"))
         if mst:
-            # eff(시행일자)가 없으면 빈 값으로 두어도 페이지는 열립니다.
             return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={eff}"
         return ""
 
-    def _law_item_card(i, it):
-        # 제목
-        title = _pick(
-            it.get("법령명한글"), it.get("법령명"), it.get("title_kr"), it.get("title"),
-            it.get("name_ko"), it.get("name")
-        )
-        # 부처/날짜
-        dept = _pick(it.get("소관부처"), it.get("부처명"), it.get("dept"), it.get("department"))
-        eff  = _pick(it.get("시행일자"), it.get("eff"), it.get("effective_date"))
-        pub  = _pick(it.get("공포일자"), it.get("pub"), it.get("promulgation_date"))
-        # 링크
-        link = _build_law_link(it, eff)
+    def _law_item_li(it):
+        title = _pick(it.get("법령명한글"), it.get("법령명"), it.get("title_kr"), it.get("title"), it.get("name_ko"), it.get("name"))
+        dept  = _pick(it.get("소관부처"), it.get("부처명"), it.get("dept"), it.get("department"))
+        eff   = _pick(it.get("시행일자"), it.get("eff"), it.get("effective_date"))
+        pub   = _pick(it.get("공포일자"), it.get("pub"), it.get("promulgation_date"))
+        link  = _build_law_link(it, eff)
 
-        lines = []
-        if title:
-            lines.append(f"**{i}. {title}** ()")
-        else:
-            lines.append(f"**{i}. (제목 없음)**")
-
-        meta = []
+        parts = [f'<span class="title">{title or "(제목 없음)"} </span>']
+        meta  = []
         if dept: meta.append(f"소관부처: {dept}")
         if eff or pub: meta.append(f"시행일자: {eff} / 공포일자: {pub}")
-        if meta: lines.append("\n".join(meta))
-
-        if link:
-            lines.append(f"[법령 상세보기]({link})")
-
-        return "\n".join(lines)
+        if meta: parts.append(f'<div class="meta">{" / ".join(meta)}</div>')
+        if link: parts.append(f'<a href="{link}" target="_blank" rel="noreferrer">법령 상세보기</a>')
+        return "<li>" + "\n".join(parts) + "</li>"
 
     # 헤더
-    html = ['<div id="search-flyout">', '### 📚 통합 검색 결과', '<details open><summary>▼ 열기/접기</summary>']
+    html = ['<div id="search-flyout">', '<h3>📚 통합 검색 결과</h3>', '<details open><summary>열기/접기</summary>']
 
     # 버킷 렌더
     for label in ["법령", "행정규칙", "자치법규", "조약"]:
-        pack = results.get(label) or {}
+        pack  = results.get(label) or {}
         items = pack.get("items") or []
-        html.append(f"\n#### 🔎 {label}\n")
+        html.append(f'<h4>🔎 {label}</h4>')
         if not items:
-            html.append("검색 결과 없음\n")
+            html.append('<p>검색 결과 없음</p>')
         else:
-            cards = [_law_item_card(idx, it) for idx, it in enumerate(items, 1)]
-            html.append("\n\n".join(cards))
+            html.append('<ol class="law-list">')
+            html += [_law_item_li(it) for it in items]
+            html.append('</ol>')
 
-        # 디버그는 옵션으로만
         if show_debug:
             tried = (pack.get("debug") or {}).get("tried") or []
             plans = (pack.get("debug") or {}).get("plans") or []
-            err = pack.get("error")
+            err   = pack.get("error")
             dbg = []
             if tried: dbg.append("시도: " + " | ".join(tried))
             if plans: dbg.append("LLM plans: " + " | ".join([f"{p.get('target')}:{p.get('q')}" for p in plans]))
             if err:   dbg.append("오류: " + err)
-            if dbg:
-                html.append("\n<small style='opacity:.7'>" + "<br/>".join(dbg) + "</small>\n")
+            if dbg:   html.append("<small class='debug'>" + "<br/>".join(dbg) + "</small>")
 
     html.append("</details></div>")
     st.markdown("\n".join(html), unsafe_allow_html=True)
-
 
 st.markdown(
     """
