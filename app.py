@@ -283,54 +283,46 @@ st.markdown("""
 def _inject_right_rail_css():
     st.markdown("""
     <style>
-      /* 본문이 가려지지 않도록 오른쪽 여백 확보 */
       .block-container { padding-right: 380px !important; }
 
-      /* 플로팅 패널 */
       #search-flyout {
         position: fixed; right: 16px; top: 88px; bottom: 16px;
         width: 360px; overflow: auto; z-index: 1000;
         border-radius: 12px; border: 1px solid rgba(127,127,127,.25);
         box-shadow: 0 8px 28px rgba(0,0,0,.25);
       }
-      [data-theme="light"] #search-flyout { background: #fff;  border-color:#e5e5e5; }
-      [data-theme="dark"]  #search-flyout { background: #1f1f1f; border-color:rgba(255,255,255,.12); }
+      /* 🔁 여기 light 규칙을 교체하세요 */
+      [data-theme="light"] #search-flyout {
+        background:#fefefe;
+        border-color:#ddd;
+        box-shadow:0 4px 12px rgba(0,0,0,.08);
+      }
+      [data-theme="dark"]  #search-flyout {
+        background: #1f1f1f; border-color:rgba(255,255,255,.12);
+      }
 
-      /* 패널 내부 타이포 */
       #search-flyout h3 { margin: 12px 12px 6px; font-size: 1.05rem; }
       #search-flyout h4 { margin: 10px 12px 6px; font-size: .95rem; }
       #search-flyout p  { margin: 6px 12px; line-height: 1.4; }
-
-      /* details/summary */
       #search-flyout details { margin: 6px 8px 12px; }
       #search-flyout summary {
         cursor: pointer; padding: 6px 8px; border-radius: 8px;
         background: rgba(127,127,127,.08);
       }
-
-      /* 법령 리스트 카드 */
-      #search-flyout ol.law-list {
-        counter-reset: law; list-style:none; padding: 0 12px 8px 12px; margin: 0;
-      }
+      #search-flyout ol.law-list { counter-reset: law; list-style:none; padding: 0 12px 8px 12px; margin: 0; }
       #search-flyout ol.law-list > li {
         counter-increment: law;
         padding: 10px 10px; margin: 8px 0;
         border: 1px solid rgba(127,127,127,.25);
         border-radius: 10px;
       }
-      #search-flyout ol.law-list > li .title {
-        display:block; font-weight: 700; margin-bottom: 4px;
-      }
-      #search-flyout ol.law-list > li .title::before {
-        content: counter(law) ". "; font-weight: 700;
-      }
+      #search-flyout ol.law-list > li .title { display:block; font-weight: 700; margin-bottom: 4px; }
+      #search-flyout ol.law-list > li .title::before { content: counter(law) ". "; font-weight: 700; }
       #search-flyout .meta { font-size: .9rem; opacity: .9; margin: 2px 0 6px; }
       #search-flyout a { text-decoration: underline; }
-      #search-flyout small.debug { display:none; } /* 디버그 기본 숨김 */
+      #search-flyout small.debug { display:none; }
 
-      /* 🔥 텍스트 반짝임/그라데이션 효과 제거 */
-      #search-flyout, 
-      #search-flyout * {
+      #search-flyout, #search-flyout * {
         background: none !important;
         -webkit-background-clip: initial !important;
         -webkit-text-fill-color: inherit !important;
@@ -339,6 +331,7 @@ def _inject_right_rail_css():
       }
     </style>
     """, unsafe_allow_html=True)
+
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
