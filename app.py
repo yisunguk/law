@@ -1844,37 +1844,51 @@ with st.sidebar:
             present_url_with_fallback(d["url"], d["kind"], d["q"])
 
     # ───────────────────────── 자치법규
-    with tabs[2]:
-        ordin_name = st.text_input("자치법규명", value="서울특별시경관조례", key="sb_ordin_name")
-        local_keys_ms = st.multiselect("키워드(자동 추천)", options=local_suggest, default=local_suggest, key="sb_local_keys_ms")
-        colA, colB = st.columns(2)
-        with colA: ordin_no = st.text_input("공포번호(선택)", value="", key="sb_ordin_no")
-        with colB: ordin_dt = st.text_input("공포일자(YYYYMMDD, 선택)", value="", key="sb_ordin_dt")
+with tabs[2]:
+    # 기본 값
+    ordin_name = st.text_input("자치법규명", value="서울특별시경관조례", key="sb_ordin_name")
 
-        # 추천 키워드(검색용)
-        ordin_keys_ms = st.multiselect("키워드(자동 추천)", options=suggest_keywords_for_tab("ordin"),
-                                       default=["조례", "개정"], key="sb_ordin_keys_ms")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("자치법규 링크 만들기", key="sb_btn_ordin"):
-                if ordin_no and ordin_dt:
-                    url = hangul_ordin_with_keys(ordin_name, ordin_no, ordin_dt)
-                else:
-                    url = hangul_by_name("자치법규", ordin_name)
-                st.session_state["gen_ordin"] = {"url": url, "kind": "ordin", "q": ordin_name}
-        with col2:
-            if st.button("자치법규(키워드) 검색 링크", key="sb_btn_ordin_kw"):
-                keys = " ".join(ordin_keys_ms) if ordin_keys_ms else ""
-                q = " ".join(x for x in [ordin_name, keys] if x)
-                url = build_fallback_search("ordin", q)
-                st.session_state["gen_ordin_kw"] = {"url": url, "kind": "ordin", "q": q}
+    # ✅ 추천 키워드: 전체가 기본 선택(사용자가 바로 눌러 동작 확인 가능)
+    local_suggest = suggest_keywords_for_tab("ordin")  # ["조례", "규칙", "규정", "시행", "개정"]
+    local_keys_ms = st.multiselect(
+        "키워드(자동 추천)",
+        options=local_suggest,
+        default=local_suggest,
+        key="sb_local_keys_ms"
+    )
 
-        if "gen_ordin" in st.session_state:
-            d = st.session_state["gen_ordin"]
-            present_url_with_fallback(d["url"], d["kind"], d["q"])
-        if "gen_ordin_kw" in st.session_state:
-            d = st.session_state["gen_ordin_kw"]
-            present_url_with_fallback(d["url"], d["kind"], d["q"])
+    colA, colB = st.columns(2)
+    with colA:
+        ordin_no = st.text_input("공포번호(선택)", value="", key="sb_ordin_no")
+    with colB:
+        ordin_dt = st.text_input("공포일자(YYYYMMDD, 선택)", value="", key="sb_ordin_dt")
+
+    col1, col2 = st.columns(2)
+
+    # 상세 링크(자치법규 한글주소)
+    with col1:
+        if st.button("자치법규 링크 만들기", key="sb_btn_ordin"):
+            if ordin_no and ordin_dt:
+                url = hangul_ordin_with_keys(ordin_name, ordin_no, ordin_dt)
+            else:
+                url = hangul_by_name("자치법규", ordin_name)
+            st.session_state["gen_ordin"] = {"url": url, "kind": "ordin", "q": ordin_name}
+
+    # 검색 링크(자치법규명 + 키워드)
+    with col2:
+        if st.button("자치법규(키워드) 검색 링크", key="sb_btn_ordin_kw"):
+            q = " ".join([ordin_name] + local_keys_ms) if local_keys_ms else ordin_name
+            url = build_fallback_search("ordin", q)
+            st.session_state["gen_ordin_kw"] = {"url": url, "kind": "ordin", "q": q}
+
+    # 출력
+    if "gen_ordin" in st.session_state:
+        d = st.session_state["gen_ordin"]
+        present_url_with_fallback(d["url"], d["kind"], d["q"])
+    if "gen_ordin_kw" in st.session_state:
+        d = st.session_state["gen_ordin_kw"]
+        present_url_with_fallback(d["url"], d["kind"], d["q"])
+
 
     # ───────────────────────── 조약
     with tabs[3]:
