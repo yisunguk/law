@@ -1906,6 +1906,22 @@ with st.container():
             else:
                 st.markdown(content)
 
+# ✅ 메시지 루프 바로 아래(이미 _inject_right_rail_css() 다음 추천) — 항상 호출
+def _current_q_and_answer():
+    msgs = st.session_state.get("messages", [])
+    last_q = next((m for m in reversed(msgs) if m.get("role")=="user" and (m.get("content") or "").strip()), None)
+    last_a = next((m for m in reversed(msgs) if m.get("role")=="assistant" and (m.get("content") or "").strip()), None)
+    return (last_q or {}).get("content",""), (last_a or {}).get("content","")
+
+# CSS 주입 뒤
+_inject_right_rail_css()
+
+# 🔽 ChatBar 위, if user_q: 바깥에 위치
+q_for_panel, ans_for_panel = _current_q_and_answer()
+hints = extract_law_names_from_answer(ans_for_panel) if ans_for_panel else None
+render_search_flyout(q_for_panel, num_rows=8, hint_laws=hints, show_debug=SHOW_SEARCH_DEBUG)
+
+
 
 # ===============================
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
@@ -1919,8 +1935,7 @@ with st.container():
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
 # ===============================
 if user_q:
-    _inject_right_rail_css()
-
+  
     if client and AZURE:
         # 스트리밍 프리뷰 컨테이너
         stream_box = st.empty()
@@ -1962,11 +1977,10 @@ if user_q:
                 s = _re.sub(r"[ \t]+\n", "\n", s)
                 return s
             final_text = _normalize_text(full_text)
-
-        final_text = link_inline_articles_in_bullets(final_text)
-        final_text = strip_reference_links_block(final_text)
-        final_text = fix_links_with_lawdata(final_text, collected_laws)
-        final_text = _dedupe_blocks(final_text)
+            final_text = link_inline_articles_in_bullets(final_text)
+            final_text = strip_reference_links_block(final_text)
+            final_text = fix_links_with_lawdata(final_text, collected_laws)
+            final_text = _dedupe_blocks(final_text)
 
         # 프리뷰 컨테이너 비우기
         if stream_box is not None:
