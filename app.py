@@ -246,20 +246,15 @@ def _inject_right_rail_css():
       #search-flyout h4 { margin: 10px 12px 6px; font-size: .95rem; }
       #search-flyout p  { margin: 6px 12px; line-height: 1.4; }
 
-      /* details/summary: 기본 마커만 쓰고, 텍스트에는 '▼' 쓰지 않음 */
+      /* details/summary */
       #search-flyout details { margin: 6px 8px 12px; }
       #search-flyout summary {
         cursor: pointer; padding: 6px 8px; border-radius: 8px;
         background: rgba(127,127,127,.08);
       }
-      /* 필요시 기본 마커 숨기고 커스텀 마커 쓰고 싶다면 아래 주석 해제
-      #search-flyout summary::-webkit-details-marker { display:none; }
-      #search-flyout summary::before { content:"▸"; margin-right:6px; }
-      #search-flyout details[open] summary::before { content:"▾"; }
-      */
 
       /* 법령 리스트 카드 */
-      #search-flyout ol.law-list { 
+      #search-flyout ol.law-list {
         counter-reset: law; list-style:none; padding: 0 12px 8px 12px; margin: 0;
       }
       #search-flyout ol.law-list > li {
@@ -277,9 +272,18 @@ def _inject_right_rail_css():
       #search-flyout .meta { font-size: .9rem; opacity: .9; margin: 2px 0 6px; }
       #search-flyout a { text-decoration: underline; }
       #search-flyout small.debug { display:none; } /* 디버그 기본 숨김 */
+
+      /* 🔥 텍스트 반짝임/그라데이션 효과 제거 */
+      #search-flyout, 
+      #search-flyout * {
+        background: none !important;
+        -webkit-background-clip: initial !important;
+        -webkit-text-fill-color: inherit !important;
+        mix-blend-mode: normal !important;
+        text-shadow: none !important;
+      }
     </style>
     """, unsafe_allow_html=True)
-
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
