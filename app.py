@@ -222,40 +222,50 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 
 # ---- 오른쪽 플로팅 패널용 CSS ----
 def _inject_right_rail_css():
-    st.markdown("""
-<style>
-#search-flyout details { margin-top: 6px; }
-#search-flyout h4 { font-size: 1rem; }
-</style>
-""", unsafe_allow_html=True)
-
+    # 소소한 타이포/간격
     st.markdown("""
     <style>
-    /* 채팅 본문이 가려지지 않도록 오른쪽 여백 확보 */
-    .block-container { padding-right: 380px !important; }
+      #search-flyout details { margin-top: 6px; }
+      #search-flyout h4 { font-size: 1rem; }
+    </style>
+    """, unsafe_allow_html=True)
 
-    /* 오른쪽 고정 패널 */
-    #search-flyout {
-      position: fixed; right: 18px; top: 88px;
-      width: 360px; max-width: 38vw;
-      height: calc(100vh - 130px); overflow: auto;
-      border-radius: 12px; padding: 12px 14px; z-index: 1000;
-      border: 1px solid rgba(127,127,127,.25);
-      background: transparent !important;
-      backdrop-filter: none !important;
-    }
-    [data-theme="light"] #search-flyout {
-      background: #fff; color: #222; border-color: #e5e5e5;
-    }
-    [data-theme="dark"] #search-flyout {
-      background: #1f1f1f; color: #eee; border-color: rgba(255,255,255,.16);
-    }
+    # 오른쪽 플로팅 패널 레이아웃/CSS
+    st.markdown("""
+    <style>
+      /* 본문이 가려지지 않도록 오른쪽 여백 확보 */
+      .block-container { padding-right: 380px !important; }
 
-    /* 좁은 화면(모바일/태블릿)은 상하 스택 */
-    @media (max-width: 1024px) {
-      .block-container { padding-right: 0 !important; }
-      #search-flyout   { position: static; width: auto; height: auto; }
-    }
+      /* 플로팅 패널 공통 */
+      #search-flyout {
+        position: fixed;
+        right: 16px; top: 88px; bottom: 16px;
+        width: 360px;
+        overflow: auto;
+        z-index: 1000;
+        border-radius: 12px;
+        border: 1px solid rgba(127,127,127,.25);
+        box-shadow: 0 8px 28px rgba(0,0,0,.25);
+        /* 투명 금지: 테마별 배경이 항상 보이도록 */
+        background: inherit;           /* 기본값은 무시되게 */
+        backdrop-filter: none !important;
+        mix-blend-mode: normal;
+      }
+
+      /* 라이트/다크 테마별 확실한 배경(우선순위 고정) */
+      [data-theme="light"] #search-flyout {
+        background: #fff !important;
+        border-color: #e5e5e5 !important;
+      }
+      [data-theme="dark"] #search-flyout {
+        background: #1f1f1f !important;
+        border-color: rgba(255,255,255,.12) !important;
+      }
+
+      /* 내부 카드 간격 보완(겹침 방지) */
+      #search-flyout .stExpander, #search-flyout .stMarkdown {
+        margin-bottom: 8px;
+      }
     </style>
     """, unsafe_allow_html=True)
 
@@ -1887,7 +1897,6 @@ with st.container():
 # 🔻 어시스턴트 답변 출력은 반드시 user_q가 있을 때만 실행
 if user_q:
     _inject_right_rail_css()
-    render_search_flyout(user_q, num_rows=8)
 
     if client and AZURE:
         # 1) 말풍선 없이 임시 컨테이너로 스트리밍
