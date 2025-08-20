@@ -588,7 +588,9 @@ _ART_PAT_BULLET = re.compile(
 _REF_BLOCK_PAT = re.compile(
     r'(?ms)^\s*\d+\s*[\.\)]\s*참고\s*링크\s*[:：]?\s*\n(?:\s*[-*•].*\n?)+'
 )
-_REF_BLOCK2_PAT = re.compile(r'\n###\s*참고\s*링크\(조문\)[\s\S]*$', re.M)  # (혹시 모듈이 붙인 블록이 있다면 제거)
+# 앞에 공백이 있어도 매칭되도록 보강
+_REF_BLOCK2_PAT = re.compile(r'\n[ \t]*###\s*참고\s*링크\(조문\)[\s\S]*$', re.M)
+
 
 def _deep_article_url(law: str, art_label: str) -> str:
     return f"https://www.law.go.kr/법령/{quote((law or '').strip())}/{quote(art_label)}"
@@ -2000,19 +2002,7 @@ if user_q:
             law_ctx = format_law_context(laws)
             title = "법률 자문 메모"
             full_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
-            final_text = apply_final_postprocess(full_text, collected_laws)
-
-        # --- ✅ 최종 후처리: 반드시 if user_q 블록 안에서만 실행 ---
-        try:
-            final_text = _normalize_text(full_text)
-        except NameError:
-            # 혹시 상단 정의가 빠졌을 때의 안전 폴백
-            import re as _re
-            def _normalize_text(s: str) -> str:
-                s = (s or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-                s = _re.sub(r"\n{3,}", "\n\n", s)
-                s = _re.sub(r"[ \t]+\n", "\n", s)
-                return s
+            final_text = apply_final_postprocess(full_text, collected_laws) 
            
 
         # 프리뷰 컨테이너 비우기
