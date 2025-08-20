@@ -1704,6 +1704,16 @@ except NameError:
     # 이 패치를 해당 정의 '아래'로 옮겨 붙이세요.
     pass
 
+
+
+# ↓↓↓ 여기 아래에 기존 '링크 생성기' 섹션 코드가 이어지면 됩니다.
+# st.markdown("### 🔗 링크 생성기(무인증)")  # <— 기존 코드 예시
+
+  
+# =============================
+# Sidebar: 링크 생성기 (무인증)
+# =============================
+
 # --- 사이드바: 새 대화 버튼 (↙ 링크 생성기 위에 배치) ---
 st.markdown("### 💬 대화", help="현재 대화를 초기화합니다.")
 if st.button("🆕 새 대화", type="primary", use_container_width=True, key="__btn_new_chat__"):
@@ -1713,14 +1723,6 @@ if st.button("🆕 새 대화", type="primary", use_container_width=True, key="_
     # 입력창 비우기( chatbar.py 에서 사용하는 플래그 )
     st.session_state["_clear_input"] = True
     st.rerun()
-
-# ↓↓↓ 여기 아래에 기존 '링크 생성기' 섹션 코드가 이어지면 됩니다.
-# st.markdown("### 🔗 링크 생성기(무인증)")  # <— 기존 코드 예시
-
-  
-# =============================
-# Sidebar: 링크 생성기 (무인증)
-# =============================
 with st.sidebar:
     st.header("🔗 링크 생성기 (무인증)")
     tabs = st.tabs(["법령", "행정규칙", "자치법규", "조약", "판례", "헌재", "해석례", "용어/별표"])
