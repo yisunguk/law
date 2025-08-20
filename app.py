@@ -329,10 +329,11 @@ def _sanitize_plan_q(user_q: str, q: str) -> str:
     return q
 
 # ---- 오른쪽 플로팅 패널 렌더러 ----
-def render_search_flyout(user_q: str, num_rows: int = 8):
+def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | None = None):
     """오른쪽 고정 패널: 통합 검색 결과 (순수 HTML 렌더링)"""
-    results = find_all_law_data(user_q, num_rows=num_rows)
-
+    results = find_all_law_data(user_q, num_rows=num_rows, hint_laws=hint_laws)
+    # ↓↓↓ 기존 HTML 렌더 부분은 그대로 유지 (items/err/debug 표시 로직 동일)
+    
     esc = html.escape
     html_parts = []
     html_parts.append('<div id="search-flyout">')
@@ -434,6 +435,42 @@ st.markdown(
 _CASE_NO_RE = re.compile(r'(19|20)\d{2}[가-힣]{1,3}\d{1,6}')
 _HBASE = "https://www.law.go.kr"
 LAW_PORTAL_BASE = "https://www.law.go.kr/"
+
+
+# --- 답변(마크다운)에서 '법령명'들을 추출(복수) ---
+
+# [민법 제839조의2](...), [가사소송법 제2조](...) 등
+_LAW_IN_LINK = re.compile(r'\[([^\]\n]+?)\s+제\d+조(의\d+)?\]')
+# 불릿/일반 문장 내: "OO법/령/규칙/조례" (+선택적 '제n조')
+_LAW_INLINE  = re.compile(r'([가-힣A-Za-z0-9·\s]{2,40}?(?:법|령|규칙|조례))(?:\s*제\d+조(의\d+)?)?')
+
+def extract_law_names_from_answer(md: str) -> list[str]:
+    if not md:
+        return []
+    names = set()
+
+    # 1) 링크 텍스트 안의 법령명
+    for m in _LAW_IN_LINK.finditer(md):
+        nm = (m.group(1) or "").strip()
+        if nm:
+            names.add(nm)
+
+    # 2) 일반 텍스트/불릿에서 법령명 패턴
+    for m in _LAW_INLINE.finditer(md):
+        nm = (m.group(1) or "").strip()
+        # 과적합 방지: 너무 짧은/긴 것 제외
+        if 2 <= len(nm) <= 40:
+            names.add(nm)
+
+    # 정리(중복 제거 + 길이 컷 + 상위 6개)
+    out, seen = [], set()
+    for n in names:
+        n2 = n[:40]
+        if n2 and n2 not in seen:
+            seen.add(n2)
+            out.append(n2)
+    return out[:6]
+
 
 def normalize_law_link(u: str) -> str:
     """상대/스킴누락 링크를 www.law.go.kr 절대 URL로 교정"""
@@ -1254,52 +1291,59 @@ _LAWISH_RE = re.compile(r"(법|령|규칙|조례|법률)|제\d+조")
 def _lawish(q: str) -> bool:
     return bool(_LAWISH_RE.search(q or ""))
 
-def find_all_law_data(query: str, num_rows: int = 3):
+def find_all_law_data(query: str, num_rows: int = 3, hint_laws: list[str] | None = None):
     results = {}
 
     # 0) LLM 플랜 생성
-    plans = propose_api_queries_llm(query)
+    plans = propose_api_queries_llm(query)  # 기존 LLM 플래너 사용:contentReference[oaicite:1]{index=1}
 
-    # 오탈자 보정
+    # ✅ 0-0) 답변/질문에서 얻은 '힌트 법령들'을 최우선 시드로 주입
+    if hint_laws:
+        seed = [{"target":"law","q":nm, "must":[nm], "must_not": []}
+                for nm in hint_laws if nm]
+        # 앞에 배치 + (target,q) 중복 제거
+        seen=set(); merged = seed + (plans or [])
+        plans = []
+        for p in merged:
+            key=(p.get("target"), p.get("q"))
+            if key not in seen and p.get("target") and p.get("q"):
+                seen.add(key); plans.append(p)
+
+    # 오탈자 보정/정합성 필터/법령형 우선 흐름(기존) 유지:contentReference[oaicite:2]{index=2}
     for p in plans or []:
-        p["q"] = _sanitize_plan_q(query, p.get("q", ""))
+        p["q"] = _sanitize_plan_q(query, p.get("q",""))
+    plans = _filter_plans(query, plans)                      # 사용자와 토큰 교집합 or must 있으면 통과:contentReference[oaicite:3]{index=3}
 
-    # 0-1) 정합성 필터
-    plans = _filter_plans(query, plans)
-
-    # ✅ 0-2) "법령형" 플랜만 우선 사용(법/령/규칙/조례/제n조 토큰 포함)
-    good = [p for p in (plans or []) if _lawish(p.get("q",""))]
+    good = [p for p in (plans or []) if _lawish(p.get("q",""))]  # 법/령/규칙/조례/제n조 포함:contentReference[oaicite:4]{index=4}
     if good:
         plans = good[:10]
     else:
-        # 후보 법령명 → 키워드 맵 → 키워드 bigram 순으로 구제
-        names = extract_law_candidates_llm(query) or []
+        # LLM 후보(질문 기준) → 규칙 폴백(최소화) 순으로 구제
+        names = extract_law_candidates_llm(query) or []      # LLM 기반 후보 추출기:contentReference[oaicite:5]{index=5}
         if not names:
+            # 규칙 맵은 폴백용으로만 사용
             names = [v for k, v in KEYWORD_TO_LAW.items() if k in (query or "")]
         if names:
             plans = [{"target":"law","q":n,"must":[n],"must_not":[]} for n in names][:6]
         else:
-            kw = (extract_keywords_llm(query) or [])[:5]
+            kw = (extract_keywords_llm(query) or [])[:5]     # 키워드 빅램 폴백:contentReference[oaicite:6]{index=6}
             tmp=[]
             for i in range(len(kw)):
                 for j in range(i+1, len(kw)):
                     tmp.append({"target":"law","q":f"{kw[i]} {kw[j]}","must":[kw[i],kw[j]],"must_not":[]})
             plans = tmp[:8]
 
-    # (이하 기존 실행/리랭크/패킹은 그대로)
+    # (이하 실행/리랭크/패킹은 기존과 동일):contentReference[oaicite:7]{index=7}
     tried, err = [], []
     buckets = {"법령":("law",[]), "행정규칙":("admrul",[]), "자치법규":("ordin",[]), "조약":("trty",[])}
-   
-    # 1) 실행
     for plan in plans:
         t, qx = plan["target"], plan["q"]
         tried.append(f"{t}:{qx}")
         if not qx.strip():
             err.append(f"{t}:(blank) dropped"); continue
         try:
-            items, endpoint, e = _call_moleg_list(t, qx, num_rows=num_rows)
-            # 아이템 단계 일반화 필터 + 정렬
-            items = _filter_items_by_plan(query, items, plan)
+            items, endpoint, e = _call_moleg_list(t, qx, num_rows=num_rows)  # MOLEG API 호출:contentReference[oaicite:8]{index=8}
+            items = _filter_items_by_plan(query, items, plan)                # 정합성 필터 + 정렬:contentReference[oaicite:9]{index=9}
             if items:
                 for label,(tt,arr) in buckets.items():
                     if t==tt: arr.extend(items)
@@ -1307,17 +1351,16 @@ def find_all_law_data(query: str, num_rows: int = 3):
         except Exception as ex:
             err.append(f"{t}:{qx} → {ex}")
 
-    # 2) 리랭크/패킹(법령만)
     for label,(tt,arr) in buckets.items():
         if arr and tt=="law" and len(arr)>=2:
-            arr = rerank_laws_with_llm(query, arr, top_k=8)
+            arr = rerank_laws_with_llm(query, arr, top_k=8)  # LLM 리랭커(맥락 필터):contentReference[oaicite:10]{index=10}
         results[label] = {
-            "items": arr,
-            "endpoint": None,
+            "items": arr, "endpoint": None,
             "error": "; ".join(err) if err else None,
             "debug": {"plans": plans, "tried": tried},
         }
     return results
+
 
 # 캐시된 단일 법령 검색
 @st.cache_data(show_spinner=False, ttl=300)
@@ -1879,6 +1922,10 @@ if user_q:
         final_text = strip_reference_links_block(final_text)          # 맨 아래 '참고 링크(조문)' 섹션 제거
         final_text = fix_links_with_lawdata(final_text, collected_laws)  # 본문 내 [법령명](…) 링크를 공식 상세링크로 교정
         final_text = _dedupe_blocks(final_text)                       # 중복 문단/빈 줄 정리
+        hint_from_ans  = extract_law_names_from_answer(final_text)            # 답변에서 실제 인용된 법령(복수)
+        hint_from_q_llm = extract_law_candidates_llm(user_q)                  # 질문에서 LLM이 뽑은 후보(복수):contentReference[oaicite:11]{index=11}
+        hint_laws = list(dict.fromkeys((hint_from_ans or []) + (hint_from_q_llm or [])))  # 중복 제거/순서 유지
+        render_search_flyout(user_q, num_rows=8, hint_laws=hint_laws)         # 우측 패널 재렌더 (민법+가사소송법+기타)
 
         stream_box.empty()
 
