@@ -344,82 +344,55 @@ def _sanitize_plan_q(user_q: str, q: str) -> str:
     return q
 
 # ---- 오른쪽 플로팅 패널 렌더러 ----
-def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | None = None):
-    """오른쪽 고정 패널: 통합 검색 결과 (순수 HTML 렌더링)"""
+def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | None = None, show_debug: bool = False):
+    """오른쪽 고정 패널: 통합 검색 결과 렌더"""
     results = find_all_law_data(user_q, num_rows=num_rows, hint_laws=hint_laws)
-    # ↓↓↓ 기존 HTML 렌더 부분은 그대로 유지 (items/err/debug 표시 로직 동일)
-    
-    esc = html.escape
-    html_parts = []
-    html_parts.append('<div id="search-flyout">')
-    html_parts.append('<h3>📚 통합 검색 결과</h3>')
-    html_parts.append('<details open><summary style="cursor:pointer;font-weight:600">열기/접기</summary>')
 
-    # ✅ 섹션 루프 안에서 pack을 만든 뒤, 그 다음에 디버그 정보를 읽는다.
-    for label, pack in results.items():
+    def _law_item_card(i, it):
+        t = it.get("title") or it.get("법령명한글") or it.get("title_kr") or ""
+        dept = it.get("dept") or it.get("소관부처") or ""
+        eff = it.get("eff") or it.get("시행일자") or ""
+        pub = it.get("pub") or it.get("공포일자") or ""
+        link = it.get("link") or it.get("url") or ""
+        lines = [
+            f"**{i}. {t}** ()",
+            f"소관부처: {dept}" if dept else "",
+            f"시행일자: {eff} / 공포일자: {pub}" if (eff or pub) else "",
+            f"[법령 상세보기]({link})" if link else "",
+        ]
+        return "\n".join([ln for ln in lines if ln])
+
+    # 헤더
+    html = ['<div id="search-flyout">', '### 📚 통합 검색 결과', '<details open><summary>▼ 열기/접기</summary>']
+
+    # 버킷 렌더
+    order = ["법령", "행정규칙", "자치법규", "조약"]
+    for label in order:
+        pack = results.get(label) or {}
         items = pack.get("items") or []
-        err   = pack.get("error")
-
-        # --- DEBUG: 실제 시도 쿼리/플랜 표시(옵션) ---
-        dbg   = (pack.get("debug") or {})
-        tried = dbg.get("tried") or []      # 예: ["law:민법 손해배상", "law:주차장법", ...]
-        plans = dbg.get("plans") or []      # 예: [{"target":"law","q":"..."}, ...]
-        if tried:
-            tried_txt = " | ".join(tried[:6])
-            html_parts.append(
-                f'<div style="opacity:.6;font-size:.85em;margin-top:4px">'
-                f'시도: {esc(tried_txt)}</div>'
-            )
-        if plans:
-            plan_txt = " | ".join(
-                f"{p.get('target','')}:{p.get('q','')}" for p in plans[:6]
-            )
-            html_parts.append(
-                f'<div style="opacity:.6;font-size:.85em">'
-                f'LLM plans: {esc(plan_txt)}</div>'
-            )
-        # -------------------------------------------
-
-        html_parts.append(f'<h4 style="margin:10px 0 6px">🔎 {esc(label)}</h4>')
-
-        if err:
-            html_parts.append(f'<div style="opacity:.85">⚠️ {esc(err)}</div>')
-            continue
+        html.append(f"\n#### 🔎 {label}\n")
         if not items:
-            html_parts.append('<div style="opacity:.65">검색 결과 없음</div>')
-            continue
+            html.append("검색 결과 없음\n")
+        else:
+            cards = []
+            for idx, it in enumerate(items, 1):
+                cards.append(_law_item_card(idx, it))
+            html.append("\n\n".join(cards))
 
-        # 결과 카드 목록
-        for i, law in enumerate(items, 1):
-            nm   = esc(law.get("법령명",""))
-            kind = esc(law.get("법령구분",""))
-            dept = esc(law.get("소관부처명",""))
-            eff  = esc(law.get("시행일자","-"))
-            pub  = esc(law.get("공포일자","-"))
-            link = law.get("법령상세링크")
+        # 🔧 디버그 표시(옵션)
+        if show_debug:
+            tried = (pack.get("debug") or {}).get("tried") or []
+            plans = (pack.get("debug") or {}).get("plans") or []
+            err = pack.get("error")
+            dbg = []
+            if tried: dbg.append("시도: " + " | ".join(tried))
+            if plans: dbg.append("LLM plans: " + " | ".join([f"{p.get('target')}:{p.get('q')}" for p in plans]))
+            if err:   dbg.append("오류: " + err)
+            if dbg:
+                html.append("\n<small style='opacity:.7'>" + "<br/>".join(dbg) + "</small>\n")
 
-            html_parts.append(
-                '<div style="border:1px solid rgba(127,127,127,.25);'
-                'border-radius:12px;padding:10px 12px;margin:8px 0">'
-            )
-            html_parts.append(f'<div style="font-weight:700">{i}. {nm} '
-                              f'<span style="opacity:.7">({kind})</span></div>')
-            html_parts.append(f'<div style="margin-top:4px">소관부처: {dept}</div>')
-            html_parts.append(f'<div>시행일자: {eff} / 공포일자: {pub}</div>')
-            if link:
-                html_parts.append(
-                    f'<div style="margin-top:6px">'
-                    f'<a href="{esc(link)}" target="_blank">법령 상세보기</a>'
-                    f'</div>'
-                )
-            html_parts.append('</div>')
-
-    html_parts.append('</details>')
-    html_parts.append('</div>')  # #search-flyout
-
-    st.markdown("\n".join(html_parts), unsafe_allow_html=True)
-
-
+    html.append("</details></div>")
+    st.markdown("\n".join(html), unsafe_allow_html=True)
 
 st.markdown(
     """
@@ -1939,6 +1912,7 @@ if user_q:
         hint_from_ans  = extract_law_names_from_answer(final_text)            # 답변에서 실제 인용된 법령(복수)
         hint_from_q_llm = extract_law_candidates_llm(user_q)                  # 질문에서 LLM이 뽑은 후보(복수):contentReference[oaicite:11]{index=11}
         hint_laws = list(dict.fromkeys((hint_from_ans or []) + (hint_from_q_llm or [])))  # 중복 제거/순서 유지
+        render_search_flyout(user_q, num_rows=8, hint_laws=hint_laws, show_debug=SHOW_SEARCH_DEBUG)
         render_search_flyout(user_q, num_rows=8, hint_laws=hint_laws)         # 우측 패널 재렌더 (민법+가사소송법+기타)
 
         stream_box.empty()
