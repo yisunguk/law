@@ -345,41 +345,70 @@ def _sanitize_plan_q(user_q: str, q: str) -> str:
 
 # ---- 오른쪽 플로팅 패널 렌더러 ----
 def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | None = None, show_debug: bool = False):
-    """오른쪽 고정 패널: 통합 검색 결과 렌더"""
     results = find_all_law_data(user_q, num_rows=num_rows, hint_laws=hint_laws)
 
+    def _pick(*candidates):
+        for c in candidates:
+            if isinstance(c, str) and c.strip():
+                return c.strip()
+        return ""
+
+    def _build_law_link(it, eff):
+        # 1) 항목에 직접 링크가 있으면 사용
+        link = _pick(it.get("url"), it.get("link"), it.get("detail_url"), it.get("상세링크"))
+        if link:
+            return link
+        # 2) DRF lawService 규격으로 생성 (MST + 시행일자)
+        mst = _pick(it.get("MST"), it.get("mst"), it.get("LawMST"))
+        if mst:
+            # eff(시행일자)가 없으면 빈 값으로 두어도 페이지는 열립니다.
+            return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={eff}"
+        return ""
+
     def _law_item_card(i, it):
-        t = it.get("title") or it.get("법령명한글") or it.get("title_kr") or ""
-        dept = it.get("dept") or it.get("소관부처") or ""
-        eff = it.get("eff") or it.get("시행일자") or ""
-        pub = it.get("pub") or it.get("공포일자") or ""
-        link = it.get("link") or it.get("url") or ""
-        lines = [
-            f"**{i}. {t}** ()",
-            f"소관부처: {dept}" if dept else "",
-            f"시행일자: {eff} / 공포일자: {pub}" if (eff or pub) else "",
-            f"[법령 상세보기]({link})" if link else "",
-        ]
-        return "\n".join([ln for ln in lines if ln])
+        # 제목
+        title = _pick(
+            it.get("법령명한글"), it.get("법령명"), it.get("title_kr"), it.get("title"),
+            it.get("name_ko"), it.get("name")
+        )
+        # 부처/날짜
+        dept = _pick(it.get("소관부처"), it.get("부처명"), it.get("dept"), it.get("department"))
+        eff  = _pick(it.get("시행일자"), it.get("eff"), it.get("effective_date"))
+        pub  = _pick(it.get("공포일자"), it.get("pub"), it.get("promulgation_date"))
+        # 링크
+        link = _build_law_link(it, eff)
+
+        lines = []
+        if title:
+            lines.append(f"**{i}. {title}** ()")
+        else:
+            lines.append(f"**{i}. (제목 없음)**")
+
+        meta = []
+        if dept: meta.append(f"소관부처: {dept}")
+        if eff or pub: meta.append(f"시행일자: {eff} / 공포일자: {pub}")
+        if meta: lines.append("\n".join(meta))
+
+        if link:
+            lines.append(f"[법령 상세보기]({link})")
+
+        return "\n".join(lines)
 
     # 헤더
     html = ['<div id="search-flyout">', '### 📚 통합 검색 결과', '<details open><summary>▼ 열기/접기</summary>']
 
     # 버킷 렌더
-    order = ["법령", "행정규칙", "자치법규", "조약"]
-    for label in order:
+    for label in ["법령", "행정규칙", "자치법규", "조약"]:
         pack = results.get(label) or {}
         items = pack.get("items") or []
         html.append(f"\n#### 🔎 {label}\n")
         if not items:
             html.append("검색 결과 없음\n")
         else:
-            cards = []
-            for idx, it in enumerate(items, 1):
-                cards.append(_law_item_card(idx, it))
+            cards = [_law_item_card(idx, it) for idx, it in enumerate(items, 1)]
             html.append("\n\n".join(cards))
 
-        # 🔧 디버그 표시(옵션)
+        # 디버그는 옵션으로만
         if show_debug:
             tried = (pack.get("debug") or {}).get("tried") or []
             plans = (pack.get("debug") or {}).get("plans") or []
@@ -393,6 +422,7 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
 
     html.append("</details></div>")
     st.markdown("\n".join(html), unsafe_allow_html=True)
+
 
 st.markdown(
     """
