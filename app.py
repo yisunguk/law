@@ -465,6 +465,8 @@ _CASE_NO_RE = re.compile(r'(19|20)\d{2}[가-힣]{1,3}\d{1,6}')
 _HBASE = "https://www.law.go.kr"
 LAW_PORTAL_BASE = "https://www.law.go.kr/"
 
+
+
 # --- 최종 후처리 유틸: 답변 본문을 정리하고 조문에 인라인 링크를 붙인다 ---
 def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
     # 1) normalize (fallback 포함)
@@ -1703,13 +1705,7 @@ except NameError:
     # 만약 위 객체들이 아직 정의되기 전 위치라면,
     # 이 패치를 해당 정의 '아래'로 옮겨 붙이세요.
     pass
-
-
-
-# ↓↓↓ 여기 아래에 기존 '링크 생성기' 섹션 코드가 이어지면 됩니다.
-# st.markdown("### 🔗 링크 생성기(무인증)")  # <— 기존 코드 예시
-
-  
+ 
 # =============================
 # Sidebar: 링크 생성기 (무인증)
 # =============================
@@ -1722,10 +1718,6 @@ with st.sidebar:
         # 입력창 비우기(chatbar.py에서 쓰는 플래그)
         st.session_state["_clear_input"] = True
         st.rerun()
-
-    # ↓↓↓ 기존 '링크 생성기' 섹션은 이 아래 그대로 유지
-    st.header("🔗 링크 생성기 (무인증)")
-    tabs = st.tabs(["법령", "행정규칙", "자치법규", "조약", "판례", "헌재", "해석례", "용어/별표"])
 
     # ... (이하 기존 사이드바 코드 그대로)
 
