@@ -84,6 +84,19 @@ def ask_llm_with_tools(
     )
 
 import io, os, re, json, time, html
+
+if "_normalize_text" not in globals():
+    def _normalize_text(s: str) -> str:
+        """불필요한 공백/빈 줄을 정돈하는 안전한 기본 버전"""
+        s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
+        # 앞뒤 공백 정리
+        s = s.strip()
+        # 3개 이상 연속 개행 → 2개로
+        s = re.sub(r"\n{3,}", "\n\n", s)
+        # 문장 끝 공백 제거
+        s = re.sub(r"[ \t]+\n", "\n", s)
+        return s
+
 def _esc(s: str) -> str:
     """HTML escape only"""
     return html.escape("" if s is None else str(s))
@@ -1933,6 +1946,12 @@ if user_q:
 
         # --- 최종 후처리 (기존 동일) ---
 final_text = _normalize_text(full_text)
+# _normalize_text가 혹시 다른 모듈에만 있을 때 fallback
+try:
+    final_text = _normalize_text(full_text)
+except NameError:
+    final_text = (full_text or "")
+
 final_text = link_inline_articles_in_bullets(final_text)
 final_text = strip_reference_links_block(final_text)
 final_text = fix_links_with_lawdata(final_text, collected_laws)
