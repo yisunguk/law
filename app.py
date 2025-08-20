@@ -1740,70 +1740,91 @@ except NameError:
     # 이 패치를 해당 정의 '아래'로 옮겨 붙이세요.
     pass
 
-# --- 작동 키워드 목록(필요시 보강/수정) ---
-LINKGEN_KEYWORDS = {
-    "법령": ["제정", "전부개정", "개정", "폐지", "부칙", "정정", "시행", "별표", "별지서식"],
-    "행정규칙": ["훈령", "예규", "고시", "지침", "공고", "전부개정", "개정", "정정", "폐지"],
-    "자치법규": ["조례", "규칙", "훈령", "예규", "전부개정", "개정", "정정", "폐지"],
-    "조약": ["서명", "비준", "발효", "공포", "폐기"],
-    "판례": ["대법원", "전원합의체", "하급심", "손해배상", "불법행위"],
-    "헌재": ["위헌", "합헌", "한정위헌", "한정합헌", "헌법불합치"],
-    "해석례": ["유권해석", "법령해석", "질의회신"],
-    "용어/별표": ["용어", "정의", "별표", "서식"],
+# =============================
+# 키워드 기본값/위젯 헬퍼 (with st.sidebar: 위에 배치)
+# =============================
+
+# 탭별 기본 키워드 1개(없으면 첫 항목 사용)
+DEFAULT_KEYWORD = {
+    "법령": "개정",
+    "행정규칙": "개정",
+    "자치법규": "개정",
+    "조약": "비준",
+    "판례": "대법원",
+    "헌재": "위헌",
+    "해석례": "유권해석",
+    "용어/별표": "정의",   # ← '용어' 대신 '정의'를 기본으로 권장
 }
 
-# --- 키워드 위젯 헬퍼: st_tags가 있으면 사용, 없으면 multiselect로 대체 ---
+def one_default(options, prefer=None):
+    """옵션 목록에서 기본으로 1개만 선택해 반환"""
+    if not options:
+        return []
+    if prefer and prefer in options:
+        return [prefer]
+    return [options[0]]
+
+# st_tags가 있으면 태그 위젯, 없으면 multiselect로 동작
 try:
     from streamlit_tags import st_tags
-    def kw_input(label, options, key):
+    def kw_input(label, options, key, tab_name=None):
+        prefer = DEFAULT_KEYWORD.get(tab_name)
         return st_tags(
             label=label,
             text="쉼표(,) 또는 Enter로 추가/삭제",
-            value=options,           # ✅ 기본값: 전부 채움
+            value=one_default(options, prefer),   # ✅ 기본 1개만
             suggestions=options,
             maxtags=len(options),
             key=key,
         )
 except Exception:
     import streamlit as st
-    def kw_input(label, options, key):
+    def kw_input(label, options, key, tab_name=None):
+        prefer = DEFAULT_KEYWORD.get(tab_name)
         return st.multiselect(
-            label, options=options, default=options,  # ✅ 기본값: 전부 선택
-            key=key, help="필요 없는 키워드는 선택 해제하세요."
+            label=label,
+            options=options,
+            default=one_default(options, prefer), # ✅ 기본 1개만
+            key=key,
+            help="필요한 키워드만 추가로 선택하세요.",
         )
-
 
 # =============================
 # Sidebar: 링크 생성기 (무인증)
 # =============================
 with st.sidebar:
-    # --- 사이드바: 새 대화 버튼 (↙ 링크 생성기 위에 배치) ---
+    # --- 사이드바: 새 대화 버튼(링크 생성기 위) ---
     if st.button("🆕 새 대화", type="primary", use_container_width=True, key="__btn_new_chat__"):
-        # 대화 관련 상태만 안전하게 초기화 (설정/시크릿/클라이언트는 유지)
         for k in ("messages", "_last_user_nonce", "_pending_user_q", "_pending_user_nonce", "_last_ans_hash"):
             st.session_state.pop(k, None)
-        # 입력창 비우기(chatbar.py에서 쓰는 플래그)
         st.session_state["_clear_input"] = True
         st.rerun()
-
-    # ... (이하 기존 사이드바 코드 그대로)
 
     st.header("🔗 링크 생성기 (무인증)")
     tabs = st.tabs(["법령", "행정규칙", "자치법규", "조약", "판례", "헌재", "해석례", "용어/별표"])
 
+    # 공통 추천 프리셋(모두 1개만 기본 선택되도록 kw_input + DEFAULT_KEYWORD 활용)
+    adm_suggest    = suggest_keywords_for_tab("admrul")
+    ordin_suggest  = suggest_keywords_for_tab("ordin")
+    trty_suggest   = suggest_keywords_for_tab("trty")
+    case_suggest   = suggest_keywords_for_tab("prec")
+    cc_suggest     = suggest_keywords_for_tab("cc")
+    interp_suggest = suggest_keywords_for_tab("expc")
+    term_suggest   = ["정의", "용어", "별표", "서식"]
+
     # ───────────────────────── 법령
     with tabs[0]:
         law_name = st.text_input("법령명", value="민법", key="sb_law_name")
-
-        # 자동 추천 키워드(멀티선택)
-        law_suggest = suggest_keywords_for_law(law_name)
-        law_keys_ms = st.multiselect("키워드(자동 추천)", options=law_suggest, default=law_suggest[:2], key="sb_law_keys_ms")
+        # 법령명 기반 추천
+        law_keys = kw_input("키워드(자동 추천)",
+                            suggest_keywords_for_law(law_name),
+                            key="sb_law_keys",
+                            tab_name="법령")
 
         if st.button("법령 상세 링크 만들기", key="sb_btn_law"):
-            keys = list(law_keys_ms) if law_keys_ms else []
-            url = hangul_law_with_keys(law_name, keys) if keys else hangul_by_name("법령", law_name)
+            url = hangul_law_with_keys(law_name, law_keys) if law_keys else hangul_by_name("법령", law_name)
             st.session_state["gen_law"] = {"url": url, "kind": "law", "q": law_name}
-    
+
         if "gen_law" in st.session_state:
             d = st.session_state["gen_law"]
             present_url_with_fallback(d["url"], d["kind"], d["q"], label_main="새 탭에서 열기")
@@ -1811,28 +1832,24 @@ with st.sidebar:
     # ───────────────────────── 행정규칙
     with tabs[1]:
         adm_name = st.text_input("행정규칙명", value="수입통관사무처리에관한고시", key="sb_adm_name")
-        admin_keywords = kw_input("키워드(자동 추천)", LINKGEN_KEYWORDS["행정규칙"], key="kw_admin")
         dept     = st.selectbox("소관 부처(선택)", MINISTRIES, index=0, key="sb_adm_dept")
+        adm_keys = kw_input("키워드(자동 추천)", adm_suggest, key="sb_adm_keys", tab_name="행정규칙")
 
         colA, colB = st.columns(2)
         with colA: issue_no = st.text_input("공포번호(선택)", value="", key="sb_adm_no")
         with colB: issue_dt = st.text_input("공포일자(YYYYMMDD, 선택)", value="", key="sb_adm_dt")
 
-        adm_keys_ms = st.multiselect("키워드(자동 추천)", options=suggest_keywords_for_tab("admrul"),
-                                     default=["고시", "개정"], key="sb_adm_keys_ms")
-
         col1, col2 = st.columns(2)
         with col1:
             if st.button("행정규칙 링크 만들기", key="sb_btn_adm"):
-                if issue_no and issue_dt:
-                    url = hangul_admrul_with_keys(adm_name, issue_no, issue_dt)
-                else:
-                    url = hangul_by_name("행정규칙", adm_name)
+                url = hangul_admrul_with_keys(adm_name, issue_no, issue_dt) if (issue_no and issue_dt) else hangul_by_name("행정규칙", adm_name)
                 st.session_state["gen_adm"] = {"url": url, "kind": "admrul", "q": adm_name}
         with col2:
             if st.button("행정규칙(부처/키워드) 검색 링크", key="sb_btn_adm_dept"):
-                keys = " ".join(adm_keys_ms) if adm_keys_ms else ""
-                q = " ".join(x for x in [adm_name, dept if dept and dept != MINISTRIES[0] else "", keys] if x)
+                keys = " ".join(adm_keys) if adm_keys else ""
+                q = " ".join([x for x in [adm_name,
+                                          (dept if dept and dept != MINISTRIES[0] else ""),
+                                          keys] if x])
                 url = build_fallback_search("admrul", q)
                 st.session_state["gen_adm_dept"] = {"url": url, "kind": "admrul", "q": q}
 
@@ -1844,58 +1861,37 @@ with st.sidebar:
             present_url_with_fallback(d["url"], d["kind"], d["q"])
 
     # ───────────────────────── 자치법규
-with tabs[2]:
-    # 기본 값
-    ordin_name = st.text_input("자치법규명", value="서울특별시경관조례", key="sb_ordin_name")
+    with tabs[2]:
+        ordin_name = st.text_input("자치법규명", value="서울특별시경관조례", key="sb_ordin_name")
+        local_keys = kw_input("키워드(자동 추천)", ordin_suggest, key="sb_local_keys", tab_name="자치법규")
 
-    # ✅ 추천 키워드: 전체가 기본 선택(사용자가 바로 눌러 동작 확인 가능)
-    local_suggest = suggest_keywords_for_tab("ordin")  # ["조례", "규칙", "규정", "시행", "개정"]
-    local_keys_ms = st.multiselect(
-        "키워드(자동 추천)",
-        options=local_suggest,
-        default=local_suggest,
-        key="sb_local_keys_ms"
-    )
+        colA, colB = st.columns(2)
+        with colA: ordin_no = st.text_input("공포번호(선택)", value="", key="sb_ordin_no")
+        with colB: ordin_dt = st.text_input("공포일자(YYYYMMDD, 선택)", value="", key="sb_ordin_dt")
 
-    colA, colB = st.columns(2)
-    with colA:
-        ordin_no = st.text_input("공포번호(선택)", value="", key="sb_ordin_no")
-    with colB:
-        ordin_dt = st.text_input("공포일자(YYYYMMDD, 선택)", value="", key="sb_ordin_dt")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("자치법규 링크 만들기", key="sb_btn_ordin"):
+                url = hangul_ordin_with_keys(ordin_name, ordin_no, ordin_dt) if (ordin_no and ordin_dt) else hangul_by_name("자치법규", ordin_name)
+                st.session_state["gen_ordin"] = {"url": url, "kind": "ordin", "q": ordin_name}
+        with col2:
+            if st.button("자치법규(키워드) 검색 링크", key="sb_btn_ordin_kw"):
+                q = " ".join([ordin_name] + (local_keys or []))
+                url = build_fallback_search("ordin", q)
+                st.session_state["gen_ordin_kw"] = {"url": url, "kind": "ordin", "q": q}
 
-    col1, col2 = st.columns(2)
-
-    # 상세 링크(자치법규 한글주소)
-    with col1:
-        if st.button("자치법규 링크 만들기", key="sb_btn_ordin"):
-            if ordin_no and ordin_dt:
-                url = hangul_ordin_with_keys(ordin_name, ordin_no, ordin_dt)
-            else:
-                url = hangul_by_name("자치법규", ordin_name)
-            st.session_state["gen_ordin"] = {"url": url, "kind": "ordin", "q": ordin_name}
-
-    # 검색 링크(자치법규명 + 키워드)
-    with col2:
-        if st.button("자치법규(키워드) 검색 링크", key="sb_btn_ordin_kw"):
-            q = " ".join([ordin_name] + local_keys_ms) if local_keys_ms else ordin_name
-            url = build_fallback_search("ordin", q)
-            st.session_state["gen_ordin_kw"] = {"url": url, "kind": "ordin", "q": q}
-
-    # 출력
-    if "gen_ordin" in st.session_state:
-        d = st.session_state["gen_ordin"]
-        present_url_with_fallback(d["url"], d["kind"], d["q"])
-    if "gen_ordin_kw" in st.session_state:
-        d = st.session_state["gen_ordin_kw"]
-        present_url_with_fallback(d["url"], d["kind"], d["q"])
-
+        if "gen_ordin" in st.session_state:
+            d = st.session_state["gen_ordin"]
+            present_url_with_fallback(d["url"], d["kind"], d["q"])
+        if "gen_ordin_kw" in st.session_state:
+            d = st.session_state["gen_ordin_kw"]
+            present_url_with_fallback(d["url"], d["kind"], d["q"])
 
     # ───────────────────────── 조약
     with tabs[3]:
         trty_no = st.text_input("조약 번호", value="2193", key="sb_trty_no")
         eff_dt  = st.text_input("발효일자(YYYYMMDD)", value="20140701", key="sb_trty_eff")
-        trty_keys_ms = st.multiselect("키워드(자동 추천)", options=suggest_keywords_for_tab("trty"),
-                                      default=["발효"], key="sb_trty_keys_ms")
+        trty_keys = kw_input("키워드(자동 추천)", trty_suggest, key="sb_trty_keys", tab_name="조약")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -1904,7 +1900,7 @@ with tabs[2]:
                 st.session_state["gen_trty"] = {"url": url, "kind": "trty", "q": trty_no}
         with col2:
             if st.button("조약(키워드) 검색 링크", key="sb_btn_trty_kw"):
-                q = " ".join([trty_no] + trty_keys_ms) if trty_keys_ms else trty_no
+                q = " ".join([trty_no] + (trty_keys or [])) if trty_no else " ".join(trty_keys or [])
                 url = build_fallback_search("trty", q)
                 st.session_state["gen_trty_kw"] = {"url": url, "kind": "trty", "q": q}
 
@@ -1918,8 +1914,7 @@ with tabs[2]:
     # ───────────────────────── 판례
     with tabs[4]:
         case_no = st.text_input("사건번호(예: 2010다52349)", value="2010다52349", key="sb_case_no")
-        prec_keys_ms = st.multiselect("키워드(자동 추천·검색용)", options=suggest_keywords_for_tab("prec"),
-                                      default=["손해배상"], key="sb_prec_keys_ms")
+        case_keys = kw_input("키워드(자동 추천)", case_suggest, key="sb_case_keys", tab_name="판례")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -1928,8 +1923,8 @@ with tabs[2]:
                 st.session_state["gen_prec"] = {"url": url, "kind": "prec", "q": case_no}
         with col2:
             if st.button("판례(키워드) 검색 링크", key="sb_btn_prec_kw"):
-                q = " ".join([case_no] + prec_keys_ms) if case_no else " ".join(prec_keys_ms)
-                url = build_fallback_search("prec", q)   # 키워드→law.go.kr로 보조 검색
+                q = " ".join([case_no] + (case_keys or [])) if case_no else " ".join(case_keys or [])
+                url = build_fallback_search("prec", q)
                 st.session_state["gen_prec_kw"] = {"url": url, "kind": "prec", "q": q}
 
         if "gen_prec" in st.session_state:
@@ -1942,11 +1937,10 @@ with tabs[2]:
     # ───────────────────────── 헌재
     with tabs[5]:
         cc_q = st.text_input("헌재 사건/키워드", value="2022헌마1312", key="sb_cc_q")
-        cc_keys_ms = st.multiselect("키워드(자동 추천·검색용)", options=suggest_keywords_for_tab("cc"),
-                                    default=["위헌"], key="sb_cc_keys_ms")
+        cc_keys = kw_input("키워드(자동 추천)", cc_suggest, key="sb_cc_keys", tab_name="헌재")
 
         if st.button("헌재 검색 링크 만들기", key="sb_btn_cc"):
-            q = " ".join([cc_q] + cc_keys_ms) if cc_q else " ".join(cc_keys_ms)
+            q = " ".join([cc_q] + (cc_keys or [])) if cc_q else " ".join(cc_keys or [])
             url = build_fallback_search("cc", q)
             st.session_state["gen_cc"] = {"url": url, "kind": "cc", "q": q}
 
@@ -1963,10 +1957,9 @@ with tabs[2]:
                 url = expc_public_by_id(expc_id)
                 st.session_state["gen_expc"] = {"url": url, "kind": "expc", "q": expc_id}
         with colB:
-            expc_keys_ms = st.multiselect("키워드(자동 추천·검색용)", options=suggest_keywords_for_tab("expc"),
-                                          default=["유권해석"], key="sb_expc_keys_ms")
+            interp_keys = kw_input("키워드(자동 추천)", interp_suggest, key="sb_interp_keys", tab_name="해석례")
             if st.button("해석례(키워드) 검색 링크", key="sb_btn_expc_kw"):
-                q = " ".join([expc_id] + expc_keys_ms) if expc_id else " ".join(expc_keys_ms)
+                q = " ".join([expc_id] + (interp_keys or [])) if expc_id else " ".join(interp_keys or [])
                 url = build_fallback_search("expc", q)
                 st.session_state["gen_expc_kw"] = {"url": url, "kind": "expc", "q": q}
 
@@ -1981,7 +1974,8 @@ with tabs[2]:
     with tabs[7]:
         col1, col2 = st.columns(2)
         with col1:
-            term_id = st.text_input("법령용어 ID", value="3945293", key="sb_term_id")
+            term_id   = st.text_input("용어 ID", value="100034", key="sb_term_id")
+            term_keys = kw_input("키워드(자동 추천)", term_suggest, key="sb_term_keys", tab_name="용어/별표")
             if st.button("용어사전 링크 만들기", key="sb_btn_term"):
                 url = f"https://www.law.go.kr/LSW/termInfoR.do?termSeq={up.quote(term_id)}"
                 st.session_state["gen_term"] = {"url": url, "kind": "term", "q": term_id}
@@ -1997,6 +1991,7 @@ with tabs[2]:
         if "gen_file" in st.session_state:
             d = st.session_state["gen_file"]
             present_url_with_fallback(d["url"], d["kind"], d["q"])
+
 
 # =============================
 # Chat flow
