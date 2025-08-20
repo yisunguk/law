@@ -85,6 +85,7 @@ def _esc_br(s: str) -> str:
 from datetime import datetime            # _push_user_from_pending, 저장 시각 등에 필요
 import urllib.parse as up                # normalize_law_link, quote 등에서 사용
 import xml.etree.ElementTree as ET       # _call_moleg_list() XML 파싱에 필요
+from urllib.parse import quote
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
@@ -462,6 +463,45 @@ def _normalize_text(s: str) -> str:
             prev_blank = False; out.append(ln)
     return "\n".join(out)
 
+# === [PATCH A] 조문 직링크(인라인) + 하단 '참고 링크' 섹션 제거 ===
+import re
+from urllib.parse import quote
+
+# 조문 패턴: 민법 제839조의2, 민사소송법 제163조 등
+_ART_PAT_BULLET = re.compile(
+    r'(?m)^(?P<prefix>\s*[-*•]\s*)(?P<law>[가-힣A-Za-z0-9·()\s]{2,40})\s*제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})(?P<tail>[^\n]*)$'
+)
+
+# 하단 '참고 링크' 제목(모델이 7. 또는 7) 등으로 출력하는 케이스 포함)
+_REF_BLOCK_PAT = re.compile(
+    r'(?ms)^\s*\d+\s*[\.\)]\s*참고\s*링크\s*[:：]?\s*\n(?:\s*[-*•].*\n?)+'
+)
+_REF_BLOCK2_PAT = re.compile(r'\n###\s*참고\s*링크\(조문\)[\s\S]*$', re.M)  # (혹시 모듈이 붙인 블록이 있다면 제거)
+
+def _deep_article_url(law: str, art_label: str) -> str:
+    return f"https://www.law.go.kr/법령/{quote((law or '').strip())}/{quote(art_label)}"
+
+def link_inline_articles_in_bullets(markdown: str) -> str:
+    """불릿 라인 중 '법령명 제N조(의M)'를 [텍스트](조문URL)로 교체"""
+    def repl(m: re.Match) -> str:
+        law = m.group("law").strip()
+        art = f"제{m.group('num')}조{m.group('ui') or ''}"
+        url = _deep_article_url(law, art)
+        tail = (m.group("tail") or "")
+        # tail이 " (재산분할)" 같은 부가설명일 수 있으므로 보존
+        linked = f"{m.group('prefix')}[{law} {art}]({url}){tail}"
+        return linked
+    return _ART_PAT_BULLET.sub(repl, markdown or "")
+
+def strip_reference_links_block(markdown: str) -> str:
+    """맨 아래 '참고 링크' 섹션을 제거(모델/모듈이 생성한 블록 모두 커버)"""
+    if not markdown:
+        return markdown
+    txt = _REF_BLOCK_PAT.sub("", markdown)
+    txt = _REF_BLOCK2_PAT.sub("", txt)
+    return txt
+
+
 # === 새로 추가: 중복 제거 유틸 ===
 def _dedupe_blocks(text: str) -> str:
     s = _normalize_text(text or "")
@@ -547,25 +587,67 @@ def prefetch_law_context(user_q: str, num_rows_per_law: int = 3) -> list[dict]:
 
 # === add: LLM-우선 질의어 선택 헬퍼 ===
 # === fix: LLM-우선 질의어 선택 (폴백은 후보가 없을 때만) ===
-def choose_law_queries_llm_first(user_q: str) -> list[str]:
-    ordered: list[str] = []
+# ============================================
+# [PATCH B] 통합 검색 결과에 '가사소송법'도 항상 후보에 포함
+# - LLM이 '민법'만 골라도, 질문이 이혼/재산분할/양육 등 가사 키워드를
+#   포함하면 '가사소송법'을 후보에 추가하여 우측 패널에 노출되도록 보강
+# - 그대로 붙여 넣어 기존 choose_law_queries_llm_first 를 교체하세요.
+# ============================================
+
+from typing import List
+
+# 1) 키워드 → 대표 법령 맵: 없으면 만들고, 있으면 업데이트
+try:
+    KEYWORD_TO_LAW  # noqa: F821  # 존재 여부만 확인
+except NameError:   # 없어도 안전하게 생성
+    KEYWORD_TO_LAW = {}
+
+KEYWORD_TO_LAW.update({
+    # 가사 사건 핵심 키워드 → 가사소송법
+    "이혼": "가사소송법",
+    "재산분할": "가사소송법",
+    "양육": "가사소송법",
+    "양육비": "가사소송법",
+    "친권": "가사소송법",
+    "면접교섭": "가사소송법",
+    "가사": "가사소송법",
+    "협의이혼": "가사소송법",
+    "재판상 이혼": "가사소송법",
+})
+
+
+def choose_law_queries_llm_first(user_q: str) -> List[str]:
+    """
+    1) LLM이 제안한 법령 후보를 우선 채택
+    2) 후보가 비어 있으면 정규화 질의 폴백 추가
+    3) ★항상★ 키워드 매핑으로 보강(가사소송법 등) — 중복은 제거
+    """
+    ordered: List[str] = []
+    text = (user_q or "")
 
     # 1) LLM 후보 우선
-    llm_candidates = extract_law_candidates_llm(user_q) or []
+    try:
+        llm_candidates = extract_law_candidates_llm(user_q) or []  # 기존 함수 사용
+    except NameError:
+        llm_candidates = []
     for nm in llm_candidates:
+        nm = (nm or "").strip()
         if nm and nm not in ordered:
             ordered.append(nm)
 
-    # 2) 후보가 '없을 때만' 폴백 질의 추가
+    # 2) 후보가 없으면 클린 질의 폴백
     if not ordered:
-        cleaned = _clean_query_for_api(user_q)
+        try:
+            cleaned = _clean_query_for_api(user_q)  # 기존 함수 사용
+        except NameError:
+            cleaned = None
         if cleaned:
             ordered.append(cleaned)
 
-        # (옵션) 키워드 맵 폴백
-        for kw, mapped in KEYWORD_TO_LAW.items():
-            if kw in (user_q or "") and mapped not in ordered:
-                ordered.append(mapped)
+    # 3) 키워드 힌트로 항상 보강 (가사 키워드 → 가사소송법 등)
+    for kw, mapped in KEYWORD_TO_LAW.items():
+        if kw and (kw in text) and mapped not in ordered:
+            ordered.append(mapped)
 
     return ordered
 
@@ -1807,10 +1889,13 @@ if user_q:
             tpl = choose_output_template(user_q)
             full_text = f"{tpl}\n\n{law_ctx}\n\n(오류: {e})"
 
-        # 2) 후처리
-        final_text = _normalize_text(full_text)
-        final_text = fix_links_with_lawdata(final_text, collected_laws)
-        final_text = _dedupe_blocks(final_text)
+       # --- 최종 후처리 ---
+            final_text = _normalize_text(full_text)
+            final_text = link_inline_articles_in_bullets(final_text)     # ★ 불릿에 '조문' 직링크 부여
+            final_text = strip_reference_links_block(final_text)         # ★ 맨 아래 '참고 링크' 섹션 제거
+            final_text = fix_links_with_lawdata(final_text, collected_laws)  # (기존) 법령 상세링크 교정
+            final_text = _dedupe_blocks(final_text)
+
 
         stream_box.empty()  # 임시 표시 제거
 
