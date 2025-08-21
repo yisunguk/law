@@ -209,12 +209,35 @@ def inject_sticky_layout_css(mode: str = "wide"):
     PRESETS = {"wide": {"center": "1160px"}}
     p = PRESETS.get(mode, PRESETS["wide"])
     import streamlit as st
-    st.markdown("""
-<style>
-/* 우측 패널은 넓은 화면에서만 공간 확보 */
-@media (min-width: 1280px) { .block-container { padding-right:380px !important; } }
-@media (max-width: 1279px) { .block-container { padding-right:0 !important; } }
+    st.markdown(f"""
+    <style>
+      /* 우측 플로팅 검색 패널: 화면에 고정 */
+      #search-flyout {{
+        position: fixed;
+        top: 72px;
+        right: 24px;
+        width: 360px;
+        max-width: 38vw;
+        height: calc(100vh - 96px);
+        overflow: auto;
+        z-index: 60;
+        padding: 12px 14px;
+        border-radius: 12px;
+      }}
 
+      /* 본문과 겹치지 않도록 우측 여백(넓은 화면에서만) */
+      @media (min-width: 1280px) {{
+        .block-container{{ padding-right: 420px !important; }}
+      }}
+
+      :root {{ --center-col: {p["center"]}; }}
+
+      /* 본문/입력창 동일 폭 중앙정렬 */
+      .block-container, .stChatInput {{
+        max-width: var(--center-col) !important;
+        margin: 0 auto !important;
+      }}
+ 
 /* (신규) 채팅 메시지 내부에만 버블 적용 */
 [data-testid="stChatMessage"] .stMarkdown > div{
   background: var(--bubble-bg,#1f1f1f) !important;
