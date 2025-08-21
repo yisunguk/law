@@ -2082,6 +2082,44 @@ if not chat_started:
     st.stop()
 else:
     render_bottom_uploader()   # 하단 고정 업로더
+# === 대화 시작 후: 입력창을 업로더 '바로 아래'에, 같은 폭으로 정렬 ===
+st.markdown("""
+<style>
+  :root{
+    /* 채팅 입력창 높이와 간격. 필요시 숫자만 조정하세요. */
+    --chatbar-h: 56px;
+    --chat-gap: 12px;
+  }
+
+  /* 1) 기본 입력창을 중앙 고정 + 같은 폭(업로더와 동일한 var(--center-col)) */
+  .stChatInput{
+    position: fixed !important;
+    left: 50% !important; transform: translateX(-50%) !important;
+    bottom: 12px !important;                  /* 화면 하단에서 살짝 띄움 */
+    width: var(--center-col) !important;      /* 업로더와 동일 폭 */
+    max-width: 92vw !important;
+    z-index: 60 !important;
+  }
+  /* 내부 높이 안정화 (멀티라인 확장 방지용 기본 높이) */
+  .stChatInput textarea{
+    min-height: var(--chatbar-h) !important;
+  }
+
+  /* 2) 업로더를 '입력창 바로 위'로 올림 (같은 폭 유지) */
+  .bottom-uploader{
+    position: fixed; left: 50%; transform: translateX(-50%);
+    width: var(--center-col); max-width: 92vw;
+    bottom: calc(12px + var(--chatbar-h) + var(--chat-gap));  /* 입력창 높이 + 간격 */
+    z-index: 55;
+    padding: 8px 0;
+  }
+
+  /* 3) 본문이 가려지지 않도록 하단 패딩 재조정 (메시지 끝이 입력창/업로더 뒤에 숨지 않게) */
+  .block-container{
+    padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
+  }
+</style>
+""", unsafe_allow_html=True)
 
 
 with st.container():
