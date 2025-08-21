@@ -45,6 +45,25 @@ def chatbar(
         with c2:
             submitted = st.button("전송", key=f"{key_prefix}-send", use_container_width=True)
 
+        # ✅ Enter=전송 스크립트 (IME/Shift+Enter 안전)
+        st.markdown(f"""
+        <script>
+        (function(){{
+          const ta = document.querySelector('textarea[aria-label="chat-input"]');
+          const btn = Array.from(document.querySelectorAll('button'))
+                         .find(el => el.innerText.trim().includes('전송'));
+          if(!ta || !btn) return;
+
+          ta.addEventListener('keydown', function(e){{
+            if (e.isComposing || e.keyCode === 229) return; // IME 조합중
+            if (e.key === 'Enter' && !e.shiftKey){{
+              e.preventDefault(); btn.click();
+            }}
+          }});
+        }})();
+        </script>
+        """, unsafe_allow_html=True)
+
         if accept:
             files = st.file_uploader(
                 "파일 첨부",
