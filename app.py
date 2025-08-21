@@ -244,14 +244,14 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 """, unsafe_allow_html=True)
 
 # 💄 라이트모드 전역 배경 — 최종 한 번만 주입
+# [BLOCK 1] Light mode final override (put this at the very BOTTOM of app.py)
 st.markdown("""
 <style>
-/* 전역 컬러 토큰 */
-:root {
-  --app-bg:    #f3f4f6; /* 전체 페이지 */
-  --panel-bg:  #f7f8fa; /* 우측 패널/카드 */
-  --panel-brd: #e5e7eb;
-  --sidebar-bg:#eef2f7; /* 좌측 사이드바 */
+:root{
+  --app-bg:#f3f4f6;      /* 전체 페이지 배경 */
+  --panel-bg:#f7f8fa;    /* 우측 패널/카드 배경 */
+  --panel-brd:#e5e7eb;   /* 패널 테두리 */
+  --sidebar-bg:#eef2f7;  /* 좌측 사이드바 배경 */
 }
 
 /* 페이지 루트(흰 화면 제거) */
@@ -259,78 +259,92 @@ st.markdown("""
 [data-theme="light"] body,
 [data-theme="light"] .stApp,
 [data-theme="light"] [data-testid="stAppViewContainer"],
-[data-theme="light"] section.main {
-  background: var(--app-bg) !important;
+[data-theme="light"] section.main{
+  background:var(--app-bg) !important;
 }
 
 /* 좌측 사이드바 */
 [data-theme="light"] [data-testid="stSidebar"],
-[data-theme="light"] [data-testid="stSidebar"] > div:first-child {
-  background: var(--sidebar-bg) !important;
-  border-right: 1px solid var(--panel-brd) !important;
+[data-theme="light"] [data-testid="stSidebar"] > div:first-child{
+  background:var(--sidebar-bg) !important;
+  border-right:1px solid var(--panel-brd) !important;
 }
 
-/* 본문 래퍼는 투명 (배경이 비치도록) */
-[data-theme="light"] .block-container { background: transparent !important; }
+/* 본문 래퍼는 투명(전역 배경 비치도록) */
+[data-theme="light"] .block-container{ background:transparent !important; }
 
-/* 우측 패널(세부 톤만 마지막으로 정리) */
-[data-theme="light"] #search-flyout {
-  background: var(--panel-bg) !important;
-  border-color: var(--panel-brd) !important;
-  box-shadow: 0 6px 16px rgba(0,0,0,.08) !important;
+/* 우측 검색 패널 컨테이너: 배경을 확실히 살림 */
+[data-theme="light"] #search-flyout{
+  background:var(--panel-bg) !important;
+  border:1px solid var(--panel-brd) !important;
+  box-shadow:0 6px 16px rgba(0,0,0,.08) !important;
+}
+
+/* 컨테이너는 유지하고 내부만 리셋(이게 핵심) */
+#search-flyout *{
+  background:none !important;
+  -webkit-background-clip:initial !important;
+  -webkit-text-fill-color:inherit !important;
+  mix-blend-mode:normal !important;
+  text-shadow:none !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
 
-
 # ---- 오른쪽 플로팅 패널용 CSS ----
+# [BLOCK 2] Replace the whole function
 def _inject_right_rail_css():
     st.markdown("""
     <style>
-      .block-container { padding-right: 380px !important; }
+      .block-container { padding-right:380px !important; }
 
       /* 우측 패널 베이스 */
-      #search-flyout {
-        position: fixed; right: 16px; top: 88px; bottom: 16px;
-        width: 360px; overflow: auto; z-index: 1000;
-        border-radius: 12px; border: 1px solid rgba(127,127,127,.25);
-        box-shadow: 0 8px 28px rgba(0,0,0,.25);
+      #search-flyout{
+        position:fixed; right:16px; top:88px; bottom:16px;
+        width:360px; overflow:auto; z-index:1000;
+        border-radius:12px; border:1px solid rgba(127,127,127,.25);
+        box-shadow:0 8px 28px rgba(0,0,0,.25);
       }
-      /* 라이트/다크 배경만 간단 지정(세부 톤은 전역 오버라이드가 마무리) */
-      [data-theme="light"] #search-flyout {
-        background:#fafafa;
-        border-color:#ddd;
-        box-shadow:0 4px 12px rgba(0,0,0,.08);
+
+      /* 라이트/다크 기본 톤(세부 톤은 BLOCK 1에서 최종 오버라이드) */
+      [data-theme="light"] #search-flyout{
+        background:#f7f8fa; border-color:#e5e7eb; box-shadow:0 6px 16px rgba(0,0,0,.08);
       }
-      [data-theme="dark"]  #search-flyout {
+      [data-theme="dark"] #search-flyout{
         background:#1f1f1f; border-color:rgba(255,255,255,.12);
       }
 
-      #search-flyout h3 { margin: 12px 12px 6px; font-size: 1.05rem; }
-      #search-flyout h4 { margin: 10px 12px 6px; font-size: .95rem; }
-      #search-flyout p  { margin: 6px 12px; line-height: 1.4; }
-      #search-flyout details { margin: 6px 8px 12px; }
-      #search-flyout summary {
-        cursor: pointer; padding: 6px 8px; border-radius: 8px;
-        background: rgba(127,127,127,.08);
+      #search-flyout h3{ margin:12px 12px 6px; font-size:1.05rem; }
+      #search-flyout h4{ margin:10px 12px 6px; font-size:.95rem; }
+      #search-flyout p { margin:6px 12px; line-height:1.4; }
+      #search-flyout details{ margin:6px 8px 12px; }
+      #search-flyout summary{
+        cursor:pointer; padding:6px 8px; border-radius:8px;
+        background:rgba(127,127,127,.08);
       }
-      #search-flyout ol.law-list { counter-reset: law; list-style:none; padding: 0 12px 8px 12px; margin: 0; }
-      #search-flyout ol.law-list > li {
-        counter-increment: law;
-        padding: 10px 10px; margin: 8px 0;
-        border: 1px solid rgba(127,127,127,.25);
-        border-radius: 10px;
+      #search-flyout ol.law-list{ counter-reset:law; list-style:none; padding:0 12px 8px 12px; margin:0; }
+      #search-flyout ol.law-list > li{
+        counter-increment:law; padding:10px 10px; margin:8px 0;
+        border:1px solid rgba(127,127,127,.25); border-radius:10px;
       }
-      #search-flyout ol.law-list > li .title { display:block; font-weight: 700; margin-bottom: 4px; }
-      #search-flyout ol.law-list > li .title::before { content: counter(law) ". "; font-weight: 700; }
-      #search-flyout .meta { font-size: .9rem; opacity: .9; margin: 2px 0 6px; }
-      #search-flyout a { text-decoration: underline; }
-      #search-flyout small.debug { display:none; }
+      #search-flyout ol.law-list > li .title{ display:block; font-weight:700; margin-bottom:4px; }
+      #search-flyout ol.law-list > li .title::before{ content:counter(law) ". "; font-weight:700; }
+      #search-flyout .meta{ font-size:.9rem; opacity:.9; margin:2px 0 6px; }
+      #search-flyout a{ text-decoration:underline; }
+      #search-flyout small.debug{ display:none; }
 
+      /* ⚠️ 컨테이너(#search-flyout)는 지우지 않고, 내부만 리셋 */
+      #search-flyout *{
+        background:none !important;
+        -webkit-background-clip:initial !important;
+        -webkit-text-fill-color:inherit !important;
+        mix-blend-mode:normal !important;
+        text-shadow:none !important;
       }
     </style>
     """, unsafe_allow_html=True)
+
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
