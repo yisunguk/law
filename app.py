@@ -195,7 +195,7 @@ def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
 # =============================
 # Config & Style
 # =============================
-PAGE_MAX_WIDTH = 1020
+PAGE_MAX_WIDTH = 1400
 BOTTOM_PADDING_PX = 120
 KEY_PREFIX = "lawchat"
 
