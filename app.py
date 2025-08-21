@@ -437,22 +437,6 @@ if not st.session_state.get("messages"):
         st.session_state["_pending_user_q"] = text
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
-else:
-    # ✅ 대화가 시작된 후: 하단 고정 chatbar
-    submitted, typed_text, files = chatbar(
-        placeholder="법령에 대한 질문을 입력하거나, 문서를 첨부해 보세요…",
-        accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix="main",
-    )
-    if submitted:
-        text = (typed_text or "").strip()
-        if text:
-            st.session_state["_pending_user_q"] = text
-            st.session_state["_pending_user_nonce"] = time.time_ns()
-        st.session_state["_clear_input"] = True
-        st.rerun()
-
-
-
 
 # --- 작동 키워드 목록(필요시 보강/수정) ---
 LINKGEN_KEYWORDS = {
