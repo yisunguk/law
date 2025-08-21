@@ -243,33 +243,45 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 </style>
 """, unsafe_allow_html=True)
 
+# 💄 라이트모드 전역 배경 — 최종 한 번만 주입
 st.markdown("""
 <style>
-/* 라이트모드 — 페이지 전체, 바디, 사이드바까지 확실히 덮어쓰기 */
-:where([data-theme="light"]) body,
-:where([data-theme="light"]) .stApp,
-:where([data-theme="light"]) .stAppViewContainer,
-:where([data-theme="light"]) section.main {
-  background: #f0f2f5 !important;   /* 한 톤 어두운 회색 */
+/* 전역 컬러 토큰 */
+:root {
+  --app-bg:    #f3f4f6; /* 전체 페이지 */
+  --panel-bg:  #f7f8fa; /* 우측 패널/카드 */
+  --panel-brd: #e5e7eb;
+  --sidebar-bg:#eef2f7; /* 좌측 사이드바 */
 }
 
-/* 사이드바 바탕색(좌측) */
-:where([data-theme="light"]) [data-testid="stSidebar"] > div {
-  background: #eceff3 !important;
-  border-right: 1px solid #dde1e7 !important;
+/* 페이지 루트(흰 화면 제거) */
+[data-theme="light"] html,
+[data-theme="light"] body,
+[data-theme="light"] .stApp,
+[data-theme="light"] [data-testid="stAppViewContainer"],
+[data-theme="light"] section.main {
+  background: var(--app-bg) !important;
 }
 
-/* 본문 컨테이너는 투명 처리(페이지 배경이 비치도록) */
-:where([data-theme="light"]) .block-container { background: transparent !important; }
+/* 좌측 사이드바 */
+[data-theme="light"] [data-testid="stSidebar"],
+[data-theme="light"] [data-testid="stSidebar"] > div:first-child {
+  background: var(--sidebar-bg) !important;
+  border-right: 1px solid var(--panel-brd) !important;
+}
 
-/* 우측 검색 패널 톤 정리 */
-:where([data-theme="light"]) #search-flyout {
-  background: #f7f8fa !important;
-  border: 1px solid #d9dee6 !important;
+/* 본문 래퍼는 투명 (배경이 비치도록) */
+[data-theme="light"] .block-container { background: transparent !important; }
+
+/* 우측 패널(세부 톤만 마지막으로 정리) */
+[data-theme="light"] #search-flyout {
+  background: var(--panel-bg) !important;
+  border-color: var(--panel-brd) !important;
   box-shadow: 0 6px 16px rgba(0,0,0,.08) !important;
 }
 </style>
 """, unsafe_allow_html=True)
+
 
 
 # ---- 오른쪽 플로팅 패널용 CSS ----
@@ -278,20 +290,21 @@ def _inject_right_rail_css():
     <style>
       .block-container { padding-right: 380px !important; }
 
+      /* 우측 패널 베이스 */
       #search-flyout {
         position: fixed; right: 16px; top: 88px; bottom: 16px;
         width: 360px; overflow: auto; z-index: 1000;
         border-radius: 12px; border: 1px solid rgba(127,127,127,.25);
         box-shadow: 0 8px 28px rgba(0,0,0,.25);
       }
-      /* 🔁 여기 light 규칙을 교체하세요 */
+      /* 라이트/다크 배경만 간단 지정(세부 톤은 전역 오버라이드가 마무리) */
       [data-theme="light"] #search-flyout {
-        background:#fefefe;
+        background:#fafafa;
         border-color:#ddd;
         box-shadow:0 4px 12px rgba(0,0,0,.08);
       }
       [data-theme="dark"]  #search-flyout {
-        background: #1f1f1f; border-color:rgba(255,255,255,.12);
+        background:#1f1f1f; border-color:rgba(255,255,255,.12);
       }
 
       #search-flyout h3 { margin: 12px 12px 6px; font-size: 1.05rem; }
@@ -315,78 +328,9 @@ def _inject_right_rail_css():
       #search-flyout a { text-decoration: underline; }
       #search-flyout small.debug { display:none; }
 
-      #search-flyout, #search-flyout * {
-        background: none !important;
-        -webkit-background-clip: initial !important;
-        -webkit-text-fill-color: inherit !important;
-        mix-blend-mode: normal !important;
-        text-shadow: none !important;
       }
     </style>
     """, unsafe_allow_html=True)
-# 🔧 라이트모드: 패널/페이지 배경 최종 오버라이드
-
-st.markdown("""
-<style>
-/* 1) 리셋 규칙 수정: 컨테이너(#search-flyout)는 배경 유지, 내부만 리셋 */
-#search-flyout * {
-  background: none !important;
-  -webkit-background-clip: initial !important;
-  -webkit-text-fill-color: inherit !important;
-  mix-blend-mode: normal !important;
-  text-shadow: none !important;
-}
-
-/* 2) 라이트모드 전역 배경 톤다운(페이지 전체) */
-:where([data-theme="light"]) .stApp,
-:where([data-theme="light"]) .stAppViewContainer,
-:where([data-theme="light"]) section.main {
-  background-color: #f5f5f5 !important;
-}
-
-/* 3) 라이트모드 패널/컨테이너 톤 매칭 */
-:where([data-theme="light"]) #search-flyout {
-  background: #fafafa !important;
-  border: 1px solid #ddd !important;
-  box-shadow: 0 4px 12px rgba(0,0,0,.08) !important;
-}
-
-/* 4) 본문 컨테이너는 투명 처리(페이지 배경이 비치도록) */
-:where([data-theme="light"]) .block-container {
-  background: transparent !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<style>
-/* ===== 라이트/다크 공통: 페이지 전체 배경 오버라이드 ===== */
-html, body, .stApp, [data-testid="stAppViewContainer"], section.main {
-  background: #f5f5f7 !important;   /* 원하는 톤으로 조절 */
-}
-
-/* ===== 라이트모드: 사이드바 톤다운 ===== */
-[data-testid="stSidebar"], 
-[data-testid="stSidebar"] > div:first-child {
-  background: #f0f2f6 !important;    /* 사이드바 배경 */
-  border-right: 1px solid #e5e7eb !important;
-}
-
-/* 입력 박스/카드가 너무 떠보이면 테두리 살짝 */
-[data-testid="stSidebar"] .stButton>button,
-[data-testid="stSidebar"] .stTextInput>div>div>input,
-[data-testid="stSidebar"] .stMultiSelect,
-[data-testid="stSidebar"] .stSelectbox,
-[data-testid="stSidebar"] .stTextArea textarea {
-  background: #ffffff !important;
-  border: 1px solid #dde1e7 !important;
-  box-shadow: 0 1px 2px rgba(0,0,0,.03) !important;
-}
-
-/* 우측 플로팅 패널은 기존 톤 유지 */
-</style>
-""", unsafe_allow_html=True)
-
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
