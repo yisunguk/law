@@ -327,6 +327,7 @@ if st.session_state.pop("_clear_input", False):
 
 st.markdown(f"""
 <style>
+         
 .block-container {{ max-width:{PAGE_MAX_WIDTH}px; margin:0 auto; padding-bottom:{BOTTOM_PADDING_PX}px; }}
 .stChatInput    {{ max-width:{PAGE_MAX_WIDTH}px; margin-left:auto; margin-right:auto; }}
 section.main    {{ padding-bottom:0; }}
@@ -545,6 +546,8 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
 
 st.markdown(
     """
+    if not st.session_state.get("messages"):
+    st.markdown(
     <div class="header">
         <h2>⚖️ 법제처 인공지능 법률 상담 플랫폼</h2>
         <div>법제처 공식 데이터를 AI가 분석해 답변을 제공합니다</div>
@@ -2262,6 +2265,28 @@ import streamlit as st
 
 st.markdown("""
 <style>
+            
+   /* 공통 버블 */
+  .stMarkdown > div { border-radius: 14px; padding: 14px 16px; }
+
+  /* 어시스턴트 버블 */
+  [data-testid="stChatMessage"]:has(.stMarkdown) > div div:not(.user-bubble) > .stMarkdown > div {
+    background: rgba(255,255,255,.03) !important;
+  }
+
+  /* 유저 버블 (간단 톤 차이) */
+  .user-bubble > .stMarkdown > div {
+    background: rgba(255,255,255,.06) !important;
+  }
+              /* 메인 래퍼 & 입력창: ChatGPT 비슷한 폭 */
+  :root { --center-col: 740px; --bubble-max: 720px; }
+  .block-container { max-width: var(--center-col) !important; margin: 0 auto !important; }
+  .stChatInput    { max-width: var(--center-col) !important; margin-left:auto !important; margin-right:auto !important; }
+
+  /* 채팅 말풍선 폭 제한 */
+  [data-testid="stChatMessage"]        { max-width: var(--bubble-max) !important; width:100% !important; }
+  [data-testid="stChatMessage"] .stMarkdown,
+  [data-testid="stChatMessage"] .stMarkdown > div { width:100% !important; }
 html, body, [data-testid="stAppViewContainer"], section.main {
     background-color: #0b0e14 !important;
     color: #0f1115 !important;
@@ -2325,6 +2350,17 @@ html[data-theme="light"] #search-flyout *{
   mix-blend-mode: normal !important;
   text-shadow: none !important;
 }
+
+  <style>
+  /* 메인 래퍼 & 입력창: ChatGPT 비슷한 폭 */
+  :root { --center-col: 740px; --bubble-max: 720px; }
+  .block-container { max-width: var(--center-col) !important; margin: 0 auto !important; }
+  .stChatInput    { max-width: var(--center-col) !important; margin-left:auto !important; margin-right:auto !important; }
+
+  /* 채팅 말풍선 폭 제한 */
+  [data-testid="stChatMessage"]        { max-width: var(--bubble-max) !important; width:100% !important; }
+  [data-testid="stChatMessage"] .stMarkdown,
+  [data-testid="stChatMessage"] .stMarkdown > div { width:100% !important; }          
 
 /* 본문 컨테이너는 투명하게 두어 전체 배경이 비치도록 */
 html[data-theme="light"] .block-container{ background: transparent !important; }
