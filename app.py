@@ -2142,110 +2142,57 @@ if submitted:
 st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
 
 
+# === LIGHT→DARK MIRROR (라이트 모드를 다크처럼 보이게) ===
 st.markdown("""
 <style>
-/* 라이트 모드도 다크 팔레트로 강제 */
+/* 0) 라이트 모드에서도 다크 컬러를 전역으로 사용 */
 html[data-theme="light"],
-body[data-theme="light"]{
-  /* 다크와 동일 팔레트 */
-  --app-bg:#111827;     /* page */
-  --panel-bg:#1f2937;   /* 카드/패널/버블 */
-  --panel-brd:#374151;  /* 테두리 */
-  --sidebar-bg:#111827; /* 사이드바 */
-  color:#f9fafb !important;
-}
-
-/* 페이지 루트까지 확실히 덮어쓰기(이게 핵심) */
+body[data-theme="light"],
 html[data-theme="light"] .stApp,
 html[data-theme="light"] [data-testid="stAppViewContainer"],
 html[data-theme="light"] section.main{
-  background:var(--app-bg) !important;
+  background:#0f1115 !important;   /* 다크 배경 */
+  color:#e5e7eb !important;         /* 다크 텍스트 */
 }
 
-/* 본문 래퍼는 투명 (전역 배경이 비치도록) */
-html[data-theme="light"] .block-container{
-  background:transparent !important;
+/* 1) 전역 변수도 다크 톤으로 재정의 */
+html[data-theme="light"]{
+  --app-bg:#0f1115;
+  --panel-bg:#1a1c20;
+  --panel-brd:rgba(255,255,255,.12);
+  --sidebar-bg:#111318;
 }
 
-/* 좌측 사이드바 */
+/* 2) 사이드바도 다크처럼 */
 html[data-theme="light"] [data-testid="stSidebar"],
 html[data-theme="light"] [data-testid="stSidebar"] > div:first-child{
   background:var(--sidebar-bg) !important;
+  color:#e5e7eb !important;
   border-right:1px solid var(--panel-brd) !important;
-  color:#f9fafb !important;
 }
 
-/* 우측 검색 패널 */
-html[data-theme="light"] #search-flyout{
-  background:var(--panel-bg) !important;
-  border:1px solid var(--panel-brd) !important;
-  box-shadow:0 6px 16px rgba(0,0,0,.25) !important;
-  color:#f9fafb !important;
-}
-
-/* 말풍선/헤더/입력창 */
+/* 3) 말풍선(어시스턴트/답변 카드)도 다크 톤으로 통일 */
 html[data-theme="light"] .stMarkdown > div{
-  background:var(--panel-bg) !important;
-  color:#f9fafb !important;
-  box-shadow:0 1px 6px rgba(0,0,0,.35) !important;
-}
-html[data-theme="light"] .header{
-  background:var(--panel-bg) !important;
-  border-color:var(--panel-brd) !important;
-  color:#f9fafb !important;
-}
-html[data-theme="light"] .stChatInput textarea{
-  background:var(--panel-bg) !important;
-  border:1px solid var(--panel-brd) !important;
-  color:#f9fafb !important;
-}
-            
-            <style>
-/* === Light 선택 시에도 Dark 톤을 강제로 적용 === */
-
-/* 전체 바탕/텍스트 */
-[data-theme="light"] body,
-[data-theme="light"] .stApp,
-[data-theme="light"] section.main {
-  background: #0f1115 !important;   /* 다크 배경 */
-  color: #e5e7eb !important;        /* 다크 텍스트 */
+  --bubble-bg:#1f1f1f !important;
+  --bubble-fg:#f5f5f5 !important;
+  box-shadow:0 1px 8px rgba(0,0,0,.25) !important;
+  color:var(--bubble-fg) !important;
 }
 
-/* 말풍선(채팅/마크다운 컨테이너) */
-[data-theme="light"] .stMarkdown > div {
-  --bubble-bg: #1f1f1f !important;   /* 다크 말풍선 배경 */
-  --bubble-fg: #f5f5f5 !important;   /* 다크 말풍선 글자색 */
-  box-shadow: 0 1px 8px rgba(0,0,0,.12) !important;
+/* 4) 우측 검색 패널을 다크 톤으로 강제 */
+html[data-theme="light"] #search-flyout{
+  background:#1f1f1f !important;
+  color:#e5e7eb !important;
+  border:1px solid rgba(255,255,255,.12) !important;
+  box-shadow:0 8px 28px rgba(0,0,0,.35) !important;
 }
-
-/* 헤더/테두리 톤 */
-[data-theme="light"] .header {
-  border-color: rgba(255,255,255,.12) !important;
-}
-
-/* 고정 질문 바(핀 고정 영역) */
-[data-theme="light"] .pinned-q {
-  background: rgba(0,0,0,.35) !important;
-  border-color: rgba(255,255,255,.15) !important;
-}
-
-/* 복사 버튼 */
-[data-theme="light"] .copy-btn{
-  background: rgba(0,0,0,.25) !important;
-  border-color: rgba(255,255,255,.15) !important;
-}
-
-/* 우측 플로팅 패널 */
-[data-theme="light"] #search-flyout {
-  background: #1f1f1f !important;                       /* 다크 패널 배경 */
-  border-color: rgba(255,255,255,.12) !important;       /* 다크 테두리 */
-  box-shadow: 0 8px 28px rgba(0,0,0,.25) !important;    /* 다크 그림자 */
-}
-
-/* 우측 패널 안의 리스트 카드(얇은 테두리)도 다크 톤 유지 */
-[data-theme="light"] #search-flyout ol.law-list > li {
-  border-color: rgba(255,255,255,.12) !important;
+/* 내부에 끼어들 수 있는 밝은 배경/텍스트 필터 제거 */
+html[data-theme="light"] #search-flyout *{
+  background:none !important;
+  -webkit-background-clip:initial !important;
+  -webkit-text-fill-color:inherit !important;
+  text-shadow:none !important;
+  mix-blend-mode:normal !important;
 }
 </style>
-
 """, unsafe_allow_html=True)
