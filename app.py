@@ -325,12 +325,12 @@ _inject_right_rail_css()
 if st.session_state.pop("_clear_input", False):
     st.session_state[f"{KEY_PREFIX}-input"] = ""
 
-st.markdown(f"""
+st.markdown("""
 <style>
-         
-      .block-container, .stChatInput {
-        max-width: 100% !important;
-        margin: 0 auto !important;
+     
+.block-container, .stChatInput {
+  max-width: 100% !important;
+  margin: 0 auto !important;
     }
 
 section.main    {{ padding-bottom:0; }}
