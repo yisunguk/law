@@ -410,8 +410,8 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
   # ⬇️ 이 블록만 붙여넣으세요 (기존 header st.markdown(...) 블록은 삭제)
 # app.py (하단)
 
+# 최초 화면 (대화가 없을 때만)
 if not st.session_state.get("messages"):
-    # ✅ 최초 화면: 가운데 히어로 + 중앙 입력창
     st.markdown(
         """
         <section class="hero" style="text-align:center; padding:40px 0 28px;">
@@ -423,22 +423,28 @@ if not st.session_state.get("messages"):
         unsafe_allow_html=True,
     )
 
-    # 업로더도 그대로 유지 가능
     _first_files = st.file_uploader(
         "Drag and drop files here",
-        type=["pdf","docx","txt"], accept_multiple_files=True
+        type=["pdf", "docx", "txt"],
+        accept_multiple_files=True
     )
 
-    # ⬇⬇⬇ 중앙에만 입력창을 배치
-    text = st.text_input(
-        "무엇이든 물어보세요",
-        placeholder="질문을 입력해 주세요…",
-        key="first_input",
-    )
-    if text:
-        st.session_state["_pending_user_q"] = text
+    # ✅ 엔터/버튼으로 제출되는 중앙 입력창
+    with st.form("first_ask"):
+        text = st.text_input(
+            "무엇이든 물어보세요",
+            placeholder="질문을 입력해 주세요…",
+            key="first_input",
+        )
+        submitted = st.form_submit_button("전송", use_container_width=True)
+
+    if submitted and text.strip():
+        st.session_state["_pending_user_q"] = text.strip()
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
+
+st.markdown("<script>setTimeout(()=>document.querySelector('input#first_input')?.focus(),0);</script>", unsafe_allow_html=True)
+
 
 
 # --- 작동 키워드 목록(필요시 보강/수정) ---
