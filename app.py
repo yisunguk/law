@@ -2263,7 +2263,7 @@ import streamlit as st
 st.markdown("""
 <style>
 html, body, [data-testid="stAppViewContainer"], section.main {
-    background-color: #000000 !important;
+    background-color: #0b0e14 !important;
     color: #0f1115 !important;
 }
             
