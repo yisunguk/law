@@ -209,61 +209,94 @@ def inject_sticky_layout_css(mode: str = "wide"):
     PRESETS = {"wide": {"center": "1160px"}}
     p = PRESETS.get(mode, PRESETS["wide"])
     import streamlit as st
-    st.markdown(f"""
-    <style>
-      /* 우측 플로팅 검색 패널: 화면에 고정 */
-      #search-flyout {{
-        position: fixed;
-        top: 72px;
-        right: 24px;
-        width: 360px;
-        max-width: 38vw;
-        height: calc(100vh - 96px);
-        overflow: auto;
-        z-index: 60;
-        padding: 12px 14px;
-        border-radius: 12px;
-      }}
+    st.markdown("""
+<style>
+/* 우측 패널은 넓은 화면에서만 공간 확보 */
+@media (min-width: 1280px) { .block-container { padding-right:380px !important; } }
+@media (max-width: 1279px) { .block-container { padding-right:0 !important; } }
 
-      /* 본문이 패널과 겹치지 않도록 여백 확보(넓은 화면에서만) */
-      @media (min-width: 1280px){{
-        .block-container{{ padding-right: 420px !important; }}
-      }}          
-                
-      :root {{ --center-col: {p["center"]}; }}
+/* (신규) 채팅 메시지 내부에만 버블 적용 */
+[data-testid="stChatMessage"] .stMarkdown > div{
+  background: var(--bubble-bg,#1f1f1f) !important;
+  color: var(--bubble-fg,#f5f5f5) !important;
+  border-radius: 14px; padding: 14px 16px;
+  box-shadow: 0 1px 8px rgba(0,0,0,.12);
+}
+/* 헤더/히어로는 버블 해제 */
+.header, .hero, .header * , .hero *{
+  background: transparent !important; box-shadow:none !important; border:none !important;
+}
+/* 어시스턴트 버블 */
+[data-testid="stChatMessage"]:has(.stMarkdown) > div div:not(.user-bubble) > .stMarkdown > div {
+  background: rgba(255,255,255,.03) !important;
+}
+/* 유저 버블 (간단 톤 차이) */
+.user-bubble > .stMarkdown > div { background: rgba(255,255,255,.06) !important; }
 
-      /* 본문/입력창 동일 폭 중앙정렬 */
-      .block-container, .stChatInput {{
-        max-width: var(--center-col) !important;
-        margin: 0 auto !important;
-      }}
+/* 채팅 말풍선 폭 제한 */
+[data-testid="stChatMessage"] { max-width: var(--bubble-max) !important; width:100% !important; }
+[data-testid="stChatMessage"] .stMarkdown,
+[data-testid="stChatMessage"] .stMarkdown > div { width:100% !important; }
 
-      /* 첫 화면(대화 전) 히어로: 뷰포트 정중앙 정렬 */
-      .center-hero {{
-        min-height: calc(100vh - 220px); /* 기존 52vh → 화면 중심으로 */
-        display:flex; flex-direction:column; align-items:center; justify-content:center;
-      }}
-      .center-hero .stFileUploader,
-      .center-hero .stTextInput {{ width: 720px; max-width: 92vw; }}
+/* 라이트 모드에서 html/body 자체에 data-theme가 달리므로 이렇게 선택해야 합니다 */
+html[data-theme="light"],
+body[data-theme="light"],
+.stApp[data-theme="light"] { background: #0f1115 !important; }  /* 전체 페이지 배경(다크) */
 
-      /* 대화 시작 후: 하단 고정 업로더 */
-      .bottom-uploader {{
-        position: fixed; left: 50%; transform: translateX(-50%);
-        bottom: 96px; z-index: 50; width: var(--center-col); max-width: 92vw; padding: 8px 0;
-      }}
+/* 메인 컨테이너(흰 화면 없애기) */
+html[data-theme="light"] [data-testid="stAppViewContainer"],
+html[data-theme="light"] section.main { background: #0f1115 !important; }
 
-      /* 우측 플로팅(검색 패널)과 본문 겹침 방지 */
-      @media (min-width: 1360px) {{
-        .block-container {{ padding-right: 420px !important; }}
-      }}
-      @media (max-width: 1359px) {{
-        .block-container {{ padding-right: 0 !important; }}
-      }}
+/* 사이드바(좌측) */
+html[data-theme="light"] [data-testid="stSidebar"],
+html[data-theme="light"] [data-testid="stSidebar"] > div:first-child {
+  background: #0b0e14 !important;
+  border-right: 1px solid #1c1f26 !important;
+}
 
-      /* 버블 폭 최적화 */
-      [data-testid="stChatMessage"] {{ max-width: var(--center-col); width: 100%; }}
-    </style>
-    """, unsafe_allow_html=True)
+/* 채팅 말풍선/카드류를 다크 톤으로 */
+html[data-theme="light"] .stMarkdown > div {
+  --bubble-bg: #1a1f29;
+  --bubble-fg: #e6e8eb;
+  background: var(--bubble-bg) !important;
+  color: var(--bubble-fg) !important;
+  box-shadow: 0 1px 8px rgba(0,0,0,.25) !important;
+}
+
+/* 헤더 박스도 어둡게 */
+html[data-theme="light"] .header {
+  background: #141821 !important;
+  color: #e6e8eb !important;
+  border-color: rgba(255,255,255,.12) !important;
+}
+
+/* 우측 플로팅 검색 패널 */
+html[data-theme="light"] #search-flyout {
+  background: #141821 !important;
+  border: 1px solid #1f2430 !important;
+  box-shadow: 0 8px 28px rgba(0,0,0,.35) !important;
+  color: #e6e8eb !important;
+}
+
+/* 우측 패널 안의 카드/리스트 테두리 */
+html[data-theme="light"] #search-flyout ol.law-list > li{
+  border: 1px solid rgba(255,255,255,.12) !important;
+}
+
+/* 내부 요소 역색상 방지 */
+html[data-theme="light"] #search-flyout *{
+  background: none !important;
+  -webkit-background-clip: initial !important;
+  -webkit-text-fill-color: inherit !important;
+  mix-blend-mode: normal !important;
+  text-shadow: none !important;
+}
+
+/* 본문 컨테이너 투명 (배경 비치도록) */
+html[data-theme="light"] .block-container{ background: transparent !important; }
+</style>
+""", unsafe_allow_html=True)
+
 
 inject_sticky_layout_css("wide")
 
