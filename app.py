@@ -312,6 +312,48 @@ def inject_right_rail_css():
     </style>
     """, unsafe_allow_html=True)
 
+# ⬇ 기존 inject_center_layout_css / inject_right_rail_css 바로 아래에 추가/교체
+def inject_sticky_layout_css(mode: str = "wide"):
+    PRESETS = {"wide": {"center": "1160px"}}
+    p = PRESETS.get(mode, PRESETS["wide"])
+    import streamlit as st
+    st.markdown(f"""
+    <style>
+      :root {{ --center-col: {p["center"]}; }}
+
+      /* 본문/입력창 동일 폭 중앙정렬 */
+      .block-container, .stChatInput {{
+        max-width: var(--center-col) !important;
+        margin: 0 auto !important;
+      }}
+
+      /* 첫 화면(대화 전) 히어로: 뷰포트 정중앙 정렬 */
+      .center-hero {{
+        min-height: calc(100vh - 220px); /* 기존 52vh → 화면 중심으로 */
+        display:flex; flex-direction:column; align-items:center; justify-content:center;
+      }}
+      .center-hero .stFileUploader,
+      .center-hero .stTextInput {{ width: 720px; max-width: 92vw; }}
+
+      /* 대화 시작 후: 하단 고정 업로더 */
+      .bottom-uploader {{
+        position: fixed; left: 50%; transform: translateX(-50%);
+        bottom: 96px; z-index: 50; width: var(--center-col); max-width: 92vw; padding: 8px 0;
+      }}
+
+      /* 우측 플로팅(검색 패널)과 본문 겹침 방지 */
+      @media (min-width: 1360px) {{
+        .block-container {{ padding-right: 420px !important; }}
+      }}
+      @media (max-width: 1359px) {{
+        .block-container {{ padding-right: 0 !important; }}
+      }}
+
+      /* 버블 폭 최적화 */
+      [data-testid="stChatMessage"] {{ max-width: var(--center-col); width: 100%; }}
+    </style>
+    """, unsafe_allow_html=True)
+inject_sticky_layout_css("wide")
 
 # 3) call ONCE
 inject_center_layout_css("wide")
@@ -485,44 +527,66 @@ has_chat = bool(st.session_state.get("messages")) or bool(st.session_state.get("
 user_q = _push_user_from_pending()
 
 
-# === PATCH B: 최초 화면(대화 전) ==============================================
+# (A) 최초 화면 렌더 함수 그대로 사용하되, 제출 시 'pending'만 세팅
 def render_pre_chat_center():
     import streamlit as st, time
-    st.markdown(
-        """
-        <section class="center-hero">
-          <h1 style="font-size:32px; font-weight:700; letter-spacing:-.5px; margin:0 0 18px;">
-            무엇을 도와드릴까요?
-          </h1>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown("""
+      <section class="center-hero">
+        <h1 style="font-size:32px;font-weight:700;letter-spacing:-.5px;margin:0 0 18px;">
+          무엇을 도와드릴까요?
+        </h1>
+      </section>
+    """, unsafe_allow_html=True)
 
-    # 파일 업로드(대화 전엔 중앙에 위치)
     st.session_state["_first_files"] = st.file_uploader(
         "Drag and drop files here",
-        type=["pdf", "docx", "txt"],
-        accept_multiple_files=True,
-        key="first_files",
+        type=["pdf", "docx", "txt"], accept_multiple_files=True, key="first_files",
     )
-
-    # 중앙 입력폼(Enter/버튼 제출)
     with st.form("first_ask"):
-        text = st.text_input(
-            "무엇이든 물어보세요",
-            placeholder="질문을 입력해 주세요…",
-            key="first_input",
-        )
+        text = st.text_input("무엇이든 물어보세요", placeholder="질문을 입력해 주세요…", key="first_input")
         submitted = st.form_submit_button("전송", use_container_width=True)
-
     if submitted and (text or "").strip():
         st.session_state["_pending_user_q"] = text.strip()
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
 
+# (B) pending → messages 로 옮길 때, 최초 업로더·키 정리
+def _push_user_from_pending() -> str | None:
+    q = st.session_state.pop("_pending_user_q", None)
+    nonce = st.session_state.pop("_pending_user_nonce", None)
+    if not q: return None
+    if nonce and st.session_state.get("_last_user_nonce") == nonce: return None
+    st.session_state.messages.append({"role":"user","content": q, "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+    st.session_state["_last_user_nonce"] = nonce
 
-st.markdown("<script>setTimeout(()=>document.querySelector('input#first_input')?.focus(),0);</script>", unsafe_allow_html=True)
+    # ✅ 첫 화면 업로더 흔적 제거 (사라지지 않던 문제 해결)
+    for k in ("_first_files","first_files"):
+        st.session_state.pop(k, None)
+    return q
+
+# (C) 하단 업로더는 “대화가 있을 때만” 보이도록 가드
+def render_bottom_uploader():
+    import streamlit as st
+    holder = st.empty()
+    with holder.container():
+        st.markdown('<div class="bottom-uploader">', unsafe_allow_html=True)
+        st.file_uploader(
+            "Drag and drop files here",
+            type=["pdf", "docx", "txt"],
+            accept_multiple_files=True,
+            key="bottom_files",
+            help="대화 중에는 업로드 박스가 하단에 고정됩니다.",
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# ⬇ 렌더링 흐름
+has_chat = bool(st.session_state.get("messages"))
+user_q = _push_user_from_pending()
+if not st.session_state.get("messages"):  # 대화 전
+    render_pre_chat_center()
+else:
+    # 대화 중일 때만 하단 업로더 노출
+    render_bottom_uploader()
 
 
 
