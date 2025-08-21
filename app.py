@@ -211,6 +211,25 @@ def inject_sticky_layout_css(mode: str = "wide"):
     import streamlit as st
     st.markdown(f"""
     <style>
+      /* 우측 플로팅 검색 패널: 화면에 고정 */
+      #search-flyout {{
+        position: fixed;
+        top: 72px;
+        right: 24px;
+        width: 360px;
+        max-width: 38vw;
+        height: calc(100vh - 96px);
+        overflow: auto;
+        z-index: 60;
+        padding: 12px 14px;
+        border-radius: 12px;
+      }}
+
+      /* 본문이 패널과 겹치지 않도록 여백 확보(넓은 화면에서만) */
+      @media (min-width: 1280px){{
+        .block-container{{ padding-right: 420px !important; }}
+      }}          
+                
       :root {{ --center-col: {p["center"]}; }}
 
       /* 본문/입력창 동일 폭 중앙정렬 */
@@ -2249,14 +2268,4 @@ html[data-theme="light"] .block-container{ background: transparent !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# === PATCH D: 본문 흐름 제어 ====================================================
-inject_sticky_layout_css("wide")  # 상단 어딘가 한 번만 호출
 
-# 대화 상태 파악
-_has_msgs = bool(st.session_state.get("messages"))
-_has_pending = bool(st.session_state.get("_pending_user_q"))
-chat_started = _has_msgs or _has_pending  # 한 번이라도 입력되면 True
-
-if not chat_started:
-    # 1) 대화 전 — 중앙 고정 화면
-    render_pre_chat_center()
