@@ -410,6 +410,35 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
   # ⬇️ 이 블록만 붙여넣으세요 (기존 header st.markdown(...) 블록은 삭제)
 # app.py (하단)
 
+# =========================================
+# 세션에 임시로 담아 둔 첫 질문을 messages로 옮기는 유틸
+# (이 블록을 파일 상단 ‘레이아웃/스타일 주입’ 직후 정도로 올려둡니다)
+# =========================================
+from datetime import datetime
+
+def _push_user_from_pending() -> str | None:
+    q = st.session_state.pop("_pending_user_q", None)
+    nonce = st.session_state.pop("_pending_user_nonce", None)
+    if not q:
+        return None
+    if nonce and st.session_state.get("_last_user_nonce") == nonce:
+        return None
+    msgs = st.session_state.messages
+    if msgs and msgs[-1].get("role") == "user" and msgs[-1].get("content") == q:
+        st.session_state["_last_user_nonce"] = nonce
+        return None
+    msgs.append({
+        "role": "user",
+        "content": q,
+        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
+    st.session_state["_last_user_nonce"] = nonce
+    return q
+
+# ✅ 중요: ‘최초 화면’ 렌더링 전에 먼저 호출
+user_q = _push_user_from_pending()
+
+
 # 최초 화면 (대화가 없을 때만)
 if not st.session_state.get("messages"):
     st.markdown(
