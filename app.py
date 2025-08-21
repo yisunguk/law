@@ -328,8 +328,7 @@ if st.session_state.pop("_clear_input", False):
 st.markdown(f"""
 <style>
          
-   <style>
-    .block-container, .stChatInput {
+      .block-container, .stChatInput {
         max-width: 100% !important;
         margin: 0 auto !important;
     }
