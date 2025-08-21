@@ -206,39 +206,44 @@ def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
 
 # 1) config
 # 2) define
-def inject_center_layout_css():
-    st.markdown("""<style>
-      :root { --center-col: 740px; --bubble-max: 720px; }
-      .block-container, .stChatInput { max-width: var(--center-col) !important; margin-left:auto !important; margin-right:auto !important; }
-      /* 데스크톱에서만 우측 패널 자리 */
-      @media (min-width:1280px){ .block-container { padding-right:380px !important; } }
-      @media (max-width:1279px){ .block-container { padding-right:0 !important; } }
-      /* 채팅 버블 너비 */
-      [data-testid="stChatMessage"] { max-width: var(--bubble-max) !important; width:100% !important; }
+# ⬇⬇ 기존 inject_center_layout_css() 통째로 교체
+def inject_center_layout_css(mode: str = "wide"):
+    # preset별 폭 (원하는 값으로 조절 가능)
+    PRESETS = {
+        "compact":  {"center": "880px",  "bubble": "860px"},
+        "wide":     {"center": "1160px", "bubble": "1140px"},   # ChatGPT 비슷
+        "ultrawide":{"center": "1380px", "bubble": "1360px"},   # 더 넓게
+        "fluid":    {"center": "min(92vw, 1440px)", "bubble": "min(90vw, 1420px)"},
+    }
+    p = PRESETS.get(mode, PRESETS["wide"])
+
+    import streamlit as st
+    st.markdown(f"""<style>
+      :root {{
+        --center-col: {p["center"]};
+        --bubble-max: {p["bubble"]};
+      }}
+
+      /* 메인 폭 & 입력창 폭 */
+      .block-container, .stChatInput {{
+        max-width: var(--center-col) !important;
+        margin-left:auto !important; margin-right:auto !important;
+      }}
+
+      /* 우측 플로팅 패널 공간(넓은 화면에서만) */
+      @media (min-width: 1360px) {{
+        .block-container {{ padding-right: 420px !important; }}
+      }}
+      @media (max-width: 1359px) {{
+        .block-container {{ padding-right: 0 !important; }}
+      }}
+
+      /* 채팅 버블 최대폭 */
+      [data-testid="stChatMessage"] {{ max-width: var(--bubble-max) !important; width:100% !important; }}
       [data-testid="stChatMessage"] .stMarkdown,
-      [data-testid="stChatMessage"] .stMarkdown > div { width:100% !important; }
+      [data-testid="stChatMessage"] .stMarkdown > div {{ width:100% !important; }}
     </style>""", unsafe_allow_html=True)
 
-def inject_right_rail_css():
-    st.markdown("""<style>
-      :root{ --app-bg:#0f1115; --panel-bg:#141821; --panel-brd:#1f2530; --sidebar-bg:#0d1016; --bubble-bg:#1a1f2b; --bubble-fg:#f5f7fa; }
-      html[data-theme="light"], body[data-theme="light"],
-      .stApp[data-theme="light"], html[data-theme="light"] [data-testid="stAppViewContainer"],
-      html[data-theme="light"] section.main { background:var(--app-bg) !important; color:#e7ebf3 !important; }
-      html[data-theme="light"] [data-testid="stSidebar"],
-      html[data-theme="light"] [data-testid="stSidebar"] > div:first-child { background:var(--sidebar-bg) !important; border-right:1px solid var(--panel-brd) !important; }
-      html[data-theme="light"] .block-container{ background:transparent !important; }
-      html[data-theme="light"] .stMarkdown > div{ background:var(--bubble-bg) !important; color:var(--bubble-fg) !important; box-shadow:0 1px 8px rgba(0,0,0,.35) !important; }
-
-      /* 우측 플로팅 패널 */
-      #search-flyout{
-        position:fixed; right:16px; top:88px; bottom:16px;
-        width:360px; overflow:auto; z-index:1000;
-        border-radius:12px; background:var(--panel-bg); color:#e7ebf3;
-        border:1px solid var(--panel-brd); box-shadow:0 10px 28px rgba(0,0,0,.45);
-      }
-      #search-flyout *{ background:none !important; -webkit-background-clip:initial !important; -webkit-text-fill-color:inherit !important; mix-blend-mode:normal !important; text-shadow:none !important; }
-    </style>""", unsafe_allow_html=True)
 
 # 3) call ONCE
 inject_center_layout_css()
@@ -2092,11 +2097,6 @@ st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
 
 st.markdown("""
 <style>
-
-            <style>
-:root { --center-col: 740px; }
-.block-container { max-width: var(--center-col) !important; margin:0 auto !important; }
-.stChatInput    { max-width: var(--center-col) !important; margin-left:auto !important; margin-right:auto !important; }
 
 /* 우측 패널은 넓은 화면에서만 공간 확보 */
 @media (min-width: 1280px) { .block-container { padding-right:380px !important; } }
