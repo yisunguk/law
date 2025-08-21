@@ -526,7 +526,13 @@ _CASE_NO_RE = re.compile(r'(19|20)\d{2}[가-힣]{1,3}\d{1,6}')
 _HBASE = "https://www.law.go.kr"
 LAW_PORTAL_BASE = "https://www.law.go.kr/"
 
-
+def _chat_started() -> bool:
+    msgs = st.session_state.get("messages", [])
+    # 실제 사용자 메시지가 하나라도 있어야 '대화 시작'으로 간주
+    return any(
+        (m.get("role") == "user") and (m.get("content") or "").strip()
+        for m in msgs
+    ) or bool(st.session_state.get("_pending_user_q"))
 
 # --- 최종 후처리 유틸: 답변 본문을 정리하고 조문에 인라인 링크를 붙인다 ---
 def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
@@ -2025,18 +2031,19 @@ with st.sidebar:
             present_url_with_fallback(d["url"], d["kind"], d["q"])
 
 
-# 1) pending → messages 먼저 옮김 (첫 입력을 세션 메시지로)
+# 1) pending → messages 먼저 옮김
 user_q = _push_user_from_pending()
 
-# 2) 대화 시작 여부는 messages만 보고 계산 (pending은 위에서 pop됨)
-chat_started = len(st.session_state.get("messages", [])) > 0
+# 2) 대화 시작 여부 계산 (교체)
+chat_started = _chat_started()
 
-# 3) 화면 분기 (대화 전엔 아래 렌더 차단)
+# 3) 화면 분기
 if not chat_started:
-    render_pre_chat_center()      # 중앙 히어로 + 중앙 업로더
-    st.stop()                     # ⬅️ 대화 전엔 여기서 스크립트 종료
+    render_pre_chat_center()   # 중앙 히어로 + 중앙 업로더
+    st.stop()
 else:
-    render_bottom_uploader()      # 하단 고정 업로더만
+    render_bottom_uploader()   # 하단 고정 업로더
+
 
 with st.container():
     for i, m in enumerate(st.session_state.messages):
