@@ -2203,13 +2203,13 @@ html[data-theme="light"] section.main{
   background: var(--app-bg) !important;
 }
 
-/* 1) 전역 CSS 변수 (라이트 전용) */
 html[data-theme="light"]{
-  --app-bg:#f4f5f7;
-  --panel-bg:#f9fafb;
-  --panel-brd:#e5e7eb;
-  --sidebar-bg:#eef2f7;
+  --app-bg:#e5e7eb;      /* 페이지 전체 배경 (더 짙은 회색) */
+  --panel-bg:#dee1e6;    /* 우측 패널/말풍선 */
+  --panel-brd:#c5c9d0;   /* 패널 테두리 */
+  --sidebar-bg:#d9dde3;  /* 좌측 사이드바 */
 }
+
 
 /* 2) 레이아웃별 톤 정리 */
 html[data-theme="light"] .block-container{ background:transparent !important; }
