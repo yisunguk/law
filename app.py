@@ -328,10 +328,11 @@ if st.session_state.pop("_clear_input", False):
 st.markdown(f"""
 <style>
          
-.block-container, .stChatInput {
-    max-width: 100% !important;
-    margin: 0 auto !important;
-}
+   <style>
+    .block-container, .stChatInput {
+        max-width: 100% !important;
+        margin: 0 auto !important;
+    }
 
 section.main    {{ padding-bottom:0; }}
 .header {{
