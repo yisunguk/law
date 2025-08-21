@@ -200,125 +200,78 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+# ✅ 여기서 바로 호출
+inject_center_layout_css()
+inject_right_rail_css()
 
 # === Center column like ChatGPT (한 번만 정의/호출) ===
 def inject_center_layout_css():
     st.markdown("""
     <style>
       :root { --center-col: 740px; --bubble-max: 720px; }
+      .block-container { max-width: var(--center-col) !important; margin: 0 auto !important; }
+      .stChatInput    { max-width: var(--center-col) !important; margin-left:auto !important; margin-right:auto !important; }
 
-      /* 메인 본문과 입력창 폭을 동일하게 중앙 정렬 */
-      .block-container {
-        max-width: var(--center-col) !important;
-        margin-left: auto !important;
-        margin-right: auto !important;
-      }
-      .stChatInput {
-        max-width: var(--center-col) !important;
-        margin-left: auto !important;
-        margin-right: auto !important;
-      }
+      /* 우측 패널 자리 확보 (데스크톱만) */
+      @media (min-width:1280px){ .block-container { padding-right:380px !important; } }
+      @media (max-width:1279px){ .block-container { padding-right:0 !important; } }
 
-      /* 채팅 말풍선 폭 제한 (본문보다 살짝 좁게) */
-      [data-testid="stChatMessage"]{
-        max-width: var(--bubble-max) !important;
-        width: 100% !important;
-      }
+      /* 말풍선 너비 */
+      [data-testid="stChatMessage"] { max-width: var(--bubble-max) !important; width:100% !important; }
       [data-testid="stChatMessage"] .stMarkdown,
-      [data-testid="stChatMessage"] .stMarkdown > div {
-        width: 100% !important;
-      }
-
-      /* (선택) 말풍선 톤 */
-      [data-testid="stChatMessage"] .stMarkdown > div{
-        border-radius: 14px;
-        padding: 14px 16px;
-        box-shadow: 0 1px 8px rgba(0,0,0,.12);
-        background: rgba(255,255,255,.03);
-      }
-
-      /* 데스크톱에서만 우측 패널 자리 확보 (양쪽 레이아웃 유지) */
-      @media (min-width: 1280px) { .block-container { padding-right: 380px !important; } }
-      @media (max-width: 1279px) { .block-container { padding-right: 0 !important; } }
+      [data-testid="stChatMessage"] .stMarkdown > div { width:100% !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# === Right rail (우측 플로팅 패널) — 한 번만 정의/호출 ===
 def inject_right_rail_css():
     st.markdown("""
     <style>
-      /* 패널 베이스 */
-      #search-flyout{
-        position: fixed; right: 16px; top: 88px; bottom: 16px;
-        width: 360px; overflow: auto; z-index: 1000;
-        border-radius: 12px;
-        background: var(--panel-bg, #141821);
-        border: 1px solid var(--panel-brd, #1f2530);
-        box-shadow: 0 10px 28px rgba(0,0,0,.45);
-        color: #e7ebf3;
+      :root{
+        --app-bg:#0f1115; --panel-bg:#141821; --panel-brd:#1f2530;
+        --sidebar-bg:#0d1016; --bubble-bg:#1a1f2b; --bubble-fg:#f5f7fa;
+      }
+      /* 라이트 모드도 다크 톤 유지 */
+      html[data-theme="light"], body[data-theme="light"],
+      .stApp[data-theme="light"], html[data-theme="light"] [data-testid="stAppViewContainer"],
+      html[data-theme="light"] section.main { background:var(--app-bg) !important; color:#e7ebf3 !important; }
+      html[data-theme="light"] [data-testid="stSidebar"],
+      html[data-theme="light"] [data-testid="stSidebar"] > div:first-child {
+        background:var(--sidebar-bg) !important; border-right:1px solid var(--panel-brd) !important;
+      }
+      html[data-theme="light"] .block-container{ background:transparent !important; }
+      html[data-theme="light"] .stMarkdown > div{
+        background:var(--bubble-bg) !important; color:var(--bubble-fg) !important;
+        box-shadow:0 1px 8px rgba(0,0,0,.35) !important;
       }
 
-      /* 타이포/리스트 */
+      /* 우측 플로팅 패널 */
+      #search-flyout{
+        position:fixed; right:16px; top:88px; bottom:16px;
+        width:360px; overflow:auto; z-index:1000;
+        border-radius:12px; background:var(--panel-bg); color:#e7ebf3;
+        border:1px solid var(--panel-brd); box-shadow:0 10px 28px rgba(0,0,0,.45);
+      }
       #search-flyout h3{ margin:12px 12px 6px; font-size:1.05rem; }
       #search-flyout h4{ margin:10px 12px 6px; font-size:.95rem; }
       #search-flyout p { margin:6px 12px; line-height:1.4; }
       #search-flyout details{ margin:6px 8px 12px; }
-      #search-flyout summary{
-        cursor:pointer; padding:6px 8px; border-radius:8px;
-        background:rgba(255,255,255,.05);
-      }
-      #search-flyout ol.law-list{
-        counter-reset: law; list-style: none; padding: 0 12px 8px; margin: 0;
-      }
-      #search-flyout ol.law-list > li{
-        counter-increment: law; padding: 10px; margin: 8px 0;
-        border: 1px solid rgba(255,255,255,.12); border-radius: 10px;
-        background: rgba(255,255,255,.03);
-      }
+      #search-flyout summary{ cursor:pointer; padding:6px 8px; border-radius:8px; background:rgba(255,255,255,.05); }
+      #search-flyout ol.law-list{ counter-reset:law; list-style:none; padding:0 12px 8px 12px; margin:0; }
+      #search-flyout ol.law-list > li{ counter-increment:law; padding:10px; margin:8px 0;
+        border:1px solid rgba(255,255,255,.12); border-radius:10px; background:rgba(255,255,255,.03); }
       #search-flyout ol.law-list > li .title{ display:block; font-weight:700; margin-bottom:4px; }
-      #search-flyout ol.law-list > li .title::before{ content: counter(law) ". "; font-weight:700; }
+      #search-flyout ol.law-list > li .title::before{ content:counter(law) ". "; font-weight:700; }
       #search-flyout .meta{ font-size:.9rem; opacity:.9; margin:2px 0 6px; }
-      #search-flyout a{ text-decoration: underline; color:#cdd9ff; }
+      #search-flyout a{ text-decoration:underline; color:#cdd9ff; }
 
-      /* 내부 요소 라이트/다크 강제 톤 역전 방지 */
+      /* 내부 요소가 브라우저 자동 톤에 휩쓸리지 않도록 */
       #search-flyout *{
-        background: none !important;
-        -webkit-background-clip: initial !important;
-        -webkit-text-fill-color: inherit !important;
-        mix-blend-mode: normal !important;
-        text-shadow: none !important;
-      }
-
-      /* 라이트 모드도 다크 톤 유지(선택) */
-      :root{
-        --app-bg:#0f1115; --panel-bg:#141821; --panel-brd:#1f2530;
-        --bubble-bg:#1a1f2b; --bubble-fg:#f5f7fa; --sidebar-bg:#0d1016;
-      }
-      html[data-theme="light"],
-      body[data-theme="light"],
-      .stApp[data-theme="light"],
-      html[data-theme="light"] [data-testid="stAppViewContainer"],
-      html[data-theme="light"] section.main{
-        background: var(--app-bg) !important;
-        color: #e7ebf3 !important;
-      }
-      html[data-theme="light"] [data-testid="stSidebar"],
-      html[data-theme="light"] [data-testid="stSidebar"] > div:first-child{
-        background: var(--sidebar-bg) !important;
-        border-right: 1px solid var(--panel-brd) !important;
-      }
-      html[data-theme="light"] .block-container{ background: transparent !important; }
-      html[data-theme="light"] .stMarkdown > div{
-        background: var(--bubble-bg) !important;
-        color: var(--bubble-fg) !important;
-        box-shadow: 0 1px 8px rgba(0,0,0,.35) !important;
+        background:none !important; -webkit-background-clip:initial !important;
+        -webkit-text-fill-color:inherit !important; mix-blend-mode:normal !important; text-shadow:none !important;
       }
     </style>
     """, unsafe_allow_html=True)
 
-# === 호출은 한 번만 ===
-inject_center_layout_css()
-inject_right_rail_css()
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
@@ -2054,7 +2007,7 @@ def _current_q_and_answer():
     return (last_q or {}).get("content",""), (last_a or {}).get("content","")
 
 # CSS 주입 뒤
-_inject_right_rail_css()
+inject_right_rail_css()
 
 # 🔽 ChatBar 위, if user_q: 바깥에 위치
 q_for_panel, ans_for_panel = _current_q_and_answer()
@@ -2210,9 +2163,6 @@ st.markdown("""
   [data-testid="stChatMessage"]        { max-width: var(--bubble-max) !important; width:100% !important; }
   [data-testid="stChatMessage"] .stMarkdown,
   [data-testid="stChatMessage"] .stMarkdown > div { width:100% !important; }
-html, body, [data-testid="stAppViewContainer"], section.main {
-    background-color: #0b0e14 !important;
-    color: #0f1115 !important;
 }
             
 <style>
