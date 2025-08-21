@@ -411,32 +411,35 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
 # app.py (하단)
 
 if not st.session_state.get("messages"):
-    # ✅ 최초 화면: 가운데 히어로 입력창
+    # ✅ 최초 화면: 가운데 히어로 + 중앙 입력창
     st.markdown(
         """
         <section class="hero" style="text-align:center; padding:40px 0 28px;">
           <h1 style="font-size:32px; font-weight:700; letter-spacing:-.5px; margin:0 0 18px;">
             무엇을 도와드릴까요?
           </h1>
-          <div style="max-width:740px; margin:0 auto; border-radius:999px; padding:14px 18px;
-                      background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12);">
-            <span style="opacity:.8">무엇이든 물어보세요</span>
-          </div>
         </section>
         """,
         unsafe_allow_html=True,
     )
-        # ✅ 최초 화면에도 업로더 선택적으로 노출
+
+    # 업로더도 그대로 유지 가능
     _first_files = st.file_uploader(
         "Drag and drop files here",
         type=["pdf","docx","txt"], accept_multiple_files=True
     )
-    # 여기서는 chat_input 간단 버전만
-    text = st.chat_input("질문을 입력해 주세요…")
+
+    # ⬇⬇⬇ 중앙에만 입력창을 배치
+    text = st.text_input(
+        "무엇이든 물어보세요",
+        placeholder="질문을 입력해 주세요…",
+        key="first_input",
+    )
     if text:
         st.session_state["_pending_user_q"] = text
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
+
 
 # --- 작동 키워드 목록(필요시 보강/수정) ---
 LINKGEN_KEYWORDS = {
