@@ -192,57 +192,34 @@ SUGGESTED_TAB_KEYWORDS = {
 def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
-# === Page config (필수) ===
+# 1) config
 import streamlit as st
-st.set_page_config(
-    page_title="법제처 AI 챗봇",
-    page_icon="⚖️",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-# ✅ 여기서 바로 호출
-inject_center_layout_css()
-inject_right_rail_css()
+st.set_page_config(...)
 
-# === Center column like ChatGPT (한 번만 정의/호출) ===
+# 2) define
 def inject_center_layout_css():
-    st.markdown("""
-    <style>
+    st.markdown("""<style>
       :root { --center-col: 740px; --bubble-max: 720px; }
-      .block-container { max-width: var(--center-col) !important; margin: 0 auto !important; }
-      .stChatInput    { max-width: var(--center-col) !important; margin-left:auto !important; margin-right:auto !important; }
-
-      /* 우측 패널 자리 확보 (데스크톱만) */
+      .block-container, .stChatInput { max-width: var(--center-col) !important; margin-left:auto !important; margin-right:auto !important; }
+      /* 데스크톱에서만 우측 패널 자리 */
       @media (min-width:1280px){ .block-container { padding-right:380px !important; } }
       @media (max-width:1279px){ .block-container { padding-right:0 !important; } }
-
-      /* 말풍선 너비 */
+      /* 채팅 버블 너비 */
       [data-testid="stChatMessage"] { max-width: var(--bubble-max) !important; width:100% !important; }
       [data-testid="stChatMessage"] .stMarkdown,
       [data-testid="stChatMessage"] .stMarkdown > div { width:100% !important; }
-    </style>
-    """, unsafe_allow_html=True)
+    </style>""", unsafe_allow_html=True)
 
 def inject_right_rail_css():
-    st.markdown("""
-    <style>
-      :root{
-        --app-bg:#0f1115; --panel-bg:#141821; --panel-brd:#1f2530;
-        --sidebar-bg:#0d1016; --bubble-bg:#1a1f2b; --bubble-fg:#f5f7fa;
-      }
-      /* 라이트 모드도 다크 톤 유지 */
+    st.markdown("""<style>
+      :root{ --app-bg:#0f1115; --panel-bg:#141821; --panel-brd:#1f2530; --sidebar-bg:#0d1016; --bubble-bg:#1a1f2b; --bubble-fg:#f5f7fa; }
       html[data-theme="light"], body[data-theme="light"],
       .stApp[data-theme="light"], html[data-theme="light"] [data-testid="stAppViewContainer"],
       html[data-theme="light"] section.main { background:var(--app-bg) !important; color:#e7ebf3 !important; }
       html[data-theme="light"] [data-testid="stSidebar"],
-      html[data-theme="light"] [data-testid="stSidebar"] > div:first-child {
-        background:var(--sidebar-bg) !important; border-right:1px solid var(--panel-brd) !important;
-      }
+      html[data-theme="light"] [data-testid="stSidebar"] > div:first-child { background:var(--sidebar-bg) !important; border-right:1px solid var(--panel-brd) !important; }
       html[data-theme="light"] .block-container{ background:transparent !important; }
-      html[data-theme="light"] .stMarkdown > div{
-        background:var(--bubble-bg) !important; color:var(--bubble-fg) !important;
-        box-shadow:0 1px 8px rgba(0,0,0,.35) !important;
-      }
+      html[data-theme="light"] .stMarkdown > div{ background:var(--bubble-bg) !important; color:var(--bubble-fg) !important; box-shadow:0 1px 8px rgba(0,0,0,.35) !important; }
 
       /* 우측 플로팅 패널 */
       #search-flyout{
@@ -251,26 +228,13 @@ def inject_right_rail_css():
         border-radius:12px; background:var(--panel-bg); color:#e7ebf3;
         border:1px solid var(--panel-brd); box-shadow:0 10px 28px rgba(0,0,0,.45);
       }
-      #search-flyout h3{ margin:12px 12px 6px; font-size:1.05rem; }
-      #search-flyout h4{ margin:10px 12px 6px; font-size:.95rem; }
-      #search-flyout p { margin:6px 12px; line-height:1.4; }
-      #search-flyout details{ margin:6px 8px 12px; }
-      #search-flyout summary{ cursor:pointer; padding:6px 8px; border-radius:8px; background:rgba(255,255,255,.05); }
-      #search-flyout ol.law-list{ counter-reset:law; list-style:none; padding:0 12px 8px 12px; margin:0; }
-      #search-flyout ol.law-list > li{ counter-increment:law; padding:10px; margin:8px 0;
-        border:1px solid rgba(255,255,255,.12); border-radius:10px; background:rgba(255,255,255,.03); }
-      #search-flyout ol.law-list > li .title{ display:block; font-weight:700; margin-bottom:4px; }
-      #search-flyout ol.law-list > li .title::before{ content:counter(law) ". "; font-weight:700; }
-      #search-flyout .meta{ font-size:.9rem; opacity:.9; margin:2px 0 6px; }
-      #search-flyout a{ text-decoration:underline; color:#cdd9ff; }
+      #search-flyout *{ background:none !important; -webkit-background-clip:initial !important; -webkit-text-fill-color:inherit !important; mix-blend-mode:normal !important; text-shadow:none !important; }
+    </style>""", unsafe_allow_html=True)
 
-      /* 내부 요소가 브라우저 자동 톤에 휩쓸리지 않도록 */
-      #search-flyout *{
-        background:none !important; -webkit-background-clip:initial !important;
-        -webkit-text-fill-color:inherit !important; mix-blend-mode:normal !important; text-shadow:none !important;
-      }
-    </style>
-    """, unsafe_allow_html=True)
+# 3) call ONCE
+inject_center_layout_css()
+inject_right_rail_css()
+
 
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
