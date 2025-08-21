@@ -9,7 +9,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-inject_sticky_layout_css(mode="wide")
 
 # === [BOOTSTRAP] session keys (must be first) ===
 if "messages" not in st.session_state:
@@ -222,6 +221,8 @@ def inject_sticky_layout_css(mode: str = "wide"):
     root_vars = f":root {{ --center-col: {p['center']}; --bubble-max: {p['bubble_max']}; }}"
 
     css = f"""
+    inject_sticky_layout_css("wide")
+
 <style>
   /* 전역 변수 주입 */
   {root_vars}
