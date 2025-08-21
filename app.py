@@ -2132,20 +2132,19 @@ def _append_message(role: str, content: str, **extra):
     })
 
 
+if st.session_state.get("messages"):  # ✅ 대화가 있을 때만 하단 고정 입력창
+    submitted, typed_text, files = chatbar(
+        placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
+        accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
+    )
+    if submitted:
+        text = (typed_text or "").strip()
+        if text:
+            st.session_state["_pending_user_q"] = text
+            st.session_state["_pending_user_nonce"] = time.time_ns()
+        st.session_state["_clear_input"] = True
+        st.rerun()
 
-
-# 4) ChatBar (맨 아래 고정)  ← 반드시 최상위 레벨(들여쓰기 없음)
-submitted, typed_text, files = chatbar(
-    placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
-    accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
-)
-if submitted:
-    text = (typed_text or "").strip()
-    if text:
-        st.session_state["_pending_user_q"] = text
-        st.session_state["_pending_user_nonce"] = time.time_ns()
-    st.session_state["_clear_input"] = True
-    st.rerun()
 
 st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
 
@@ -2246,12 +2245,6 @@ html[data-theme="light"] #search-flyout *{
   mix-blend-mode: normal !important;
   text-shadow: none !important;
 }
-
-  <style>
-  /* 메인 래퍼 & 입력창: ChatGPT 비슷한 폭 */
-  :root { --center-col: 740px; --bubble-max: 720px; }
-  .block-container { max-width: var(--center-col) !important; margin: 0 auto !important; }
-  .stChatInput    { max-width: var(--center-col) !important; margin-left:auto !important; margin-right:auto !important; }
 
   /* 채팅 말풍선 폭 제한 */
   [data-testid="stChatMessage"]        { max-width: var(--bubble-max) !important; width:100% !important; }
