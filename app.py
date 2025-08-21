@@ -508,17 +508,6 @@ def render_bottom_uploader():
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-# ⬇ 렌더링 흐름
-has_chat = bool(st.session_state.get("messages"))
-user_q = _push_user_from_pending()
-if not st.session_state.get("messages"):  # 대화 전
-    render_pre_chat_center()
-else:
-    # 대화 중일 때만 하단 업로더 노출
-    render_bottom_uploader()
-
-
-
 # --- 작동 키워드 목록(필요시 보강/수정) ---
 LINKGEN_KEYWORDS = {
     "법령": ["제정", "전부개정", "개정", "폐지", "부칙", "정정", "시행", "별표", "별지서식"],
