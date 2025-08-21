@@ -243,55 +243,6 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 </style>
 """, unsafe_allow_html=True)
 
-# 💄 라이트모드 전역 배경 — 최종 한 번만 주입
-# [BLOCK 1] Light mode final override (put this at the very BOTTOM of app.py)
-st.markdown("""
-<style>
-:root{
-  --app-bg:#f3f4f6;      /* 전체 페이지 배경 */
-  --panel-bg:#f7f8fa;    /* 우측 패널/카드 배경 */
-  --panel-brd:#e5e7eb;   /* 패널 테두리 */
-  --sidebar-bg:#eef2f7;  /* 좌측 사이드바 배경 */
-}
-
-/* 페이지 루트(흰 화면 제거) */
-[data-theme="light"] html,
-[data-theme="light"] body,
-[data-theme="light"] .stApp,
-[data-theme="light"] [data-testid="stAppViewContainer"],
-[data-theme="light"] section.main{
-  background:var(--app-bg) !important;
-}
-
-/* 좌측 사이드바 */
-[data-theme="light"] [data-testid="stSidebar"],
-[data-theme="light"] [data-testid="stSidebar"] > div:first-child{
-  background:var(--sidebar-bg) !important;
-  border-right:1px solid var(--panel-brd) !important;
-}
-
-/* 본문 래퍼는 투명(전역 배경 비치도록) */
-[data-theme="light"] .block-container{ background:transparent !important; }
-
-/* 우측 검색 패널 컨테이너: 배경을 확실히 살림 */
-[data-theme="light"] #search-flyout{
-  background:var(--panel-bg) !important;
-  border:1px solid var(--panel-brd) !important;
-  box-shadow:0 6px 16px rgba(0,0,0,.08) !important;
-}
-
-/* 컨테이너는 유지하고 내부만 리셋(이게 핵심) */
-#search-flyout *{
-  background:none !important;
-  -webkit-background-clip:initial !important;
-  -webkit-text-fill-color:inherit !important;
-  mix-blend-mode:normal !important;
-  text-shadow:none !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
 # ---- 오른쪽 플로팅 패널용 CSS ----
 # [BLOCK 2] Replace the whole function
 def _inject_right_rail_css():
@@ -2193,32 +2144,50 @@ st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
 
 st.markdown("""
 <style>
-/* 라이트 모드도 강제로 다크 톤 사용 */
+/* 라이트 모드도 다크 팔레트로 강제 */
 html[data-theme="light"],
 body[data-theme="light"]{
-  --app-bg:#111827 !important;
-  --panel-bg:#1f2937 !important;
-  --panel-brd:#374151 !important;
-  --sidebar-bg:#111827 !important;
+  /* 다크와 동일 팔레트 */
+  --app-bg:#111827;     /* page */
+  --panel-bg:#1f2937;   /* 카드/패널/버블 */
+  --panel-brd:#374151;  /* 테두리 */
+  --sidebar-bg:#111827; /* 사이드바 */
   color:#f9fafb !important;
+}
+
+/* 페이지 루트까지 확실히 덮어쓰기(이게 핵심) */
+html[data-theme="light"] .stApp,
+html[data-theme="light"] [data-testid="stAppViewContainer"],
+html[data-theme="light"] section.main{
   background:var(--app-bg) !important;
 }
 
-/* 컨테이너/사이드바/패널 배경도 동일하게 덮어씌움 */
-html[data-theme="light"] .block-container,
+/* 본문 래퍼는 투명 (전역 배경이 비치도록) */
+html[data-theme="light"] .block-container{
+  background:transparent !important;
+}
+
+/* 좌측 사이드바 */
 html[data-theme="light"] [data-testid="stSidebar"],
-html[data-theme="light"] [data-testid="stSidebar"] > div:first-child,
-html[data-theme="light"] #search-flyout{
-  background:var(--panel-bg) !important;
-  border-color:var(--panel-brd) !important;
+html[data-theme="light"] [data-testid="stSidebar"] > div:first-child{
+  background:var(--sidebar-bg) !important;
+  border-right:1px solid var(--panel-brd) !important;
   color:#f9fafb !important;
 }
 
-/* 말풍선/헤더/입력창도 동일하게 */
-html[data-theme="light"] .stMarkdown > div{
-  --bubble-bg:var(--panel-bg);
-  --bubble-fg:#f9fafb;
+/* 우측 검색 패널 */
+html[data-theme="light"] #search-flyout{
+  background:var(--panel-bg) !important;
+  border:1px solid var(--panel-brd) !important;
+  box-shadow:0 6px 16px rgba(0,0,0,.25) !important;
   color:#f9fafb !important;
+}
+
+/* 말풍선/헤더/입력창 */
+html[data-theme="light"] .stMarkdown > div{
+  background:var(--panel-bg) !important;
+  color:#f9fafb !important;
+  box-shadow:0 1px 6px rgba(0,0,0,.35) !important;
 }
 html[data-theme="light"] .header{
   background:var(--panel-bg) !important;
