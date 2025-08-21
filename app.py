@@ -3,6 +3,12 @@ from __future__ import annotations
 
 import streamlit as st
 st.set_page_config(
+
+# === [BOOTSTRAP] session keys (must be first) ===
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "_last_user_nonce" not in st.session_state:
+    st.session_state["_last_user_nonce"] = None
     page_title="법제처 법무 상담사",
     page_icon="⚖️",
     layout="wide",
@@ -239,8 +245,8 @@ def inject_sticky_layout_css(mode: str = "wide"):
     """, unsafe_allow_html=True)
 
 # 3) call ONCE
-inject_sticky_layout_css("wide")
-
+inject_center_layout_css("wide")
+inject_right_rail_css()
 
 
 
@@ -388,6 +394,29 @@ has_chat = bool(st.session_state.get("messages")) or bool(st.session_state.get("
 
 
 # ✅ 중요: ‘최초 화면’ 렌더링 전에 먼저 호출
+
+def _push_user_from_pending() -> str | None:
+    q = st.session_state.pop("_pending_user_q", None)
+    nonce = st.session_state.pop("_pending_user_nonce", None)
+    if not q:
+        return None
+    if nonce and st.session_state.get("_last_user_nonce") == nonce:
+        return None
+
+    st.session_state.messages.append({
+        "role": "user",
+        "content": q.strip(),
+        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    })
+    st.session_state["_last_user_nonce"] = nonce
+
+    # 최초 화면 업로더 흔적 정리
+    for k in ("_first_files", "first_files"):
+        st.session_state.pop(k, None)
+
+    return q
+
+
 user_q = _push_user_from_pending()
 
 
