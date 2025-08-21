@@ -353,7 +353,6 @@ def inject_sticky_layout_css(mode: str = "wide"):
       [data-testid="stChatMessage"] {{ max-width: var(--center-col); width: 100%; }}
     </style>
     """, unsafe_allow_html=True)
-inject_sticky_layout_css("wide")
 
 # 3) call ONCE
 inject_center_layout_css("wide")
@@ -500,25 +499,6 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
 # (이 블록을 파일 상단 ‘레이아웃/스타일 주입’ 직후 정도로 올려둡니다)
 # =========================================
 from datetime import datetime
-
-def _push_user_from_pending() -> str | None:
-    q = st.session_state.pop("_pending_user_q", None)
-    nonce = st.session_state.pop("_pending_user_nonce", None)
-    if not q:
-        return None
-    if nonce and st.session_state.get("_last_user_nonce") == nonce:
-        return None
-    msgs = st.session_state.messages
-    if msgs and msgs[-1].get("role") == "user" and msgs[-1].get("content") == q:
-        st.session_state["_last_user_nonce"] = nonce
-        return None
-    msgs.append({
-        "role": "user",
-        "content": q,
-        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    })
-    st.session_state["_last_user_nonce"] = nonce
-    return q
 
 has_chat = bool(st.session_state.get("messages")) or bool(st.session_state.get("_pending_user_q"))
 
@@ -2140,27 +2120,17 @@ with st.sidebar:
             present_url_with_fallback(d["url"], d["kind"], d["q"])
 
 
-# =============================
-# Chat flow
-# =============================
-def _push_user_from_pending() -> str | None:
-    q = st.session_state.pop("_pending_user_q", None)
-    nonce = st.session_state.pop("_pending_user_nonce", None)
-    if not q: return None
-    if nonce and st.session_state.get("_last_user_nonce") == nonce: return None
-    msgs = st.session_state.messages
-    if msgs and msgs[-1].get("role") == "user" and msgs[-1].get("content") == q:
-        st.session_state["_last_user_nonce"] = nonce; return None
-    msgs.append({"role":"user","content": q, "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
-    st.session_state["_last_user_nonce"] = nonce
-    return q
-
+# 1) pending → messages 먼저 옮김 (첫 입력을 세션 메시지로)
 user_q = _push_user_from_pending()
-render_pinned_question()
-msgs = st.session_state.get("messages", [])
-st.session_state.messages = [
-    m for m in msgs if not (m.get("role")=="assistant" and not (m.get("content") or "").strip())
-]
+
+# 2) 대화 시작 여부는 messages만 보고 계산 (pending은 위에서 pop됨)
+chat_started = bool(st.session_state.get("messages"))
+
+# 3) 화면 분기
+if not chat_started:
+    render_pre_chat_center()      # 중앙 히어로 + 중앙 업로더
+else:
+    render_bottom_uploader()      # 하단 고정 업로더만
 
 # === PATCH C: 대화 시작 후 하단 업로더 =========================================
 def render_bottom_uploader():
@@ -2273,8 +2243,8 @@ if user_q:
     if stream_box is not None:
         stream_box.empty()
     
-# ✅ 채팅이 시작되면(첫 입력 이후) 항상 하단 고정 입력/업로더 표시
-if has_chat:
+# ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
+if chat_started:
     submitted, typed_text, files = chatbar(
         placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
         accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
@@ -2286,6 +2256,7 @@ if has_chat:
             st.session_state["_pending_user_nonce"] = time.time_ns()
         st.session_state["_clear_input"] = True
         st.rerun()
+
 
 
 
