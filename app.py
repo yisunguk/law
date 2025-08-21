@@ -244,6 +244,39 @@ def inject_center_layout_css(mode: str = "wide"):
       [data-testid="stChatMessage"] .stMarkdown > div {{ width:100% !important; }}
     </style>""", unsafe_allow_html=True)
 
+def inject_right_rail_css():
+    import streamlit as st
+    st.markdown("""
+    <style>
+      /* 우측 플로팅 검색 패널(큰 화면에서만 노출 공간 확보) */
+      #search-flyout{
+        position: fixed;
+        top: 84px;
+        right: 24px;
+        width: 360px;
+        max-height: calc(100vh - 120px);
+        overflow: auto;
+        z-index: 100;
+        padding: 14px 16px;
+        border-radius: 12px;
+        background: rgba(20,24,33,.92);
+        border: 1px solid rgba(255,255,255,.12);
+        box-shadow: 0 8px 28px rgba(0,0,0,.35);
+      }
+      #search-flyout h3{margin:0 0 8px;font-size:16px}
+      #search-flyout h4{margin:12px 0 6px;font-size:14px}
+      #search-flyout details{margin-bottom:8px}
+      #search-flyout ol.law-list{list-style:decimal;padding-left:18px;margin:6px 0}
+      #search-flyout ol.law-list > li{
+        margin:6px 0;padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:8px
+      }
+      #search-flyout .meta{opacity:.8;font-size:12px;margin-top:3px}
+      @media (max-width: 1359px){
+        #search-flyout{position:static;width:auto;max-height:none;margin-top:12px}
+      }
+    </style>
+    """, unsafe_allow_html=True)
+
 
 # 3) call ONCE
 inject_center_layout_css()
