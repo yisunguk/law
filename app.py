@@ -2027,11 +2027,12 @@ with st.sidebar:
 user_q = _push_user_from_pending()
 
 # 2) 대화 시작 여부는 messages만 보고 계산 (pending은 위에서 pop됨)
-chat_started = bool(st.session_state.get("messages"))
+chat_started = len(st.session_state.get("messages", [])) > 0
 
-# 3) 화면 분기
+# 3) 화면 분기 (대화 전엔 아래 렌더 차단)
 if not chat_started:
     render_pre_chat_center()      # 중앙 히어로 + 중앙 업로더
+    st.stop()                     # ⬅️ 대화 전엔 여기서 스크립트 종료
 else:
     render_bottom_uploader()      # 하단 고정 업로더만
 
