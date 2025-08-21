@@ -2199,5 +2199,53 @@ html[data-theme="light"] .stChatInput textarea{
   border:1px solid var(--panel-brd) !important;
   color:#f9fafb !important;
 }
+            
+            <style>
+/* === Light 선택 시에도 Dark 톤을 강제로 적용 === */
+
+/* 전체 바탕/텍스트 */
+[data-theme="light"] body,
+[data-theme="light"] .stApp,
+[data-theme="light"] section.main {
+  background: #0f1115 !important;   /* 다크 배경 */
+  color: #e5e7eb !important;        /* 다크 텍스트 */
+}
+
+/* 말풍선(채팅/마크다운 컨테이너) */
+[data-theme="light"] .stMarkdown > div {
+  --bubble-bg: #1f1f1f !important;   /* 다크 말풍선 배경 */
+  --bubble-fg: #f5f5f5 !important;   /* 다크 말풍선 글자색 */
+  box-shadow: 0 1px 8px rgba(0,0,0,.12) !important;
+}
+
+/* 헤더/테두리 톤 */
+[data-theme="light"] .header {
+  border-color: rgba(255,255,255,.12) !important;
+}
+
+/* 고정 질문 바(핀 고정 영역) */
+[data-theme="light"] .pinned-q {
+  background: rgba(0,0,0,.35) !important;
+  border-color: rgba(255,255,255,.15) !important;
+}
+
+/* 복사 버튼 */
+[data-theme="light"] .copy-btn{
+  background: rgba(0,0,0,.25) !important;
+  border-color: rgba(255,255,255,.15) !important;
+}
+
+/* 우측 플로팅 패널 */
+[data-theme="light"] #search-flyout {
+  background: #1f1f1f !important;                       /* 다크 패널 배경 */
+  border-color: rgba(255,255,255,.12) !important;       /* 다크 테두리 */
+  box-shadow: 0 8px 28px rgba(0,0,0,.25) !important;    /* 다크 그림자 */
+}
+
+/* 우측 패널 안의 리스트 카드(얇은 테두리)도 다크 톤 유지 */
+[data-theme="light"] #search-flyout ol.law-list > li {
+  border-color: rgba(255,255,255,.12) !important;
+}
 </style>
+
 """, unsafe_allow_html=True)
