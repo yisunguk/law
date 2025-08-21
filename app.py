@@ -1,3 +1,13 @@
+
+import streamlit as st
+st.set_page_config(
+    page_title="법제처 법무 상담사",
+    page_icon="⚖️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+KEY_PREFIX = "main"
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 # ===========================================
@@ -110,7 +120,6 @@ import urllib.parse as up                # normalize_law_link, quote 등에서 �
 import xml.etree.ElementTree as ET       # _call_moleg_list() XML 파싱에 필요
 from urllib.parse import quote
 import requests
-import streamlit as st
 import streamlit.components.v1 as components
 from openai import AzureOpenAI
 from llm_safety import safe_chat_completion
@@ -193,9 +202,6 @@ def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
 # 1) config
-import streamlit as st
-st.set_page_config(...)
-
 # 2) define
 def inject_center_layout_css():
     st.markdown("""<style>
@@ -412,7 +418,6 @@ try:
             key=key,
         )
 except Exception:
-    import streamlit as st
     def kw_input(label, options, key):
         return st.multiselect(
             label, options=options, default=options,  # ✅ 기본값: 전부 선택
@@ -1707,7 +1712,6 @@ try:
             key=key,
         )
 except Exception:
-    import streamlit as st
     def kw_input(label, options, key, tab_name=None):
         prefer = DEFAULT_KEYWORD.get(tab_name)
         return st.multiselect(
@@ -2082,7 +2086,6 @@ st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
 
 
 # --- LIGHT MODE를 다크 톤으로 강제 오버라이드 (파일 맨 아래 권장) ---
-import streamlit as st
 
 st.markdown("""
 <style>
