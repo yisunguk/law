@@ -196,6 +196,49 @@ SUGGESTED_TAB_KEYWORDS = {
 def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
+# === PATCH A: 레이아웃/CSS =====================================================
+def inject_sticky_layout_css(mode: str = "wide"):
+    PRESETS = {
+        "compact":  {"center": "880px"},
+        "wide":     {"center": "1160px"},     # ChatGPT 비슷
+        "ultra":    {"center": "1380px"},
+        "fluid":    {"center": "min(92vw, 1440px)"},
+    }
+    p = PRESETS.get(mode, PRESETS["wide"])
+
+    import streamlit as st
+    st.markdown(f"""
+    <style>
+      :root {{
+        --center-col: {p["center"]};
+      }}
+      /* 본문/입력창 동일 폭 중앙정렬 */
+      .block-container,
+      .stChatInput {{ max-width: var(--center-col) !important; margin: 0 auto !important; }}
+
+      /* 처음 화면: 중앙 고정(히어로 섹션) */
+      .center-hero {{
+        min-height: 52vh; display:flex; flex-direction:column;
+        align-items:center; justify-content:center;
+      }}
+      .center-hero .stFileUploader,
+      .center-hero .stTextInput,
+      .center-hero .stButton {{ width: 720px; max-width: 92vw; }}
+
+      /* 대화 시작 후: 파일 업로더를 하단에 고정(채팅 입력 바로 위) */
+      .bottom-uploader {{
+        position: fixed; left: 50%; transform: translateX(-50%);
+        bottom: 96px; z-index: 50; width: var(--center-col); max-width: 92vw;
+        padding: 8px 0;
+      }}
+      @media (max-width: 680px) {{
+        .bottom-uploader {{ bottom: 104px; }}
+      }}
+      /* 말풍선 폭 최적화 */
+      [data-testid="stChatMessage"] {{ max-width: var(--center-col); width: 100%; }}
+    </style>
+    """, unsafe_allow_html=True)
+
 # 1) config
 # 2) define
 # ⬇⬇ 기존 inject_center_layout_css() 통째로 교체
@@ -435,15 +478,19 @@ def _push_user_from_pending() -> str | None:
     st.session_state["_last_user_nonce"] = nonce
     return q
 
+has_chat = bool(st.session_state.get("messages")) or bool(st.session_state.get("_pending_user_q"))
+
+
 # ✅ 중요: ‘최초 화면’ 렌더링 전에 먼저 호출
 user_q = _push_user_from_pending()
 
 
-# 최초 화면 (대화가 없을 때만)
-if not st.session_state.get("messages"):
+# === PATCH B: 최초 화면(대화 전) ==============================================
+def render_pre_chat_center():
+    import streamlit as st, time
     st.markdown(
         """
-        <section class="hero" style="text-align:center; padding:40px 0 28px;">
+        <section class="center-hero">
           <h1 style="font-size:32px; font-weight:700; letter-spacing:-.5px; margin:0 0 18px;">
             무엇을 도와드릴까요?
           </h1>
@@ -452,13 +499,15 @@ if not st.session_state.get("messages"):
         unsafe_allow_html=True,
     )
 
-    _first_files = st.file_uploader(
+    # 파일 업로드(대화 전엔 중앙에 위치)
+    st.session_state["_first_files"] = st.file_uploader(
         "Drag and drop files here",
         type=["pdf", "docx", "txt"],
-        accept_multiple_files=True
+        accept_multiple_files=True,
+        key="first_files",
     )
 
-    # ✅ 엔터/버튼으로 제출되는 중앙 입력창
+    # 중앙 입력폼(Enter/버튼 제출)
     with st.form("first_ask"):
         text = st.text_input(
             "무엇이든 물어보세요",
@@ -467,10 +516,11 @@ if not st.session_state.get("messages"):
         )
         submitted = st.form_submit_button("전송", use_container_width=True)
 
-    if submitted and text.strip():
+    if submitted and (text or "").strip():
         st.session_state["_pending_user_q"] = text.strip()
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
+
 
 st.markdown("<script>setTimeout(()=>document.querySelector('input#first_input')?.focus(),0);</script>", unsafe_allow_html=True)
 
@@ -2031,6 +2081,21 @@ st.session_state.messages = [
     m for m in msgs if not (m.get("role")=="assistant" and not (m.get("content") or "").strip())
 ]
 
+# === PATCH C: 대화 시작 후 하단 업로더 =========================================
+def render_bottom_uploader():
+    import streamlit as st
+    holder = st.empty()
+    with holder.container():
+        st.markdown('<div class="bottom-uploader">', unsafe_allow_html=True)
+        st.file_uploader(
+            "Drag and drop files here",
+            type=["pdf", "docx", "txt"],
+            accept_multiple_files=True,
+            key="bottom_files",
+            help="대화 중에는 업로드 박스가 하단에 고정됩니다.",
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
 with st.container():
     for i, m in enumerate(st.session_state.messages):
         role = m.get("role")
@@ -2085,6 +2150,18 @@ if user_q:
         stream_box = st.empty()
         full_text, buffer, collected_laws = "", "", []
         final_text = ""   # ✅ 미리 초기화 (NameError 방지)
+
+    if not final_text.strip():
+       final_text = apply_final_postprocess(full_text, collected_laws)
+
+    if final_text.strip():
+       _append_message("assistant", final_text, law=collected_laws)
+       st.session_state["last_q"] = user_q
+       st.session_state.pop("_pending_user_q", None)
+       st.session_state.pop("_pending_user_nonce", None)
+       st.rerun()
+
+
 
         try:
             stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
@@ -2273,3 +2350,27 @@ html[data-theme="light"] #search-flyout *{
 html[data-theme="light"] .block-container{ background: transparent !important; }
 </style>
 """, unsafe_allow_html=True)
+
+# === PATCH D: 본문 흐름 제어 ====================================================
+inject_sticky_layout_css("wide")  # 상단 어딘가 한 번만 호출
+
+# 대화 상태 파악
+_has_msgs = bool(st.session_state.get("messages"))
+_has_pending = bool(st.session_state.get("_pending_user_q"))
+chat_started = _has_msgs or _has_pending  # 한 번이라도 입력되면 True
+
+if not chat_started:
+    # 1) 대화 전 — 중앙 고정 화면
+    render_pre_chat_center()
+else:
+    # 2) 대화 시작 — 기존 메시지(말풍선) 루프는 그대로 두고,
+    #    입력창은 기본 st.chat_input(하단 고정), 업로더는 bottom_uploader로 고정
+    #    (아래는 예시: 실제 메시지 렌더/LLM 호출 코드는 기존 것을 유지)
+    # --- 예시: user 입력 수집 ---
+    user_text = st.chat_input("법령에 대한 질문을 입력해 주세요…")
+    if user_text:
+        st.session_state.messages.append({"role": "user", "content": user_text})
+        st.rerun()
+
+    # --- 하단 업로더 고정 ---
+    render_bottom_uploader()
