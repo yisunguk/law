@@ -544,30 +544,24 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
     html.append("</details></div>")
     st.markdown("\n".join(html), unsafe_allow_html=True)
 
-st.markdown(
-    """
-    if not st.session_state.get("messages"):
+  # ⬇️ 이 블록만 붙여넣으세요 (기존 header st.markdown(...) 블록은 삭제)
+if not st.session_state.get("messages"):
     st.markdown(
-    <div class="header">
-        <h2>⚖️ 법제처 인공지능 법률 상담 플랫폼</h2>
-        <div>법제처 공식 데이터를 AI가 분석해 답변을 제공합니다</div>
-        <div>당신의 문제를 입력하면 법률 자문서를 출력해 줍니다. 당신의 문제를 입력해 보세요</div>
-        <hr style="margin:1rem 0;border:0;border-top:1px solid rgba(255,255,255,0.4)">
-        <div style="text-align:left;font-size:0.9rem;line-height:1.4">
-            📌 <b>제공 범위</b><br>
-            1. 국가 법령(법률·시행령·시행규칙 등)<br>
-            2. 행정규칙 (예규·고시·훈령·지침)<br>
-            3. 자치법규 (조례·규칙 등)<br>
-            4. 조약 (양자·다자)<br>
-            5. 법령 해석례 (법제처 유권해석)<br>
-            6. 헌법재판소 결정례 (위헌·합헌·각하 등)<br>
-            7. 별표·서식<br>
-            8. 법령 용어 사전
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+        """
+        <section class="hero" style="text-align:center; padding:40px 0 28px;">
+          <h1 style="font-size:32px; font-weight:700; letter-spacing:-.5px; margin:0 0 18px;">
+            무엇을 도와드릴까요?
+          </h1>
+          <div style="max-width:740px; margin:0 auto; border-radius:999px; padding:14px 18px;
+                      background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12);">
+            <span style="opacity:.8">무엇이든 물어보세요</span>
+          </div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 
 # --- 작동 키워드 목록(필요시 보강/수정) ---
 LINKGEN_KEYWORDS = {
@@ -2227,20 +2221,23 @@ if user_q:
         if stream_box is not None:
             stream_box.empty()
 
-        # 세션 메시지에만 1회 추가 → rerun
-        if final_text.strip():
-            ans_hash = _hash_text(final_text)
-            if st.session_state.get("_last_ans_hash") != ans_hash:
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": final_text,
-                    "law": collected_laws,
-                    "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                })
-                st.session_state["_last_ans_hash"] = ans_hash
-                st.rerun()
-        else:
-            st.info("현재 모델이 오프라인이거나 오류로 인해 답변을 생성하지 못했습니다.")
+def _append_message(role: str, content: str, **extra):
+    """
+    세션 메시지에 안전하게 추가하는 함수.
+    - 빈 문자열 / 공백만 있는 경우 무시
+    - 코드블록만 있는 경우 무시 (예: ```python ... ```)
+    """
+    txt = (content or "").strip()
+    is_code_only = (txt.startswith("```") and txt.endswith("```"))
+    if not txt or is_code_only:
+        return  # ✅ 불필요한 버블 차단
+
+    st.session_state.messages.append({
+        "role": role,
+        "content": txt,
+        **extra,
+    })
+
 
 
 
@@ -2265,9 +2262,28 @@ import streamlit as st
 
 st.markdown("""
 <style>
-            
-   /* 공통 버블 */
-  .stMarkdown > div { border-radius: 14px; padding: 14px 16px; }
+
+            <style>
+:root { --center-col: 740px; }
+.block-container { max-width: var(--center-col) !important; margin:0 auto !important; }
+.stChatInput    { max-width: var(--center-col) !important; margin-left:auto !important; margin-right:auto !important; }
+
+/* 우측 패널은 넓은 화면에서만 공간 확보 */
+@media (min-width: 1280px) { .block-container { padding-right:380px !important; } }
+@media (max-width: 1279px) { .block-container { padding-right:0 !important; } }
+
+/* (신규) 채팅 메시지 내부에만 버블 적용 */
+[data-testid="stChatMessage"] .stMarkdown > div{
+  background: var(--bubble-bg,#1f1f1f) !important;
+  color: var(--bubble-fg,#f5f5f5) !important;
+  border-radius: 14px; padding: 14px 16px;
+  box-shadow: 0 1px 8px rgba(0,0,0,.12);
+}
+
+/* 헤더/히어로는 버블 해제 */
+.header, .hero, .header * , .hero *{
+  background: transparent !important; box-shadow:none !important; border:none !important;
+}
 
   /* 어시스턴트 버블 */
   [data-testid="stChatMessage"]:has(.stMarkdown) > div div:not(.user-bubble) > .stMarkdown > div {
