@@ -192,156 +192,73 @@ SUGGESTED_TAB_KEYWORDS = {
 def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
-# =============================
-# Config & Style
-# =============================
-PAGE_MAX_WIDTH = 1400
-BOTTOM_PADDING_PX = 120
-KEY_PREFIX = "lawchat"
-
+# === Page config (필수) ===
+import streamlit as st
 st.set_page_config(
     page_title="법제처 AI 챗봇",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded",
-    
 )
 
-
+# === Center column like ChatGPT (한 번만 정의/호출) ===
 def inject_center_layout_css():
     st.markdown("""
     <style>
-      /* ===== Center column like ChatGPT ===== */
       :root { --center-col: 740px; --bubble-max: 720px; }
 
       /* 메인 본문과 입력창 폭을 동일하게 중앙 정렬 */
-      .block-container { 
-        max-width: var(--center-col) !important; 
-        margin-left: auto !important; 
-        margin-right: auto !important; 
+      .block-container {
+        max-width: var(--center-col) !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
       }
-      .stChatInput { 
-        max-width: var(--center-col) !important; 
-        margin-left: auto !important; 
-        margin-right: auto !important; 
+      .stChatInput {
+        max-width: var(--center-col) !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
       }
 
-      /* 채팅 버블은 중앙 폭보다 살짝 좁게 */
-      [data-testid="stChatMessage"] { 
-        max-width: var(--bubble-max) !important; 
-        width: 100% !important; 
+      /* 채팅 말풍선 폭 제한 (본문보다 살짝 좁게) */
+      [data-testid="stChatMessage"]{
+        max-width: var(--bubble-max) !important;
+        width: 100% !important;
       }
       [data-testid="stChatMessage"] .stMarkdown,
       [data-testid="stChatMessage"] .stMarkdown > div {
         width: 100% !important;
       }
 
-      /* 우측 고정 패널 공간은 데스크톱에서만 비워두기 (양쪽 레이아웃 유지) */
-      @media (min-width: 1280px) { .block-container { padding-right:380px !important; } }
-      @media (max-width: 1279px) { .block-container { padding-right:0 !important; } }
-
-      /* (선택) 말풍선 톤만 살짝 */
+      /* (선택) 말풍선 톤 */
       [data-testid="stChatMessage"] .stMarkdown > div{
-        border-radius: 14px; 
-        padding: 14px 16px; 
+        border-radius: 14px;
+        padding: 14px 16px;
         box-shadow: 0 1px 8px rgba(0,0,0,.12);
         background: rgba(255,255,255,.03);
       }
+
+      /* 데스크톱에서만 우측 패널 자리 확보 (양쪽 레이아웃 유지) */
+      @media (min-width: 1280px) { .block-container { padding-right: 380px !important; } }
+      @media (max-width: 1279px) { .block-container { padding-right: 0 !important; } }
     </style>
     """, unsafe_allow_html=True)
 
-# 호출
-inject_center_layout_css()
-
-
-# ===============================
-# BLOCK 1) Light mode final override (전역 배경/패널 톤)
-# 파일 어디든 1회만 선언되면 됨. 보통 st.set_page_config() 아래에 배치.
-# ===============================
-import streamlit as st
-
-st.markdown("""
-<style>
-:root{
-  --app-bg:#0f1115;       /* 전체 페이지 배경(다크톤) */
-  --panel-bg:#141821;     /* 우측 패널/카드 배경 */
-  --panel-brd:#1f2530;    /* 패널 테두리 */
-  --sidebar-bg:#0d1016;   /* 좌측 사이드바 배경 */
-  --bubble-bg:#1a1f2b;    /* 메시지 버블 배경(선택) */
-  --bubble-fg:#f5f7fa;    /* 메시지 버블 글자색(선택) */
-}
-
-/* 라이트 모드일 때도 다크 톤을 강제로 사용 */
-[data-theme="light"] html,
-[data-theme="light"] body,
-[data-theme="light"] .stApp,
-[data-theme="light"] [data-testid="stAppViewContainer"],
-[data-theme="light"] section.main{
-  background:var(--app-bg) !important;
-  color:#e7ebf3 !important;
-}
-
-/* 좌측 사이드바 */
-[data-theme="light"] [data-testid="stSidebar"],
-[data-theme="light"] [data-testid="stSidebar"] > div:first-child{
-  background:var(--sidebar-bg) !important;
-  border-right:1px solid var(--panel-brd) !important;
-}
-
-/* 본문 래퍼는 투명(전역 배경이 비치도록) */
-[data-theme="light"] .block-container{ background:transparent !important; }
-
-/* 챗 버블(옵션) */
-[data-theme="light"] .stMarkdown > div{
-  background:var(--bubble-bg) !important;
-  color:var(--bubble-fg) !important;
-  box-shadow:0 1px 8px rgba(0,0,0,.35) !important;
-}
-
-/* 코드/경고/버튼 등 기본 위젯 대비 조정(필요 시) */
-[data-theme="light"] .stAlert{ background:#1a2030 !important; color:#e7ebf3 !important; border:1px solid #263046 !important; }
-[data-theme="light"] .stTextInput > div > div{ background:#10141b !important; }
-[data-theme="light"] .stTextInput input{ color:#e7ebf3 !important; }
-[data-theme="light"] .stSelectbox > div{ background:#10141b !important; color:#e7ebf3 !important; }
-[data-theme="light"] .stButton button{ background:#222a3a !important; color:#e7ebf3 !important; border:1px solid #2a344a !important; }
-
-/* 우측 검색 패널 컨테이너: 라이트/다크 모두 동일 톤 */
-#search-flyout{
-  background:var(--panel-bg) !important;
-  border:1px solid var(--panel-brd) !important;
-  box-shadow:0 10px 28px rgba(0,0,0,.45) !important;
-  color:#e7ebf3 !important;
-}
-
-/* 패널 내부 위젯들이 브라우저/OS 자동 톤을 덮지 않도록 리셋 */
-#search-flyout *{
-  background:none !important;
-  -webkit-background-clip:initial !important;
-  -webkit-text-fill-color:inherit !important;
-  mix-blend-mode:normal !important;
-  text-shadow:none !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
-# ===============================
-# BLOCK 2) Right-rail CSS (우측 패널 스타일; 필요 시 기존 함수 대체)
-# ===============================
-def _inject_right_rail_css():
+# === Right rail (우측 플로팅 패널) — 한 번만 정의/호출 ===
+def inject_right_rail_css():
     st.markdown("""
     <style>
-      /* 본문 오른쪽에 패널 자리 확보 */
-      .block-container { padding-right:380px !important; }
-
-      /* 우측 패널 베이스(라이트/다크 공통 다크 톤) */
+      /* 패널 베이스 */
       #search-flyout{
-        position:fixed; right:16px; top:88px; bottom:16px;
-        width:360px; overflow:auto; z-index:1000;
-        border-radius:12px;
+        position: fixed; right: 16px; top: 88px; bottom: 16px;
+        width: 360px; overflow: auto; z-index: 1000;
+        border-radius: 12px;
+        background: var(--panel-bg, #141821);
+        border: 1px solid var(--panel-brd, #1f2530);
+        box-shadow: 0 10px 28px rgba(0,0,0,.45);
+        color: #e7ebf3;
       }
 
-      /* 타이포/리스트 기본 */
+      /* 타이포/리스트 */
       #search-flyout h3{ margin:12px 12px 6px; font-size:1.05rem; }
       #search-flyout h4{ margin:10px 12px 6px; font-size:.95rem; }
       #search-flyout p { margin:6px 12px; line-height:1.4; }
@@ -350,113 +267,58 @@ def _inject_right_rail_css():
         cursor:pointer; padding:6px 8px; border-radius:8px;
         background:rgba(255,255,255,.05);
       }
-      #search-flyout ol.law-list{ counter-reset:law; list-style:none; padding:0 12px 8px 12px; margin:0; }
+      #search-flyout ol.law-list{
+        counter-reset: law; list-style: none; padding: 0 12px 8px; margin: 0;
+      }
       #search-flyout ol.law-list > li{
-        counter-increment:law; padding:10px 10px; margin:8px 0;
-        border:1px solid rgba(255,255,255,.12); border-radius:10px;
-        background:rgba(255,255,255,.03);
+        counter-increment: law; padding: 10px; margin: 8px 0;
+        border: 1px solid rgba(255,255,255,.12); border-radius: 10px;
+        background: rgba(255,255,255,.03);
       }
       #search-flyout ol.law-list > li .title{ display:block; font-weight:700; margin-bottom:4px; }
-      #search-flyout ol.law-list > li .title::before{ content:counter(law) ". "; font-weight:700; }
+      #search-flyout ol.law-list > li .title::before{ content: counter(law) ". "; font-weight:700; }
       #search-flyout .meta{ font-size:.9rem; opacity:.9; margin:2px 0 6px; }
-      #search-flyout a{ text-decoration:underline; color:#cdd9ff; }
-      #search-flyout small.debug{ display:none; }
-    </style>
-    """, unsafe_allow_html=True)
+      #search-flyout a{ text-decoration: underline; color:#cdd9ff; }
 
-# 👉 한번만 호출 (set_page_config 아래, 초기 렌더 전에)
-_inject_right_rail_css()
-
-
-# 입력창 초기화 플래그가 켜져 있으면, 위젯 생성 전에 값 비움
-if st.session_state.pop("_clear_input", False):
-    st.session_state[f"{KEY_PREFIX}-input"] = ""
-
-st.markdown("""
-<style>
-    
-section.main    {{ padding-bottom:0; }}
-.header {{
-  text-align:center; padding:1rem; border-radius:12px; background:transparent; color:inherit;
-  margin:0 0 1rem 0; border:1px solid rgba(127,127,127,.20);
-}}
-[data-theme="dark"] .header {{ border-color: rgba(255,255,255,.12); }}
-h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem 0 0.4rem; }}
-.stMarkdown > div {{ background:var(--bubble-bg,#1f1f1f); color:var(--bubble-fg,#f5f5f5); border-radius:14px; padding:14px 16px; box-shadow:0 1px 8px rgba(0,0,0,.12); }}
-[data-theme="light"] .stMarkdown > div {{ --bubble-bg:#fff; --bubble-fg:#222; box-shadow:0 1px 8px rgba(0,0,0,.06); }}
-.stMarkdown ul, .stMarkdown ol {{ margin-left:1.1rem; }}
-.stMarkdown blockquote {{ margin:8px 0; padding-left:12px; border-left:3px solid rgba(255,255,255,.25); }}
-.copy-row{{ display:flex; justify-content:flex-end; margin:6px 4px 0 0; }}
-.copy-btn{{ display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid rgba(255,255,255,.15); border-radius:10px; background:rgba(0,0,0,.25);
-  backdrop-filter:blur(4px); cursor:pointer; font-size:12px; color:inherit; }}
-[data-theme="light"] .copy-btn{{ background:rgba(255,255,255,.9); border-color:#ddd; }}
-.copy-btn svg{{ pointer-events:none }}
-.pinned-q{{ position: sticky; top: 0; z-index: 900; margin: 8px 0 12px; padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,.15);
-  background: rgba(0,0,0,.35); backdrop-filter: blur(6px); }}
-[data-theme="light"] .pinned-q{{ background: rgba(255,255,255,.85); border-color:#e5e5e5; }}
-.pinned-q .label{{ font-size:12px; opacity:.8; margin-bottom:4px; }}
-.pinned-q .text{{ font-weight:600; line-height:1.4; max-height:7.5rem; overflow:auto; }}
-:root {{ --msg-max: 100%; }}
-[data-testid="stChatMessage"] {{ max-width: var(--msg-max) !important; width: 100% !important; }}
-[data-testid="stChatMessage"] .stMarkdown, [data-testid="stChatMessage"] .stMarkdown > div {{ width: 100% !important; }}
-.law-slide {{ border:1px solid rgba(127,127,127,.25); border-radius:12px; padding:12px 14px; margin:8px 0; }}
-[data-theme="light"] .law-slide {{ border-color:#e5e5e5; }}
-</style>
-""", unsafe_allow_html=True)
-
-# ---- 오른쪽 플로팅 패널용 CSS ----
-# [BLOCK 2] Replace the whole function
-def _inject_right_rail_css():
-    st.markdown("""
-    <style>
-      .block-container { padding-right:380px !important; }
-
-      /* 우측 패널 베이스 */
-      #search-flyout{
-        position:fixed; right:16px; top:88px; bottom:16px;
-        width:360px; overflow:auto; z-index:1000;
-        border-radius:12px; border:1px solid rgba(127,127,127,.25);
-        box-shadow:0 8px 28px rgba(0,0,0,.25);
-      }
-
-      /* 라이트/다크 기본 톤(세부 톤은 BLOCK 1에서 최종 오버라이드) */
-      [data-theme="light"] #search-flyout{
-        background:#f7f8fa; border-color:#e5e7eb; box-shadow:0 6px 16px rgba(0,0,0,.08);
-      }
-      [data-theme="dark"] #search-flyout{
-        background:#1f1f1f; border-color:rgba(255,255,255,.12);
-      }
-
-      #search-flyout h3{ margin:12px 12px 6px; font-size:1.05rem; }
-      #search-flyout h4{ margin:10px 12px 6px; font-size:.95rem; }
-      #search-flyout p { margin:6px 12px; line-height:1.4; }
-      #search-flyout details{ margin:6px 8px 12px; }
-      #search-flyout summary{
-        cursor:pointer; padding:6px 8px; border-radius:8px;
-        background:rgba(127,127,127,.08);
-      }
-      #search-flyout ol.law-list{ counter-reset:law; list-style:none; padding:0 12px 8px 12px; margin:0; }
-      #search-flyout ol.law-list > li{
-        counter-increment:law; padding:10px 10px; margin:8px 0;
-        border:1px solid rgba(127,127,127,.25); border-radius:10px;
-      }
-      #search-flyout ol.law-list > li .title{ display:block; font-weight:700; margin-bottom:4px; }
-      #search-flyout ol.law-list > li .title::before{ content:counter(law) ". "; font-weight:700; }
-      #search-flyout .meta{ font-size:.9rem; opacity:.9; margin:2px 0 6px; }
-      #search-flyout a{ text-decoration:underline; }
-      #search-flyout small.debug{ display:none; }
-
-      /* ⚠️ 컨테이너(#search-flyout)는 지우지 않고, 내부만 리셋 */
+      /* 내부 요소 라이트/다크 강제 톤 역전 방지 */
       #search-flyout *{
-        background:none !important;
-        -webkit-background-clip:initial !important;
-        -webkit-text-fill-color:inherit !important;
-        mix-blend-mode:normal !important;
-        text-shadow:none !important;
+        background: none !important;
+        -webkit-background-clip: initial !important;
+        -webkit-text-fill-color: inherit !important;
+        mix-blend-mode: normal !important;
+        text-shadow: none !important;
+      }
+
+      /* 라이트 모드도 다크 톤 유지(선택) */
+      :root{
+        --app-bg:#0f1115; --panel-bg:#141821; --panel-brd:#1f2530;
+        --bubble-bg:#1a1f2b; --bubble-fg:#f5f7fa; --sidebar-bg:#0d1016;
+      }
+      html[data-theme="light"],
+      body[data-theme="light"],
+      .stApp[data-theme="light"],
+      html[data-theme="light"] [data-testid="stAppViewContainer"],
+      html[data-theme="light"] section.main{
+        background: var(--app-bg) !important;
+        color: #e7ebf3 !important;
+      }
+      html[data-theme="light"] [data-testid="stSidebar"],
+      html[data-theme="light"] [data-testid="stSidebar"] > div:first-child{
+        background: var(--sidebar-bg) !important;
+        border-right: 1px solid var(--panel-brd) !important;
+      }
+      html[data-theme="light"] .block-container{ background: transparent !important; }
+      html[data-theme="light"] .stMarkdown > div{
+        background: var(--bubble-bg) !important;
+        color: var(--bubble-fg) !important;
+        box-shadow: 0 1px 8px rgba(0,0,0,.35) !important;
       }
     </style>
     """, unsafe_allow_html=True)
 
+# === 호출은 한 번만 ===
+inject_center_layout_css()
+inject_right_rail_css()
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
