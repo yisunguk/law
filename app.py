@@ -2,18 +2,20 @@
 from __future__ import annotations
 
 import streamlit as st
+
 st.set_page_config(
+    page_title="법제처 법무 상담사",
+    page_icon="⚖️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 # === [BOOTSTRAP] session keys (must be first) ===
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "_last_user_nonce" not in st.session_state:
     st.session_state["_last_user_nonce"] = None
-    page_title="법제처 법무 상담사",
-    page_icon="⚖️",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+
 
 KEY_PREFIX = "main"
 
@@ -244,11 +246,7 @@ def inject_sticky_layout_css(mode: str = "wide"):
     </style>
     """, unsafe_allow_html=True)
 
-# 3) call ONCE
-inject_center_layout_css("wide")
-inject_right_rail_css()
-
-
+inject_sticky_layout_css("wide")
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
@@ -442,20 +440,6 @@ def render_pre_chat_center():
         st.session_state["_pending_user_q"] = text.strip()
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
-
-# (B) pending → messages 로 옮길 때, 최초 업로더·키 정리
-def _push_user_from_pending() -> str | None:
-    q = st.session_state.pop("_pending_user_q", None)
-    nonce = st.session_state.pop("_pending_user_nonce", None)
-    if not q: return None
-    if nonce and st.session_state.get("_last_user_nonce") == nonce: return None
-    st.session_state.messages.append({"role":"user","content": q, "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
-    st.session_state["_last_user_nonce"] = nonce
-
-    # ✅ 첫 화면 업로더 흔적 제거 (사라지지 않던 문제 해결)
-    for k in ("_first_files","first_files"):
-        st.session_state.pop(k, None)
-    return q
 
 # (C) 하단 업로더는 “대화가 있을 때만” 보이도록 가드
 def render_bottom_uploader():
@@ -2044,21 +2028,6 @@ if not chat_started:
     render_pre_chat_center()      # 중앙 히어로 + 중앙 업로더
 else:
     render_bottom_uploader()      # 하단 고정 업로더만
-
-# === PATCH C: 대화 시작 후 하단 업로더 =========================================
-def render_bottom_uploader():
-    import streamlit as st
-    holder = st.empty()
-    with holder.container():
-        st.markdown('<div class="bottom-uploader">', unsafe_allow_html=True)
-        st.file_uploader(
-            "Drag and drop files here",
-            type=["pdf", "docx", "txt"],
-            accept_multiple_files=True,
-            key="bottom_files",
-            help="대화 중에는 업로드 박스가 하단에 고정됩니다.",
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
 
 with st.container():
     for i, m in enumerate(st.session_state.messages):
