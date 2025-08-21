@@ -248,7 +248,7 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 st.markdown("""
 <style>
 :root{
-  --app-bg:#f3f4f6;      /* 전체 페이지 배경(너무 하얗지 않게) */
+  --app-bg:#f3f4f6;      /* 전체 페이지 배경 */
   --panel-bg:#f7f8fa;    /* 우측 패널/카드 배경 */
   --panel-brd:#e5e7eb;   /* 패널 테두리 */
   --sidebar-bg:#eef2f7;  /* 좌측 사이드바 배경 */
@@ -273,14 +273,14 @@ st.markdown("""
 /* 본문 래퍼는 투명(전역 배경 비치도록) */
 [data-theme="light"] .block-container{ background:transparent !important; }
 
-/* 우측 검색 패널 컨테이너: 배경/테두리/그림자 정리 */
+/* 우측 검색 패널 컨테이너: 배경을 확실히 살림 */
 [data-theme="light"] #search-flyout{
   background:var(--panel-bg) !important;
   border:1px solid var(--panel-brd) !important;
   box-shadow:0 6px 16px rgba(0,0,0,.08) !important;
 }
 
-/* ⚠️ 컨테이너(#search-flyout)는 유지, 내부만 리셋(섞이는 배경 제거) */
+/* 컨테이너는 유지하고 내부만 리셋(이게 핵심) */
 #search-flyout *{
   background:none !important;
   -webkit-background-clip:initial !important;
@@ -2190,31 +2190,54 @@ if submitted:
 
 st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
 
+
+# === FINAL LIGHT-MODE OVERRIDE (auto-appended by assistant) ===
 st.markdown("""
 <style>
-/* 1) 라이트 모드 전역 톤을 아주 살짝 더 눌러줌 */
-[data-theme="light"] :root{
-  --app-bg:#f4f5f7;   /* 기존보다 미세하게 어둡게 */
-  --panel-bg:#f9fafb; /* 말풍선/카드 공용 패널 톤 */
+/* 0) 확실한 범위 지정: data-theme="light"는 보통 body/html에 붙음 */
+html[data-theme="light"],
+body[data-theme="light"],
+html[data-theme="light"] .stApp,
+html[data-theme="light"] [data-testid="stAppViewContainer"],
+html[data-theme="light"] section.main{
+  background: var(--app-bg) !important;
 }
 
-/* 2) 말풍선을 pure white → 패널 톤으로, 글자도 살짝 진하게 */
-[data-theme="light"] .stMarkdown > div{
+/* 1) 전역 CSS 변수 (라이트 전용) */
+html[data-theme="light"]{
+  --app-bg:#f4f5f7;
+  --panel-bg:#f9fafb;
+  --panel-brd:#e5e7eb;
+  --sidebar-bg:#eef2f7;
+}
+
+/* 2) 레이아웃별 톤 정리 */
+html[data-theme="light"] .block-container{ background:transparent !important; }
+html[data-theme="light"] [data-testid="stSidebar"],
+html[data-theme="light"] [data-testid="stSidebar"] > div:first-child{
+  background:var(--sidebar-bg) !important;
+  border-right:1px solid var(--panel-brd) !important;
+}
+html[data-theme="light"] #search-flyout{
+  background:var(--panel-bg) !important;
+  border:1px solid var(--panel-brd) !important;
+  box-shadow:0 6px 16px rgba(0,0,0,.08) !important;
+}
+
+/* 3) 말풍선/헤더/입력창 톤 통일 */
+html[data-theme="light"] .stMarkdown > div{
   --bubble-bg:var(--panel-bg);
   --bubble-fg:#111;
-  box-shadow:0 1px 6px rgba(0,0,0,.05); /* 그림자도 조금 누그러뜨림 */
+  box-shadow:0 1px 6px rgba(0,0,0,.05);
 }
-
-/* 3) 상단 헤더도 패널 톤으로 채움 (기존은 투명) */
-[data-theme="light"] .header{
+html[data-theme="light"] .header{
   background:var(--panel-bg) !important;
-  border-color:#e5e7eb !important;
+  border-color:var(--panel-brd) !important;
 }
-
-/* 4) 입력창도 톤 맞춤 */
-[data-theme="light"] .stChatInput textarea{
-  background:#f9fafb !important;
-  border:1px solid #e5e7eb !important;
+html[data-theme="light"] .stChatInput textarea{
+  background:var(--panel-bg) !important;
+  border:1px solid var(--panel-brd) !important;
 }
 </style>
 """, unsafe_allow_html=True)
+
