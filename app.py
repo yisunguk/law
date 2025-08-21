@@ -426,68 +426,63 @@ has_chat = bool(st.session_state.get("messages")) or bool(st.session_state.get("
 
 # ✅ 중요: ‘최초 화면’ 렌더링 전에 먼저 호출
 
+from datetime import datetime
+import time
+import streamlit as st
+
 def _push_user_from_pending() -> str | None:
+    """폼에서 넣어둔 _pending_user_q를 메시지로 옮김 (중복 방지 포함)"""
     q = st.session_state.pop("_pending_user_q", None)
     nonce = st.session_state.pop("_pending_user_nonce", None)
     if not q:
         return None
     if nonce and st.session_state.get("_last_user_nonce") == nonce:
         return None
-
     st.session_state.messages.append({
         "role": "user",
         "content": q.strip(),
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     })
     st.session_state["_last_user_nonce"] = nonce
-
-    # 최초 화면 업로더 흔적 정리
-    for k in ("_first_files", "first_files"):
-        st.session_state.pop(k, None)
-
     return q
 
-
-user_q = _push_user_from_pending()
-
-
-# (A) 최초 화면 렌더 함수 그대로 사용하되, 제출 시 'pending'만 세팅
 def render_pre_chat_center():
-    import streamlit as st, time
-    st.markdown("""
-      <section class="center-hero">
-        <h1 style="font-size:32px;font-weight:700;letter-spacing:-.5px;margin:0 0 18px;">
-          무엇을 도와드릴까요?
-        </h1>
-      </section>
-    """, unsafe_allow_html=True)
+    """대화 전: 중앙 히어로 + 중앙 업로더(키: first_files) + 전송 폼"""
+    st.markdown('<section class="center-hero">', unsafe_allow_html=True)
+    st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
 
-    st.session_state["_first_files"] = st.file_uploader(
+    # 중앙 업로더 (대화 전 전용)
+    st.file_uploader(
         "Drag and drop files here",
-        type=["pdf", "docx", "txt"], accept_multiple_files=True, key="first_files",
+        type=["pdf", "docx", "txt"],
+        accept_multiple_files=True,
+        key="first_files",
     )
-    with st.form("first_ask"):
-        text = st.text_input("무엇이든 물어보세요", placeholder="질문을 입력해 주세요…", key="first_input")
-        submitted = st.form_submit_button("전송", use_container_width=True)
-    if submitted and (text or "").strip():
-        st.session_state["_pending_user_q"] = text.strip()
+
+    # 입력 폼 (전송 시 pending에 저장 후 rerun)
+    with st.form("first_ask", clear_on_submit=True):
+        q = st.text_input("질문을 입력해 주세요...", key="first_input")
+        sent = st.form_submit_button("전송", use_container_width=True)
+
+    st.markdown("</section>", unsafe_allow_html=True)
+
+    if sent and (q or "").strip():
+        st.session_state["_pending_user_q"] = q.strip()
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
 
-# (C) 하단 업로더는 “대화가 있을 때만” 보이도록 가드
 def render_bottom_uploader():
-    import streamlit as st
-    holder = st.empty()
-    with holder.container():
-        st.markdown('<div class="bottom-uploader">', unsafe_allow_html=True)
-        st.file_uploader(
-            "Drag and drop files here",
-            type=["pdf", "docx", "txt"],
-            accept_multiple_files=True,
-            key="bottom_files",
-            help="대화 중에는 업로드 박스가 하단에 고정됩니다.",
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
+    """대화 중: 하단 고정 업로더(키: bottom_files)만 노출"""
+    st.markdown('<div class="bottom-uploader">', unsafe_allow_html=True)
+    st.file_uploader(
+        "Drag and drop files here",
+        type=["pdf", "docx", "txt"],
+        accept_multiple_files=True,
+        key="bottom_files",
+        help="대화 중에는 업로드 박스가 하단에 고정됩니다.",
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
 
 # --- 작동 키워드 목록(필요시 보강/수정) ---
 LINKGEN_KEYWORDS = {
@@ -1047,17 +1042,6 @@ if AZURE:
         )
     except Exception as e:
         st.error(f"Azure OpenAI 초기화 실패: {e}")
-
-if "messages" not in st.session_state: st.session_state.messages = []
-if "settings" not in st.session_state:
-    st.session_state.settings = {
-        "num_rows": 10,
-        "include_search": True,
-        "safe_mode": False,
-        "animate": True,
-        "animate_delay": 0.9,
-    }
-if "_last_user_nonce" not in st.session_state: st.session_state["_last_user_nonce"] = None
 
 # =============================
 # MOLEG API (Law Search) — unified
