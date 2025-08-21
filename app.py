@@ -279,7 +279,7 @@ def inject_right_rail_css():
 
 
 # 3) call ONCE
-inject_center_layout_css()
+inject_center_layout_css("ultrawide")
 inject_right_rail_css()
 
 
@@ -2157,11 +2157,7 @@ st.markdown("""
   .user-bubble > .stMarkdown > div {
     background: rgba(255,255,255,.06) !important;
   }
-              /* 메인 래퍼 & 입력창: ChatGPT 비슷한 폭 */
-  :root { --center-col: 740px; --bubble-max: 720px; }
-  .block-container { max-width: var(--center-col) !important; margin: 0 auto !important; }
-  .stChatInput    { max-width: var(--center-col) !important; margin-left:auto !important; margin-right:auto !important; }
-
+  
   /* 채팅 말풍선 폭 제한 */
   [data-testid="stChatMessage"]        { max-width: var(--bubble-max) !important; width:100% !important; }
   [data-testid="stChatMessage"] .stMarkdown,
