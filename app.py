@@ -358,6 +358,35 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+st.markdown("""
+<style>
+/* ===== 라이트/다크 공통: 페이지 전체 배경 오버라이드 ===== */
+html, body, .stApp, [data-testid="stAppViewContainer"], section.main {
+  background: #f5f5f7 !important;   /* 원하는 톤으로 조절 */
+}
+
+/* ===== 라이트모드: 사이드바 톤다운 ===== */
+[data-testid="stSidebar"], 
+[data-testid="stSidebar"] > div:first-child {
+  background: #f0f2f6 !important;    /* 사이드바 배경 */
+  border-right: 1px solid #e5e7eb !important;
+}
+
+/* 입력 박스/카드가 너무 떠보이면 테두리 살짝 */
+[data-testid="stSidebar"] .stButton>button,
+[data-testid="stSidebar"] .stTextInput>div>div>input,
+[data-testid="stSidebar"] .stMultiSelect,
+[data-testid="stSidebar"] .stSelectbox,
+[data-testid="stSidebar"] .stTextArea textarea {
+  background: #ffffff !important;
+  border: 1px solid #dde1e7 !important;
+  box-shadow: 0 1px 2px rgba(0,0,0,.03) !important;
+}
+
+/* 우측 플로팅 패널은 기존 톤 유지 */
+</style>
+""", unsafe_allow_html=True)
+
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
