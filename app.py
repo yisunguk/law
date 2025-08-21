@@ -196,122 +196,6 @@ SUGGESTED_TAB_KEYWORDS = {
 def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
-# === PATCH A: 레이아웃/CSS =====================================================
-def inject_sticky_layout_css(mode: str = "wide"):
-    PRESETS = {
-        "compact":  {"center": "880px"},
-        "wide":     {"center": "1160px"},     # ChatGPT 비슷
-        "ultra":    {"center": "1380px"},
-        "fluid":    {"center": "min(92vw, 1440px)"},
-    }
-    p = PRESETS.get(mode, PRESETS["wide"])
-
-    import streamlit as st
-    st.markdown(f"""
-    <style>
-      :root {{
-        --center-col: {p["center"]};
-      }}
-      /* 본문/입력창 동일 폭 중앙정렬 */
-      .block-container,
-      .stChatInput {{ max-width: var(--center-col) !important; margin: 0 auto !important; }}
-
-      /* 처음 화면: 중앙 고정(히어로 섹션) */
-      .center-hero {{
-        min-height: 52vh; display:flex; flex-direction:column;
-        align-items:center; justify-content:center;
-      }}
-      .center-hero .stFileUploader,
-      .center-hero .stTextInput,
-      .center-hero .stButton {{ width: 720px; max-width: 92vw; }}
-
-      /* 대화 시작 후: 파일 업로더를 하단에 고정(채팅 입력 바로 위) */
-      .bottom-uploader {{
-        position: fixed; left: 50%; transform: translateX(-50%);
-        bottom: 96px; z-index: 50; width: var(--center-col); max-width: 92vw;
-        padding: 8px 0;
-      }}
-      @media (max-width: 680px) {{
-        .bottom-uploader {{ bottom: 104px; }}
-      }}
-      /* 말풍선 폭 최적화 */
-      [data-testid="stChatMessage"] {{ max-width: var(--center-col); width: 100%; }}
-    </style>
-    """, unsafe_allow_html=True)
-
-# 1) config
-# 2) define
-# ⬇⬇ 기존 inject_center_layout_css() 통째로 교체
-def inject_center_layout_css(mode: str = "balanced"):
-    # preset별 폭 (원하는 값으로 조절 가능)
-    PRESETS = {
-        "compact":  {"center": "880px",  "bubble": "860px"},
-        "wide":     {"center": "1160px", "bubble": "1140px"},   # ChatGPT 비슷
-        "ultrawide":{"center": "1380px", "bubble": "1360px"},   # 더 넓게
-        "fluid":    {"center": "min(92vw, 1440px)", "bubble": "min(90vw, 1420px)"},
-    }
-    p = PRESETS.get(mode, PRESETS["wide"])
-
-    import streamlit as st
-    st.markdown(f"""<style>
-      :root {{
-        --center-col: {p["center"]};
-        --bubble-max: {p["bubble"]};
-      }}
-
-      /* 메인 폭 & 입력창 폭 */
-      .block-container, .stChatInput {{
-        max-width: var(--center-col) !important;
-        margin-left:auto !important; margin-right:auto !important;
-      }}
-
-      /* 우측 플로팅 패널 공간(넓은 화면에서만) */
-      @media (min-width: 1360px) {{
-        .block-container {{ padding-right: 420px !important; }}
-      }}
-      @media (max-width: 1359px) {{
-        .block-container {{ padding-right: 0 !important; }}
-      }}
-
-      /* 채팅 버블 최대폭 */
-      [data-testid="stChatMessage"] {{ max-width: var(--bubble-max) !important; width:100% !important; }}
-      [data-testid="stChatMessage"] .stMarkdown,
-      [data-testid="stChatMessage"] .stMarkdown > div {{ width:100% !important; }}
-    </style>""", unsafe_allow_html=True)
-
-def inject_right_rail_css():
-    import streamlit as st
-    st.markdown("""
-    <style>
-      /* 우측 플로팅 검색 패널(큰 화면에서만 노출 공간 확보) */
-      #search-flyout{
-        position: fixed;
-        top: 84px;
-        right: 24px;
-        width: 360px;
-        max-height: calc(100vh - 120px);
-        overflow: auto;
-        z-index: 100;
-        padding: 14px 16px;
-        border-radius: 12px;
-        background: rgba(20,24,33,.92);
-        border: 1px solid rgba(255,255,255,.12);
-        box-shadow: 0 8px 28px rgba(0,0,0,.35);
-      }
-      #search-flyout h3{margin:0 0 8px;font-size:16px}
-      #search-flyout h4{margin:12px 0 6px;font-size:14px}
-      #search-flyout details{margin-bottom:8px}
-      #search-flyout ol.law-list{list-style:decimal;padding-left:18px;margin:6px 0}
-      #search-flyout ol.law-list > li{
-        margin:6px 0;padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:8px
-      }
-      #search-flyout .meta{opacity:.8;font-size:12px;margin-top:3px}
-      @media (max-width: 1359px){
-        #search-flyout{position:static;width:auto;max-height:none;margin-top:12px}
-      }
-    </style>
-    """, unsafe_allow_html=True)
-
 # ⬇ 기존 inject_center_layout_css / inject_right_rail_css 바로 아래에 추가/교체
 def inject_sticky_layout_css(mode: str = "wide"):
     PRESETS = {"wide": {"center": "1160px"}}
@@ -2172,9 +2056,6 @@ def _current_q_and_answer():
     last_q = next((m for m in reversed(msgs) if m.get("role")=="user" and (m.get("content") or "").strip()), None)
     last_a = next((m for m in reversed(msgs) if m.get("role")=="assistant" and (m.get("content") or "").strip()), None)
     return (last_q or {}).get("content",""), (last_a or {}).get("content","")
-
-# CSS 주입 뒤
-inject_right_rail_css()
 
 # 🔽 ChatBar 위, if user_q: 바깥에 위치
 q_for_panel, ans_for_panel = _current_q_and_answer()
