@@ -9,6 +9,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+inject_sticky_layout_css(mode="wide")
 
 # === [BOOTSTRAP] session keys (must be first) ===
 if "messages" not in st.session_state:
@@ -204,80 +205,82 @@ SUGGESTED_TAB_KEYWORDS = {
 def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
-# ⬇ 기존 inject_center_layout_css / inject_right_rail_css 바로 아래에 추가/교체
 def inject_sticky_layout_css(mode: str = "wide"):
-    # 화면 폭 프리셋
-    PRESETS = {"wide": {"center": "1160px"}}
+    """
+    대화 말풍선 최대 폭(--bubble-max)과 본문 하단 여백을 중앙 레이아웃에 맞춰 주입합니다.
+    - 우측 플로팅 패널에 겹치지 않게 padding-right 대응(데스크탑만)
+    - 하단 고정 업로더/입력창과 겹치지 않게 padding-bottom 확보
+    """
+    PRESETS = {
+        # 필요하면 center/bubble_max 값을 프로젝트에 맞게 조정하세요.
+        "wide": {"center": "1160px", "bubble_max": "760px"},
+        "narrow": {"center": "880px", "bubble_max": "640px"},
+    }
     p = PRESETS.get(mode, PRESETS["wide"])
 
-    # var(--center-col) 한 줄만 f-string (중괄호는 {{ }})
-    root_line = f":root {{ --center-col: {p['center']}; }}"
+    # 전역 CSS 변수 정의
+    root_vars = f":root {{ --center-col: {p['center']}; --bubble-max: {p['bubble_max']}; }}"
 
-    # 나머지 CSS는 '일반 문자열'로 주입 (f-string 금지!)
-    css = """
+    css = f"""
 <style>
-  /* 우측 플로팅 검색 패널: 화면에 고정 */
-  #search-flyout{
-    position: fixed;
-    top: 72px;
-    right: 24px;
-    width: 360px;
-    max-width: 38vw;
-    height: calc(100vh - 96px);
-    overflow: auto;
-    z-index: 60;
-    padding: 12px 14px;
-    border-radius: 12px;
-  }
+  /* 전역 변수 주입 */
+  {root_vars}
 
-  /* 본문과 겹치지 않도록 우측 여백(넓은 화면에서만) */
-  @media (min-width: 1280px) {
-    .block-container{ padding-right: 420px !important; }
-  }
-  @media (max-width: 1279px) {
-    .block-container{ padding-right: 0 !important; }
-  }
-
-  /* 본문/입력창 동일 폭 중앙정렬 */
-  .block-container, .stChatInput {
+  /* 본문/입력창 동일 폭 중앙 정렬 */
+  .block-container,
+  .stChatInput {{
     max-width: var(--center-col) !important;
-    margin: 0 auto !important;
-  }
+    margin-left: auto !important;
+    margin-right: auto !important;
+  }}
 
-  /* 대화 전 중앙 히어로 */
-  .center-hero{
-    min-height: calc(100vh - 220px);
-    display:flex; flex-direction:column; align-items:center; justify-content:center;
-  }
-  .center-hero .stFileUploader, .center-hero .stTextInput{
-    width: 720px; max-width: 92vw;
-  }
+  /* === 말풍선 최대 폭 제한 === */
+  [data-testid="stChatMessage"] {{
+    max-width: var(--bubble-max) !important;
+    width: 100% !important;
+  }}
+  [data-testid="stChatMessage"] .stMarkdown,
+  [data-testid="stChatMessage"] .stMarkdown > div {{
+    width: 100% !important;
+  }}
 
-  /* 대화 중 하단 고정 업로더 */
-  .bottom-uploader{
+  /* === 하단 고정 업로더/입력과 겹침 방지 ===
+     하단 요소 높이(입력창+업로더)를 고려해 넉넉히 확보 */
+  .block-container {{
+    padding-bottom: 180px !important;
+  }}
+
+  /* === 우측 플로팅 패널 있을 때만 여백 확보 (데스크탑) === */
+  @media (min-width: 1280px) {{
+    .block-container {{ padding-right: 420px !important; }}
+  }}
+  @media (max-width: 1279px) {{
+    .block-container {{ padding-right: 0 !important; }}
+  }}
+
+  /* (선택) 대화 중 하단 고정 업로더가 있다면 너비 동기화 */
+  .bottom-uploader {{
     position: fixed; left: 50%; transform: translateX(-50%);
-    bottom: 96px; z-index: 50; width: var(--center-col); max-width: 92vw; padding: 8px 0;
-  }
+    bottom: 96px; z-index: 50;
+    width: var(--center-col); max-width: 92vw;
+    padding: 8px 0;
+  }}
 
-  /* 말풍선 기본 색 변수 + 적용 */
-  :root{
-    --bubble-bg: #1f1f1f;
-    --bubble-fg: #f5f5f5;
-  }
-  [data-testid="stChatMessage"] .stMarkdown > div{
-    background: var(--bubble-bg,#1f1f1f) !important;
-    color: var(--bubble-fg,#f5f5f5) !important;
-    border-radius: 14px; padding: 14px 16px;
-    box-shadow: 0 1px 8px rgba(0,0,0,.12);
-  }
+  /* (선택) 대화 전 중앙 히어로 섹션 */
+  .center-hero {{
+    min-height: calc(100vh - 220px);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+  }}
+  .center-hero .stFileUploader,
+  .center-hero .stTextInput {{
+    width: 720px; max-width: 92vw;
+  }}
 </style>
 """
-
     import streamlit as st
-    # center-col 변수 한 줄 먼저 주입
-    st.markdown("<style>" + root_line + "</style>", unsafe_allow_html=True)
-    # 나머지 CSS 주입
     st.markdown(css, unsafe_allow_html=True)
+
 
 inject_sticky_layout_css("wide")
 
@@ -2153,7 +2156,6 @@ st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
 
 st.markdown("""
 <style>
-
 /* 우측 패널은 넓은 화면에서만 공간 확보 */
 @media (min-width: 1280px) { .block-container { padding-right:380px !important; } }
 @media (max-width: 1279px) { .block-container { padding-right:0 !important; } }
@@ -2167,48 +2169,36 @@ st.markdown("""
 }
 
 /* 헤더/히어로는 버블 해제 */
-.header, .hero, .header * , .hero *{
+.header, .hero, .header *, .hero * {
   background: transparent !important; box-shadow:none !important; border:none !important;
 }
 
-  /* 어시스턴트 버블 */
-  [data-testid="stChatMessage"]:has(.stMarkdown) > div div:not(.user-bubble) > .stMarkdown > div {
-    background: rgba(255,255,255,.03) !important;
-  }
-
-  /* 유저 버블 (간단 톤 차이) */
-  .user-bubble > .stMarkdown > div {
-    background: rgba(255,255,255,.06) !important;
-  }
-  
-  /* 채팅 말풍선 폭 제한 */
-  [data-testid="stChatMessage"]        { max-width: var(--bubble-max) !important; width:100% !important; }
-  [data-testid="stChatMessage"] .stMarkdown,
-  [data-testid="stChatMessage"] .stMarkdown > div { width:100% !important; }
+/* 어시스턴트/유저 버블 톤 */
+[data-testid="stChatMessage"]:has(.stMarkdown) > div div:not(.user-bubble) > .stMarkdown > div {
+  background: rgba(255,255,255,.03) !important;
 }
-            
-<style>
-/* 라이트 모드에서 html/body 자체에 data-theme가 달리므로 이렇게 선택해야 합니다 */
+.user-bubble > .stMarkdown > div {
+  background: rgba(255,255,255,.06) !important;
+}
+
+/* 채팅 말풍선 폭 제한 */
+[data-testid="stChatMessage"] { max-width: var(--bubble-max) !important; width:100% !important; }
+[data-testid="stChatMessage"] .stMarkdown,
+[data-testid="stChatMessage"] .stMarkdown > div { width:100% !important; }
+
+/* === 라이트 테마를 다크 톤으로 강제 오버라이드 === */
 html[data-theme="light"],
 body[data-theme="light"],
 .stApp[data-theme="light"] {
-  background: #0f1115 !important;  /* 전체 페이지 배경(다크) */
-}
-
-/* 메인 컨테이너(흰 화면 없애기) */
-html[data-theme="light"] [data-testid="stAppViewContainer"],
-html[data-theme="light"] section.main {
   background: #0f1115 !important;
 }
-
-/* 사이드바(좌측) */
+html[data-theme="light"] [data-testid="stAppViewContainer"],
+html[data-theme="light"] section.main { background: #0f1115 !important; }
 html[data-theme="light"] [data-testid="stSidebar"],
 html[data-theme="light"] [data-testid="stSidebar"] > div:first-child {
   background: #0b0e14 !important;
   border-right: 1px solid #1c1f26 !important;
 }
-
-/* 채팅 말풍선/카드류를 다크 톤으로 */
 html[data-theme="light"] .stMarkdown > div {
   --bubble-bg: #1a1f29;
   --bubble-fg: #e6e8eb;
@@ -2216,28 +2206,20 @@ html[data-theme="light"] .stMarkdown > div {
   color: var(--bubble-fg) !important;
   box-shadow: 0 1px 8px rgba(0,0,0,.25) !important;
 }
-
-/* 헤더 박스도 어둡게 */
 html[data-theme="light"] .header {
   background: #141821 !important;
   color: #e6e8eb !important;
   border-color: rgba(255,255,255,.12) !important;
 }
-
-/* 우측 플로팅 검색 패널 */
 html[data-theme="light"] #search-flyout {
   background: #141821 !important;
   border: 1px solid #1f2430 !important;
   box-shadow: 0 8px 28px rgba(0,0,0,.35) !important;
   color: #e6e8eb !important;
 }
-
-/* 우측 패널 안의 카드/리스트 테두리 */
 html[data-theme="light"] #search-flyout ol.law-list > li{
   border: 1px solid rgba(255,255,255,.12) !important;
 }
-
-/* 내부 요소가 라이트 테마의 역색상 적용을 받지 않도록 */
 html[data-theme="light"] #search-flyout *{
   background: none !important;
   -webkit-background-clip: initial !important;
@@ -2245,15 +2227,9 @@ html[data-theme="light"] #search-flyout *{
   mix-blend-mode: normal !important;
   text-shadow: none !important;
 }
-
-  /* 채팅 말풍선 폭 제한 */
-  [data-testid="stChatMessage"]        { max-width: var(--bubble-max) !important; width:100% !important; }
-  [data-testid="stChatMessage"] .stMarkdown,
-  [data-testid="stChatMessage"] .stMarkdown > div { width:100% !important; }          
-
-/* 본문 컨테이너는 투명하게 두어 전체 배경이 비치도록 */
 html[data-theme="light"] .block-container{ background: transparent !important; }
 </style>
 """, unsafe_allow_html=True)
+
 
 
