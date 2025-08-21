@@ -265,14 +265,7 @@ def inject_sticky_layout_css(mode: str = "wide"):
     height: calc(100vh - 96px);
     overflow: auto; z-index: 60;
     padding: 12px 14px; border-radius: 12px;
-  }}
-
-  /* 넓은 화면에서만 우측 패널 공간 확보 */
-  @media (min-width: 1280px) {{
-    .block-container {{ padding-right: 420px !important; }}
-  }}
-  @media (max-width: 1279px) {{
-    .block-container {{ padding-right: 0 !important; }}
+ 
   }}
 </style>
 """
@@ -2037,30 +2030,35 @@ user_q = _push_user_from_pending()
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
 
-# ✅ 대화 전 중앙배치 오버라이드 (chat_started 계산 직후)
+# ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
 if not chat_started:
     st.markdown("""
     <style>
-      /* 우측 패널은 대화 시작 전 숨김 */
-      #search-flyout { display:none !important; }
+      /* 우측 패널 숨김 */
+      #search-flyout{ display:none !important; }
 
-      /* 우측 여백/하단 여백을 대화 전에는 제거(히어로를 정확히 중앙으로) */
-      @media (min-width:1280px) { .block-container { padding-right:0 !important; } }
-      .block-container { padding-bottom: 32px !important; }
+      /* 우측/하단 여백 제거 */
+      @media (min-width:1280px){ .block-container{ padding-right:0 !important; } }
+      .block-container{ padding-bottom:0 !important; }
 
-      /* 히어로 섹션을 세로/가로 모두 중앙정렬 */
+      /* 히어로를 뷰포트 절대 중앙에 고정 */
       .center-hero{
-        min-height: calc(100vh - 140px) !important;  /* 220px → 140px로 상향 */
-        display: flex; flex-direction: column;
-        align-items: center; justify-content: center;
+        position: fixed !important;
+        left: 50% !important; top: 50% !important;
+        transform: translate(-50%, -50%) !important;
+        width: var(--center-col); max-width: 92vw;
+        margin: 0 !important; padding: 0 !important;
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center;
       }
 
-      /* 히어로 내부 위젯 폭: 챗 입력/업로더를 적절 폭으로 */
+      /* 히어로 내부 위젯 폭 */
       .center-hero .stFileUploader, .center-hero .stTextInput{
         width: 720px; max-width: 92vw;
       }
     </style>
     """, unsafe_allow_html=True)
+
 
 
 # 🎯 대화 전에는 우측 패널 숨기고, 여백을 0으로 만들어 완전 중앙 정렬
