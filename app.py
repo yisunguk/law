@@ -1,3 +1,5 @@
+# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
+from __future__ import annotations
 
 import streamlit as st
 st.set_page_config(
@@ -8,8 +10,9 @@ st.set_page_config(
 )
 
 KEY_PREFIX = "main"
+
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
-from __future__ import annotations
+
 # ===========================================
 # [PATCH] AdviceEngine 연결 (NameError-safe)
 # 붙여넣는 위치: import 구역 아래 아무 곳(권장: 사이드바 렌더링 시작 직전)
