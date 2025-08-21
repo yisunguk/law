@@ -2034,8 +2034,24 @@ with st.sidebar:
 # 1) pending → messages 먼저 옮김
 user_q = _push_user_from_pending()
 
-# 2) 대화 시작 여부 계산 (교체)
+# 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
+
+# 🎯 대화 전에는 우측 패널 숨기고, 여백을 0으로 만들어 완전 중앙 정렬
+if not chat_started:
+    st.markdown("""
+    <style>
+      /* hide right rail before first message */
+      #search-flyout { display: none !important; }
+      /* remove right gutter so hero sits dead-center */
+      @media (min-width:1280px) { .block-container { padding-right: 0 !important; } }
+      /* bottom padding 크게 줄여서 화면 정중앙에 오도록 */
+      .block-container { padding-bottom: 64px !important; }
+      /* hero 높이 살짝 줄여 위/아래 균형 */
+      .center-hero { min-height: calc(100vh - 160px) !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
 
 # 3) 화면 분기
 if not chat_started:
@@ -2071,10 +2087,12 @@ def _current_q_and_answer():
     last_a = next((m for m in reversed(msgs) if m.get("role")=="assistant" and (m.get("content") or "").strip()), None)
     return (last_q or {}).get("content",""), (last_a or {}).get("content","")
 
-# 🔽 ChatBar 위, if user_q: 바깥에 위치
-q_for_panel, ans_for_panel = _current_q_and_answer()
-hints = extract_law_names_from_answer(ans_for_panel) if ans_for_panel else None
-render_search_flyout(q_for_panel, num_rows=8, hint_laws=hints, show_debug=SHOW_SEARCH_DEBUG)
+# 🔽 대화가 시작된 뒤에만 우측 패널 노출
+if chat_started:
+    q_for_panel, ans_for_panel = _current_q_and_answer()
+    hints = extract_law_names_from_answer(ans_for_panel) if ans_for_panel else None
+    render_search_flyout(q_for_panel or user_q, num_rows=8, hint_laws=hints, show_debug=SHOW_SEARCH_DEBUG)
+
 
 
 
