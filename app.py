@@ -207,6 +207,53 @@ st.set_page_config(
     
 )
 
+
+def inject_center_layout_css():
+    st.markdown("""
+    <style>
+      /* ===== Center column like ChatGPT ===== */
+      :root { --center-col: 740px; --bubble-max: 720px; }
+
+      /* 메인 본문과 입력창 폭을 동일하게 중앙 정렬 */
+      .block-container { 
+        max-width: var(--center-col) !important; 
+        margin-left: auto !important; 
+        margin-right: auto !important; 
+      }
+      .stChatInput { 
+        max-width: var(--center-col) !important; 
+        margin-left: auto !important; 
+        margin-right: auto !important; 
+      }
+
+      /* 채팅 버블은 중앙 폭보다 살짝 좁게 */
+      [data-testid="stChatMessage"] { 
+        max-width: var(--bubble-max) !important; 
+        width: 100% !important; 
+      }
+      [data-testid="stChatMessage"] .stMarkdown,
+      [data-testid="stChatMessage"] .stMarkdown > div {
+        width: 100% !important;
+      }
+
+      /* 우측 고정 패널 공간은 데스크톱에서만 비워두기 (양쪽 레이아웃 유지) */
+      @media (min-width: 1280px) { .block-container { padding-right:380px !important; } }
+      @media (max-width: 1279px) { .block-container { padding-right:0 !important; } }
+
+      /* (선택) 말풍선 톤만 살짝 */
+      [data-testid="stChatMessage"] .stMarkdown > div{
+        border-radius: 14px; 
+        padding: 14px 16px; 
+        box-shadow: 0 1px 8px rgba(0,0,0,.12);
+        background: rgba(255,255,255,.03);
+      }
+    </style>
+    """, unsafe_allow_html=True)
+
+# 호출
+inject_center_layout_css()
+
+
 # ===============================
 # BLOCK 1) Light mode final override (전역 배경/패널 톤)
 # 파일 어디든 1회만 선언되면 됨. 보통 st.set_page_config() 아래에 배치.
@@ -327,12 +374,7 @@ if st.session_state.pop("_clear_input", False):
 
 st.markdown("""
 <style>
-     
-.block-container, .stChatInput {
-  max-width: 50% !important;
-  margin: 0 auto !important;
-    }
-
+    
 section.main    {{ padding-bottom:0; }}
 .header {{
   text-align:center; padding:1rem; border-radius:12px; background:transparent; color:inherit;
