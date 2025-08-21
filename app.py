@@ -2210,7 +2210,7 @@ if user_q:
         stream_box.empty()
     
 # ✅ 채팅이 시작되면(첫 입력 이후) 항상 하단 고정 입력/업로더 표시
-if chat_started:
+if has_chat:
     submitted, typed_text, files = chatbar(
         placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
         accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
