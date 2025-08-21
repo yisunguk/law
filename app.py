@@ -416,7 +416,10 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
     st.markdown("\n".join(html), unsafe_allow_html=True)
 
   # ⬇️ 이 블록만 붙여넣으세요 (기존 header st.markdown(...) 블록은 삭제)
+# app.py (하단)
+
 if not st.session_state.get("messages"):
+    # ✅ 최초 화면: 가운데 히어로 입력창
     st.markdown(
         """
         <section class="hero" style="text-align:center; padding:40px 0 28px;">
@@ -431,6 +434,27 @@ if not st.session_state.get("messages"):
         """,
         unsafe_allow_html=True,
     )
+    # 여기서는 chat_input 간단 버전만
+    text = st.chat_input("질문을 입력해 주세요…")
+    if text:
+        st.session_state["_pending_user_q"] = text
+        st.session_state["_pending_user_nonce"] = time.time_ns()
+        st.rerun()
+
+else:
+    # ✅ 대화가 시작된 후: 하단 고정 chatbar
+    submitted, typed_text, files = chatbar(
+        placeholder="법령에 대한 질문을 입력하거나, 문서를 첨부해 보세요…",
+        accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix="main",
+    )
+    if submitted:
+        text = (typed_text or "").strip()
+        if text:
+            st.session_state["_pending_user_q"] = text
+            st.session_state["_pending_user_nonce"] = time.time_ns()
+        st.session_state["_clear_input"] = True
+        st.rerun()
+
 
 
 
