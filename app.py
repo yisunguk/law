@@ -1675,6 +1675,23 @@ def find_law_with_fallback(user_query: str, num_rows: int = 10):
             if laws2: return laws2, ep2, err2, f"fallback:{law_name}"
     return [], endpoint, err, "none"
 
+def _append_message(role: str, content: str, **extra):
+    """
+    세션 메시지에 안전하게 추가하는 함수.
+    - 빈 문자열 / 공백만 있는 경우 무시
+    - 코드블록만 있는 경우 무시 (예: ```python ... ```)
+    """
+    txt = (content or "").strip()
+    is_code_only = (txt.startswith("```") and txt.endswith("```"))
+    if not txt or is_code_only:
+        return
+    st.session_state.messages.append({
+        "role": role,
+        "content": txt,
+        **extra,
+    })
+
+
 def format_law_context(law_data: list[dict]) -> str:
     if not law_data: return "관련 법령 검색 결과가 없습니다."
     rows = []
@@ -2135,98 +2152,63 @@ render_search_flyout(q_for_panel, num_rows=8, hint_laws=hints, show_debug=SHOW_S
 # ===============================
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
 # ===============================
-# 🔻 어시스턴트 답변 출력은 반드시 user_q가 있을 때만 실행
-# 🔻 어시스턴트 답변 출력은 반드시 user_q가 있을 때만 실행
-# 🔻 어시스턴트 답변 출력은 반드시 user_q가 있을 때만 실행
-# (위쪽 내용 동일)
-
-# ===============================
-# 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
-# ===============================
 if user_q:
-  
     if client and AZURE:
-        # 스트리밍 프리뷰 컨테이너
+        # 프리뷰/버퍼 초기화
         stream_box = st.empty()
         full_text, buffer, collected_laws = "", "", []
-        final_text = ""   # ✅ 미리 초기화 (NameError 방지)
+        final_text = ""   # NameError 방지
 
+    try:
+        stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
+
+        for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
+            if kind == "delta":
+                buffer += (payload or "")
+                if len(buffer) >= 200:
+                    full_text += buffer
+                    buffer = ""
+                    if SHOW_STREAM_PREVIEW and stream_box is not None:
+                        stream_box.markdown(_normalize_text(full_text[-1500:]))
+
+            elif kind == "final":
+                if buffer:
+                    full_text += buffer
+                    buffer = ""
+                if payload:
+                    full_text += payload
+                collected_laws = law_list or []
+                break
+
+        # 루프 종료 후 남은 버퍼 반영
+        if buffer:
+            full_text += buffer
+
+    except Exception as e:
+        # 예외 시 폴백
+        laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
+        collected_laws = laws
+        law_ctx = format_law_context(laws)
+        title = "법률 자문 메모"
+        full_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
+        final_text = apply_final_postprocess(full_text, collected_laws)
+
+    # --- ✅ 정상 경로 후처리: 항상 실행되도록 보장 ---
     if not final_text.strip():
-       final_text = apply_final_postprocess(full_text, collected_laws)
+        final_text = apply_final_postprocess(full_text, collected_laws)
 
+    # ▶ 답변을 세션에 넣고 rerun
     if final_text.strip():
-       _append_message("assistant", final_text, law=collected_laws)
-       st.session_state["last_q"] = user_q
-       st.session_state.pop("_pending_user_q", None)
-       st.session_state.pop("_pending_user_nonce", None)
-       st.rerun()
+        _append_message("assistant", final_text, law=collected_laws)
+        st.session_state["last_q"] = user_q
+        st.session_state.pop("_pending_user_q", None)
+        st.session_state.pop("_pending_user_nonce", None)
+        st.rerun()
 
-
-
-        try:
-            stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
-
-            for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
-                if kind == "delta":
-                    buffer += (payload or "")
-                    if len(buffer) >= 200:
-                        full_text += buffer
-                        buffer = ""
-                        # ✅ 미리보기는 옵션일 때만
-                        if SHOW_STREAM_PREVIEW and stream_box is not None:
-                            stream_box.markdown(_normalize_text(full_text[-1500:]))
-
-                elif kind == "final":
-                    # ✅ 어떤 엔진은 전체 답변을 'final' payload로만 보냄 → 합쳐주기
-                    if buffer:
-                        full_text += buffer
-                        buffer = ""
-                    if payload:
-                        full_text += payload
-                    collected_laws = law_list or []
-                    break
-
-            # 루프 종료 후 남은 버퍼 반영
-            if buffer:
-                full_text += buffer
-
-        except Exception as e:
-            # 예외 시 폴백
-            laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
-            collected_laws = laws
-            law_ctx = format_law_context(laws)
-            title = "법률 자문 메모"
-            full_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
-            final_text = apply_final_postprocess(full_text, collected_laws)
-
-        # --- ✅ 정상 경로 후처리: 항상 실행되도록 보장 ---
-        if not final_text.strip():
-            final_text = apply_final_postprocess(full_text, collected_laws)
-
-           
-
-        # 프리뷰 컨테이너 비우기
-        if stream_box is not None:
-            stream_box.empty()
-
-def _append_message(role: str, content: str, **extra):
-    """
-    세션 메시지에 안전하게 추가하는 함수.
-    - 빈 문자열 / 공백만 있는 경우 무시
-    - 코드블록만 있는 경우 무시 (예: ```python ... ```)
-    """
-    txt = (content or "").strip()
-    is_code_only = (txt.startswith("```") and txt.endswith("```"))
-    if not txt or is_code_only:
-        return  # ✅ 불필요한 버블 차단
-
-    st.session_state.messages.append({
-        "role": role,
-        "content": txt,
-        **extra,
-    })
-
-
+    # 프리뷰 컨테이너 비우기
+    if stream_box is not None:
+        stream_box.empty()
+    
 if st.session_state.get("messages"):  # ✅ 대화가 있을 때만 하단 고정 입력창
     submitted, typed_text, files = chatbar(
         placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
