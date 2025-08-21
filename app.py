@@ -329,7 +329,7 @@ st.markdown("""
 <style>
      
 .block-container, .stChatInput {
-  max-width: 100% !important;
+  max-width: 50% !important;
   margin: 0 auto !important;
     }
 
