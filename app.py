@@ -2257,57 +2257,70 @@ if submitted:
 st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
 
 
-# === LIGHT→DARK MIRROR (라이트 모드를 다크처럼 보이게) ===
+# --- LIGHT MODE를 다크 톤으로 강제 오버라이드 (파일 맨 아래 권장) ---
+import streamlit as st
+
 st.markdown("""
 <style>
-/* 0) 라이트 모드에서도 다크 컬러를 전역으로 사용 */
+/* 라이트 모드에서 html/body 자체에 data-theme가 달리므로 이렇게 선택해야 합니다 */
 html[data-theme="light"],
 body[data-theme="light"],
-html[data-theme="light"] .stApp,
+.stApp[data-theme="light"] {
+  background: #0f1115 !important;  /* 전체 페이지 배경(다크) */
+}
+
+/* 메인 컨테이너(흰 화면 없애기) */
 html[data-theme="light"] [data-testid="stAppViewContainer"],
-html[data-theme="light"] section.main{
-  background:#0f1115 !important;   /* 다크 배경 */
-  color:#e5e7eb !important;         /* 다크 텍스트 */
+html[data-theme="light"] section.main {
+  background: #0f1115 !important;
 }
 
-/* 1) 전역 변수도 다크 톤으로 재정의 */
-html[data-theme="light"]{
-  --app-bg:#0f1115;
-  --panel-bg:#1a1c20;
-  --panel-brd:rgba(255,255,255,.12);
-  --sidebar-bg:#111318;
-}
-
-/* 2) 사이드바도 다크처럼 */
+/* 사이드바(좌측) */
 html[data-theme="light"] [data-testid="stSidebar"],
-html[data-theme="light"] [data-testid="stSidebar"] > div:first-child{
-  background:var(--sidebar-bg) !important;
-  color:#e5e7eb !important;
-  border-right:1px solid var(--panel-brd) !important;
+html[data-theme="light"] [data-testid="stSidebar"] > div:first-child {
+  background: #0b0e14 !important;
+  border-right: 1px solid #1c1f26 !important;
 }
 
-/* 3) 말풍선(어시스턴트/답변 카드)도 다크 톤으로 통일 */
-html[data-theme="light"] .stMarkdown > div{
-  --bubble-bg:#1f1f1f !important;
-  --bubble-fg:#f5f5f5 !important;
-  box-shadow:0 1px 8px rgba(0,0,0,.25) !important;
-  color:var(--bubble-fg) !important;
+/* 채팅 말풍선/카드류를 다크 톤으로 */
+html[data-theme="light"] .stMarkdown > div {
+  --bubble-bg: #1a1f29;
+  --bubble-fg: #e6e8eb;
+  background: var(--bubble-bg) !important;
+  color: var(--bubble-fg) !important;
+  box-shadow: 0 1px 8px rgba(0,0,0,.25) !important;
 }
 
-/* 4) 우측 검색 패널을 다크 톤으로 강제 */
-html[data-theme="light"] #search-flyout{
-  background:#1f1f1f !important;
-  color:#e5e7eb !important;
-  border:1px solid rgba(255,255,255,.12) !important;
-  box-shadow:0 8px 28px rgba(0,0,0,.35) !important;
+/* 헤더 박스도 어둡게 */
+html[data-theme="light"] .header {
+  background: #141821 !important;
+  color: #e6e8eb !important;
+  border-color: rgba(255,255,255,.12) !important;
 }
-/* 내부에 끼어들 수 있는 밝은 배경/텍스트 필터 제거 */
+
+/* 우측 플로팅 검색 패널 */
+html[data-theme="light"] #search-flyout {
+  background: #141821 !important;
+  border: 1px solid #1f2430 !important;
+  box-shadow: 0 8px 28px rgba(0,0,0,.35) !important;
+  color: #e6e8eb !important;
+}
+
+/* 우측 패널 안의 카드/리스트 테두리 */
+html[data-theme="light"] #search-flyout ol.law-list > li{
+  border: 1px solid rgba(255,255,255,.12) !important;
+}
+
+/* 내부 요소가 라이트 테마의 역색상 적용을 받지 않도록 */
 html[data-theme="light"] #search-flyout *{
-  background:none !important;
-  -webkit-background-clip:initial !important;
-  -webkit-text-fill-color:inherit !important;
-  text-shadow:none !important;
-  mix-blend-mode:normal !important;
+  background: none !important;
+  -webkit-background-clip: initial !important;
+  -webkit-text-fill-color: inherit !important;
+  mix-blend-mode: normal !important;
+  text-shadow: none !important;
 }
+
+/* 본문 컨테이너는 투명하게 두어 전체 배경이 비치도록 */
+html[data-theme="light"] .block-container{ background: transparent !important; }
 </style>
 """, unsafe_allow_html=True)
