@@ -207,7 +207,7 @@ def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
 # 1) config
 # 2) define
 # ⬇⬇ 기존 inject_center_layout_css() 통째로 교체
-def inject_center_layout_css(mode: str = "wide"):
+def inject_center_layout_css(mode: str = "balanced"):
     # preset별 폭 (원하는 값으로 조절 가능)
     PRESETS = {
         "compact":  {"center": "880px",  "bubble": "860px"},
@@ -279,7 +279,7 @@ def inject_right_rail_css():
 
 
 # 3) call ONCE
-inject_center_layout_css("ultrawide")
+inject_center_layout_css("wide")
 inject_right_rail_css()
 
 
