@@ -2209,7 +2209,8 @@ if user_q:
     if stream_box is not None:
         stream_box.empty()
     
-if st.session_state.get("messages"):  # ✅ 대화가 있을 때만 하단 고정 입력창
+# ✅ 채팅이 시작되면(첫 입력 이후) 항상 하단 고정 입력/업로더 표시
+if chat_started:
     submitted, typed_text, files = chatbar(
         placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
         accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
@@ -2221,6 +2222,7 @@ if st.session_state.get("messages"):  # ✅ 대화가 있을 때만 하단 고�
             st.session_state["_pending_user_nonce"] = time.time_ns()
         st.session_state["_clear_input"] = True
         st.rerun()
+
 
 
 st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
@@ -2344,15 +2346,3 @@ chat_started = _has_msgs or _has_pending  # 한 번이라도 입력되면 True
 if not chat_started:
     # 1) 대화 전 — 중앙 고정 화면
     render_pre_chat_center()
-else:
-    # 2) 대화 시작 — 기존 메시지(말풍선) 루프는 그대로 두고,
-    #    입력창은 기본 st.chat_input(하단 고정), 업로더는 bottom_uploader로 고정
-    #    (아래는 예시: 실제 메시지 렌더/LLM 호출 코드는 기존 것을 유지)
-    # --- 예시: user 입력 수집 ---
-    user_text = st.chat_input("법령에 대한 질문을 입력해 주세요…")
-    if user_text:
-        st.session_state.messages.append({"role": "user", "content": user_text})
-        st.rerun()
-
-    # --- 하단 업로더 고정 ---
-    render_bottom_uploader()
