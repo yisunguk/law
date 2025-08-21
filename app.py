@@ -2262,6 +2262,12 @@ import streamlit as st
 
 st.markdown("""
 <style>
+html, body, [data-testid="stAppViewContainer"], section.main {
+    background-color: #000000 !important;
+    color: #ffffff !important;
+}
+            
+<style>
 /* 라이트 모드에서 html/body 자체에 data-theme가 달리므로 이렇게 선택해야 합니다 */
 html[data-theme="light"],
 body[data-theme="light"],
