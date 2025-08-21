@@ -11,14 +11,6 @@ st.set_page_config(
 
 KEY_PREFIX = "main"
 
-# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
-
-# ===========================================
-# [PATCH] AdviceEngine 연결 (NameError-safe)
-# 붙여넣는 위치: import 구역 아래 아무 곳(권장: 사이드바 렌더링 시작 직전)
-# 기존의 `engine = AdviceEngine(...)` 라인은 삭제하세요.
-# ===========================================
-
 from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
 
 # 지연 초기화: 필요한 전역들이 준비된 뒤에 한 번만 엔진 생성
@@ -434,13 +426,17 @@ if not st.session_state.get("messages"):
         """,
         unsafe_allow_html=True,
     )
+        # ✅ 최초 화면에도 업로더 선택적으로 노출
+    _first_files = st.file_uploader(
+        "Drag and drop files here",
+        type=["pdf","docx","txt"], accept_multiple_files=True
+    )
     # 여기서는 chat_input 간단 버전만
     text = st.chat_input("질문을 입력해 주세요…")
     if text:
         st.session_state["_pending_user_q"] = text
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
-
 else:
     # ✅ 대화가 시작된 후: 하단 고정 chatbar
     submitted, typed_text, files = chatbar(
