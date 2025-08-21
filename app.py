@@ -206,36 +206,31 @@ def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
 
 def inject_sticky_layout_css(mode: str = "wide"):
     """
-    대화 말풍선 최대 폭(--bubble-max)과 본문 하단 여백을 중앙 레이아웃에 맞춰 주입합니다.
-    - 우측 플로팅 패널에 겹치지 않게 padding-right 대응(데스크탑만)
-    - 하단 고정 업로더/입력창과 겹치지 않게 padding-bottom 확보
+    대화 전엔 중앙, 대화 시작 후엔 하단 고정 입력/업로더 + 우측 패널 고정 + 좌측 사이드바 유지
+    - 중앙 열 너비(--center-col), 말풍선 최대폭(--bubble-max) 변수 제공
+    - 하단 고정 UI와 겹침 막도록 본문 padding-bottom 확보
+    - 우측 검색 패널 #search-flyout 고정
     """
     PRESETS = {
-        # 필요하면 center/bubble_max 값을 프로젝트에 맞게 조정하세요.
-        "wide": {"center": "1160px", "bubble_max": "760px"},
-        "narrow": {"center": "880px", "bubble_max": "640px"},
+        "wide":   {"center": "1160px", "bubble_max": "760px"},
+        "narrow": {"center": "880px",  "bubble_max": "640px"},
     }
     p = PRESETS.get(mode, PRESETS["wide"])
-
-    # 전역 CSS 변수 정의
     root_vars = f":root {{ --center-col: {p['center']}; --bubble-max: {p['bubble_max']}; }}"
 
     css = f"""
-    inject_sticky_layout_css("wide")
-
 <style>
-  /* 전역 변수 주입 */
+  /* 전역 변수 */
   {root_vars}
 
-  /* 본문/입력창 동일 폭 중앙 정렬 */
-  .block-container,
-  .stChatInput {{
+  /* 본문/입력창 공통 중앙 정렬 & 동일 폭 */
+  .block-container, .stChatInput {{
     max-width: var(--center-col) !important;
     margin-left: auto !important;
     margin-right: auto !important;
   }}
 
-  /* === 말풍선 최대 폭 제한 === */
+  /* 채팅 말풍선 최대 폭 제한 */
   [data-testid="stChatMessage"] {{
     max-width: var(--bubble-max) !important;
     width: 100% !important;
@@ -245,42 +240,45 @@ def inject_sticky_layout_css(mode: str = "wide"):
     width: 100% !important;
   }}
 
-  /* === 하단 고정 업로더/입력과 겹침 방지 ===
-     하단 요소 높이(입력창+업로더)를 고려해 넉넉히 확보 */
-  .block-container {{
-    padding-bottom: 180px !important;
+  /* 대화 전 중앙 히어로(업로더/첫 입력) */
+  .center-hero {{
+    min-height: calc(100vh - 220px);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }}
+  .center-hero .stFileUploader, .center-hero .stTextInput {{
+    width: 720px; max-width: 92vw;
   }}
 
-  /* === 우측 플로팅 패널 있을 때만 여백 확보 (데스크탑) === */
+  /* 대화 중 하단 고정 업로더 */
+  .bottom-uploader {{
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: 96px; z-index: 50; width: var(--center-col); max-width: 92vw; padding: 8px 0;
+  }}
+
+  /* 본문이 하단 고정 UI와 겹치지 않도록 */
+  .block-container {{ padding-bottom: 180px !important; }}
+
+  /* 우측 플로팅 검색 패널 고정 */
+  #search-flyout {{
+    position: fixed; top: 72px; right: 24px;
+    width: 360px; max-width: 38vw;
+    height: calc(100vh - 96px);
+    overflow: auto; z-index: 60;
+    padding: 12px 14px; border-radius: 12px;
+  }}
+
+  /* 넓은 화면에서만 우측 패널 공간 확보 */
   @media (min-width: 1280px) {{
     .block-container {{ padding-right: 420px !important; }}
   }}
   @media (max-width: 1279px) {{
     .block-container {{ padding-right: 0 !important; }}
   }}
-
-  /* (선택) 대화 중 하단 고정 업로더가 있다면 너비 동기화 */
-  .bottom-uploader {{
-    position: fixed; left: 50%; transform: translateX(-50%);
-    bottom: 96px; z-index: 50;
-    width: var(--center-col); max-width: 92vw;
-    padding: 8px 0;
-  }}
-
-  /* (선택) 대화 전 중앙 히어로 섹션 */
-  .center-hero {{
-    min-height: calc(100vh - 220px);
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-  }}
-  .center-hero .stFileUploader,
-  .center-hero .stTextInput {{
-    width: 720px; max-width: 92vw;
-  }}
 </style>
 """
     import streamlit as st
     st.markdown(css, unsafe_allow_html=True)
+
 
 
 inject_sticky_layout_css("wide")
