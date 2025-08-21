@@ -204,7 +204,122 @@ st.set_page_config(
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded",
+    
 )
+
+# ===============================
+# BLOCK 1) Light mode final override (전역 배경/패널 톤)
+# 파일 어디든 1회만 선언되면 됨. 보통 st.set_page_config() 아래에 배치.
+# ===============================
+import streamlit as st
+
+st.markdown("""
+<style>
+:root{
+  --app-bg:#0f1115;       /* 전체 페이지 배경(다크톤) */
+  --panel-bg:#141821;     /* 우측 패널/카드 배경 */
+  --panel-brd:#1f2530;    /* 패널 테두리 */
+  --sidebar-bg:#0d1016;   /* 좌측 사이드바 배경 */
+  --bubble-bg:#1a1f2b;    /* 메시지 버블 배경(선택) */
+  --bubble-fg:#f5f7fa;    /* 메시지 버블 글자색(선택) */
+}
+
+/* 라이트 모드일 때도 다크 톤을 강제로 사용 */
+[data-theme="light"] html,
+[data-theme="light"] body,
+[data-theme="light"] .stApp,
+[data-theme="light"] [data-testid="stAppViewContainer"],
+[data-theme="light"] section.main{
+  background:var(--app-bg) !important;
+  color:#e7ebf3 !important;
+}
+
+/* 좌측 사이드바 */
+[data-theme="light"] [data-testid="stSidebar"],
+[data-theme="light"] [data-testid="stSidebar"] > div:first-child{
+  background:var(--sidebar-bg) !important;
+  border-right:1px solid var(--panel-brd) !important;
+}
+
+/* 본문 래퍼는 투명(전역 배경이 비치도록) */
+[data-theme="light"] .block-container{ background:transparent !important; }
+
+/* 챗 버블(옵션) */
+[data-theme="light"] .stMarkdown > div{
+  background:var(--bubble-bg) !important;
+  color:var(--bubble-fg) !important;
+  box-shadow:0 1px 8px rgba(0,0,0,.35) !important;
+}
+
+/* 코드/경고/버튼 등 기본 위젯 대비 조정(필요 시) */
+[data-theme="light"] .stAlert{ background:#1a2030 !important; color:#e7ebf3 !important; border:1px solid #263046 !important; }
+[data-theme="light"] .stTextInput > div > div{ background:#10141b !important; }
+[data-theme="light"] .stTextInput input{ color:#e7ebf3 !important; }
+[data-theme="light"] .stSelectbox > div{ background:#10141b !important; color:#e7ebf3 !important; }
+[data-theme="light"] .stButton button{ background:#222a3a !important; color:#e7ebf3 !important; border:1px solid #2a344a !important; }
+
+/* 우측 검색 패널 컨테이너: 라이트/다크 모두 동일 톤 */
+#search-flyout{
+  background:var(--panel-bg) !important;
+  border:1px solid var(--panel-brd) !important;
+  box-shadow:0 10px 28px rgba(0,0,0,.45) !important;
+  color:#e7ebf3 !important;
+}
+
+/* 패널 내부 위젯들이 브라우저/OS 자동 톤을 덮지 않도록 리셋 */
+#search-flyout *{
+  background:none !important;
+  -webkit-background-clip:initial !important;
+  -webkit-text-fill-color:inherit !important;
+  mix-blend-mode:normal !important;
+  text-shadow:none !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ===============================
+# BLOCK 2) Right-rail CSS (우측 패널 스타일; 필요 시 기존 함수 대체)
+# ===============================
+def _inject_right_rail_css():
+    st.markdown("""
+    <style>
+      /* 본문 오른쪽에 패널 자리 확보 */
+      .block-container { padding-right:380px !important; }
+
+      /* 우측 패널 베이스(라이트/다크 공통 다크 톤) */
+      #search-flyout{
+        position:fixed; right:16px; top:88px; bottom:16px;
+        width:360px; overflow:auto; z-index:1000;
+        border-radius:12px;
+      }
+
+      /* 타이포/리스트 기본 */
+      #search-flyout h3{ margin:12px 12px 6px; font-size:1.05rem; }
+      #search-flyout h4{ margin:10px 12px 6px; font-size:.95rem; }
+      #search-flyout p { margin:6px 12px; line-height:1.4; }
+      #search-flyout details{ margin:6px 8px 12px; }
+      #search-flyout summary{
+        cursor:pointer; padding:6px 8px; border-radius:8px;
+        background:rgba(255,255,255,.05);
+      }
+      #search-flyout ol.law-list{ counter-reset:law; list-style:none; padding:0 12px 8px 12px; margin:0; }
+      #search-flyout ol.law-list > li{
+        counter-increment:law; padding:10px 10px; margin:8px 0;
+        border:1px solid rgba(255,255,255,.12); border-radius:10px;
+        background:rgba(255,255,255,.03);
+      }
+      #search-flyout ol.law-list > li .title{ display:block; font-weight:700; margin-bottom:4px; }
+      #search-flyout ol.law-list > li .title::before{ content:counter(law) ". "; font-weight:700; }
+      #search-flyout .meta{ font-size:.9rem; opacity:.9; margin:2px 0 6px; }
+      #search-flyout a{ text-decoration:underline; color:#cdd9ff; }
+      #search-flyout small.debug{ display:none; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# 👉 한번만 호출 (set_page_config 아래, 초기 렌더 전에)
+_inject_right_rail_css()
+
 
 # 입력창 초기화 플래그가 켜져 있으면, 위젯 생성 전에 값 비움
 if st.session_state.pop("_clear_input", False):
