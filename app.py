@@ -2037,6 +2037,32 @@ user_q = _push_user_from_pending()
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
 
+# ✅ 대화 전 중앙배치 오버라이드 (chat_started 계산 직후)
+if not chat_started:
+    st.markdown("""
+    <style>
+      /* 우측 패널은 대화 시작 전 숨김 */
+      #search-flyout { display:none !important; }
+
+      /* 우측 여백/하단 여백을 대화 전에는 제거(히어로를 정확히 중앙으로) */
+      @media (min-width:1280px) { .block-container { padding-right:0 !important; } }
+      .block-container { padding-bottom: 32px !important; }
+
+      /* 히어로 섹션을 세로/가로 모두 중앙정렬 */
+      .center-hero{
+        min-height: calc(100vh - 140px) !important;  /* 220px → 140px로 상향 */
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+      }
+
+      /* 히어로 내부 위젯 폭: 챗 입력/업로더를 적절 폭으로 */
+      .center-hero .stFileUploader, .center-hero .stTextInput{
+        width: 720px; max-width: 92vw;
+      }
+    </style>
+    """, unsafe_allow_html=True)
+
+
 # 🎯 대화 전에는 우측 패널 숨기고, 여백을 0으로 만들어 완전 중앙 정렬
 if not chat_started:
     st.markdown("""
@@ -2051,7 +2077,6 @@ if not chat_started:
       .center-hero { min-height: calc(100vh - 160px) !important; }
     </style>
     """, unsafe_allow_html=True)
-
 
 # 3) 화면 분기
 if not chat_started:
