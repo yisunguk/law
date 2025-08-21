@@ -243,44 +243,34 @@ h2, h3 {{ font-size:1.1rem !important; font-weight:600 !important; margin:0.8rem
 </style>
 """, unsafe_allow_html=True)
 
-# 🔽 라이트모드 UI 개선 & 배경 톤다운
 st.markdown("""
 <style>
-/* 라이트모드 전체 배경 */
-[data-theme="light"] .block-container {
-  background-color: #f5f5f5;  /* 순백 대신 은은한 회색 */
+/* 라이트모드 — 페이지 전체, 바디, 사이드바까지 확실히 덮어쓰기 */
+:where([data-theme="light"]) body,
+:where([data-theme="light"]) .stApp,
+:where([data-theme="light"]) .stAppViewContainer,
+:where([data-theme="light"]) section.main {
+  background: #f0f2f5 !important;   /* 한 톤 어두운 회색 */
 }
 
-/* 채팅 말풍선 */
-[data-theme="light"] .stMarkdown > div {
-  --bubble-bg:#ffffff;
-  --bubble-fg:#222;
-  border:1px solid #ddd;
-  box-shadow:0 2px 6px rgba(0,0,0,.08);
+/* 사이드바 바탕색(좌측) */
+:where([data-theme="light"]) [data-testid="stSidebar"] > div {
+  background: #eceff3 !important;
+  border-right: 1px solid #dde1e7 !important;
 }
 
-/* 고정된 최근 질문 */
-[data-theme="light"] .pinned-q {
-  background:#fff;
-  border:1px solid #ddd;
-  box-shadow:0 1px 4px rgba(0,0,0,.05);
-}
+/* 본문 컨테이너는 투명 처리(페이지 배경이 비치도록) */
+:where([data-theme="light"]) .block-container { background: transparent !important; }
 
-/* 오른쪽 검색 패널 */
-[data-theme="light"] #search-flyout {
-  background:#fafafa;
-  border:1px solid #ddd;
-  box-shadow:0 4px 12px rgba(0,0,0,.08);
-}
-
-/* 복사 버튼 */
-[data-theme="light"] .copy-btn {
-  background:#f9f9f9;
-  border:1px solid #ccc;
-  box-shadow:0 1px 3px rgba(0,0,0,.05);
+/* 우측 검색 패널 톤 정리 */
+:where([data-theme="light"]) #search-flyout {
+  background: #f7f8fa !important;
+  border: 1px solid #d9dee6 !important;
+  box-shadow: 0 6px 16px rgba(0,0,0,.08) !important;
 }
 </style>
 """, unsafe_allow_html=True)
+
 
 # ---- 오른쪽 플로팅 패널용 CSS ----
 def _inject_right_rail_css():
