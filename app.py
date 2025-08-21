@@ -2191,53 +2191,44 @@ if submitted:
 st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
 
 
-# === FINAL LIGHT-MODE OVERRIDE (auto-appended by assistant) ===
 st.markdown("""
 <style>
-/* 0) 확실한 범위 지정: data-theme="light"는 보통 body/html에 붙음 */
+/* 라이트 모드도 강제로 다크 톤 사용 */
 html[data-theme="light"],
-body[data-theme="light"],
-html[data-theme="light"] .stApp,
-html[data-theme="light"] [data-testid="stAppViewContainer"],
-html[data-theme="light"] section.main{
-  background: var(--app-bg) !important;
+body[data-theme="light"]{
+  --app-bg:#111827 !important;
+  --panel-bg:#1f2937 !important;
+  --panel-brd:#374151 !important;
+  --sidebar-bg:#111827 !important;
+  color:#f9fafb !important;
+  background:var(--app-bg) !important;
 }
 
-html[data-theme="light"]{
-  --app-bg:#e5e7eb;      /* 페이지 전체 배경 (더 짙은 회색) */
-  --panel-bg:#dee1e6;    /* 우측 패널/말풍선 */
-  --panel-brd:#c5c9d0;   /* 패널 테두리 */
-  --sidebar-bg:#d9dde3;  /* 좌측 사이드바 */
-}
-
-
-/* 2) 레이아웃별 톤 정리 */
-html[data-theme="light"] .block-container{ background:transparent !important; }
+/* 컨테이너/사이드바/패널 배경도 동일하게 덮어씌움 */
+html[data-theme="light"] .block-container,
 html[data-theme="light"] [data-testid="stSidebar"],
-html[data-theme="light"] [data-testid="stSidebar"] > div:first-child{
-  background:var(--sidebar-bg) !important;
-  border-right:1px solid var(--panel-brd) !important;
-}
+html[data-theme="light"] [data-testid="stSidebar"] > div:first-child,
 html[data-theme="light"] #search-flyout{
   background:var(--panel-bg) !important;
-  border:1px solid var(--panel-brd) !important;
-  box-shadow:0 6px 16px rgba(0,0,0,.08) !important;
+  border-color:var(--panel-brd) !important;
+  color:#f9fafb !important;
 }
 
-/* 3) 말풍선/헤더/입력창 톤 통일 */
+/* 말풍선/헤더/입력창도 동일하게 */
 html[data-theme="light"] .stMarkdown > div{
   --bubble-bg:var(--panel-bg);
-  --bubble-fg:#111;
-  box-shadow:0 1px 6px rgba(0,0,0,.05);
+  --bubble-fg:#f9fafb;
+  color:#f9fafb !important;
 }
 html[data-theme="light"] .header{
   background:var(--panel-bg) !important;
   border-color:var(--panel-brd) !important;
+  color:#f9fafb !important;
 }
 html[data-theme="light"] .stChatInput textarea{
   background:var(--panel-bg) !important;
   border:1px solid var(--panel-brd) !important;
+  color:#f9fafb !important;
 }
 </style>
 """, unsafe_allow_html=True)
-
