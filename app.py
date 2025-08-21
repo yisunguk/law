@@ -239,8 +239,8 @@ def inject_sticky_layout_css(mode: str = "wide"):
     """, unsafe_allow_html=True)
 
 # 3) call ONCE
-inject_center_layout_css("wide")
-inject_right_rail_css()
+inject_sticky_layout_css("wide")
+
 
 
 
