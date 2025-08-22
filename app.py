@@ -470,7 +470,7 @@ def render_pre_chat_center():
         "Drag and drop files here",
         type=["pdf", "docx", "txt"],
         accept_multiple_files=True,
-        key="first_files",
+        key="first_files_v2",
     )
 
     # 입력 폼 (전송 시 pending에 저장 후 rerun)
@@ -485,7 +485,7 @@ def render_pre_chat_center():
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
 
-# 기존 # (removed duplicate) render_bottom_uploader() 전부 교체
+# 기존 render_bottom_uploader() 전부 교체
 def render_bottom_uploader():
     # 업로더 바로 앞에 '앵커'만 출력
     st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
@@ -495,7 +495,7 @@ def render_bottom_uploader():
         "Drag and drop files here",
         type=["pdf", "docx", "txt"],
         accept_multiple_files=True,
-        key="bottom_files",
+        key="bottom_files_v2",
         help="대화 중에는 업로드 박스가 하단에 고정됩니다.",
     )
 
@@ -2044,23 +2044,23 @@ with st.sidebar:
             present_url_with_fallback(d["url"], d["kind"], d["q"])
 
 
-# 1) pending → messages
+# 1) pending → messages 먼저 옮김
 user_q = _push_user_from_pending()
+
 
 # === 지금 턴이 '답변 생성 런'인지 여부 (스트리밍 중 표시/숨김)
 ANSWERING = bool(user_q)
 st.session_state["__answering__"] = ANSWERING
-
-# 2) 대화 시작 여부
+# 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
 
-# ✅ 토글 스크립트는 이 블록 하나만 남기고, 위에 있던 동일/유사 블록은 삭제
 st.markdown(f"""
 <script>
 document.body.classList.toggle('chat-started', {str(chat_started).lower()});
 document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 </script>
 """, unsafe_allow_html=True)
+
 
 st.markdown("""
 <style>
@@ -2075,12 +2075,6 @@ body.answering .block-container {
 }
 </style>
 """, unsafe_allow_html=True)
-
-# 업로더 렌더
-if chat_started and not ANSWERING:
-    render_bottom_uploader()
-
-# (removed duplicate chatbar block)
 
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
@@ -2134,13 +2128,8 @@ if not chat_started:
     render_pre_chat_center()   # 중앙 히어로 + 중앙 업로더
     st.stop()
 else:
-    # 스트리밍 중에는 업로더 숨김 (렌더 자체 생략)
-    if not ANSWERING:
+    if not st.session_state.get("__answering__", False):
         render_bottom_uploader()   # 하단 고정 업로더
-
-
-
-        
 # === 대화 시작 후: 우측 레일을 피해서 배치(침범 방지) ===
 st.markdown("""
 <style>
@@ -2271,7 +2260,7 @@ if user_q:
         stream_box.empty()
     
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
-if chat_started and not st.session_state.get("__answering__", False):
+if chat_started:
     st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
     submitted, typed_text, files = chatbar(
         placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
