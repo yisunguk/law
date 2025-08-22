@@ -288,82 +288,6 @@ def inject_sticky_layout_css(mode: str = "wide"):
         overflow: auto; z-index: 58;   /* 업로더(60)와 입력창(70)보다 낮게 */
         padding: 12px 14px; border-radius: 12px;
       }}
-
-      /* 하단 고정 채팅창 스타일 */
-      .fixed-chat-input {{
-          position: fixed;
-          bottom: 0;
-          left: 0;
-          right: 0;
-          background: rgba(255, 255, 255, 0.95);
-          backdrop-filter: blur(10px);
-          border-top: 1px solid #e9ecef;
-          padding: 1rem;
-          z-index: 1000;
-          box-shadow: 0 -4px 20px rgba(0,0,0,0.1);
-      }}
-
-      .fixed-chat-input .stForm {{
-          max-width: 900px;
-          margin: 0 auto;
-          width: 100%;
-      }}
-
-      .fixed-chat-input .stTextArea textarea {{
-          border-radius: 20px;
-          border: 2px solid #e9ecef;
-          padding: 12px 16px;
-          font-size: 16px;
-          resize: none;
-          transition: all 0.3s ease;
-      }}
-
-      .fixed-chat-input .stTextArea textarea:focus {{
-          border-color: #667eea;
-          box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-      }}
-
-      .fixed-chat-input .stButton > button {{
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-          color: white;
-          border: none;
-          border-radius: 20px;
-          padding: 12px 24px;
-          font-weight: 600;
-          transition: all 0.3s ease;
-          box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
-      }}
-
-      .fixed-chat-input .stButton > button:hover {{
-          transform: translateY(-2px);
-          box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-      }}
-
-      /* 반응형 디자인 */
-      @media (max-width: 768px) {{
-          .chat-container {{
-              max-width: 100%;
-              padding: 0 0.5rem;
-              padding-bottom: 120px;
-          }}
-          
-          .chat-content {{
-              max-width: 85%;
-          }}
-          
-          .chat-header h1 {{
-              font-size: 2rem;
-          }}
-          
-          .fixed-chat-input {{
-              padding: 0.5rem;
-          }}
-          
-          .fixed-chat-input .stForm {{
-              max-width: 100%;
-              margin: 0 0.5rem;
-          }}
-      }}
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
@@ -507,14 +431,14 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
 
 # =========================================
 # 세션에 임시로 담아 둔 첫 질문을 messages로 옮기는 유틸
-# (이 블록을 파일 상단 '레이아웃/스타일 주입' 직후 정도로 올려둡니다)
+# (이 블록을 파일 상단 ‘레이아웃/스타일 주입’ 직후 정도로 올려둡니다)
 # =========================================
 from datetime import datetime
 
 has_chat = bool(st.session_state.get("messages")) or bool(st.session_state.get("_pending_user_q"))
 
 
-# ✅ 중요: '최초 화면' 렌더링 전에 먼저 호출
+# ✅ 중요: ‘최초 화면’ 렌더링 전에 먼저 호출
 
 from datetime import datetime
 import time
@@ -1249,7 +1173,7 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
 # 통합 미리보기 전용: 과한 문장부호/따옴표 제거 + '법령명 (제n조)'만 추출
 def _clean_query_for_api(q: str) -> str:
     q = (q or "").strip()
-    q = re.sub(r'[“"\'‘’.,!?()<>\\[\\]{}:;~…]', ' ', q)
+    q = re.sub(r'[“”"\'‘’.,!?()<>\\[\\]{}:;~…]', ' ', q)
     q = re.sub(r'\\s+', ' ', q).strip()
     # 법령명(OO법/령/규칙/조례) + (제n조) 패턴
     name = re.search(r'([가-힣A-Za-z0-9·\\s]{1,40}?(법|령|규칙|조례))', q)
@@ -1706,16 +1630,193 @@ def extract_keywords_llm(q: str) -> list[str]:
     st.session_state["_kw_extract_debug"] = "all_stages_failed"
     return []
 
-# st_tags가 있으면 태그 위젯, 없으면 multiselect로 동작
-# 기본 프리셋(탭별 선호 키워드를 지정할 수 있음). 비어 있으면 첫 항목을 기본으로 사용.
-DEFAULT_KEYWORD = {}
+
+# 간단 폴백(예비 — 도구 모드 기본이므로 최소화)
+def find_law_with_fallback(user_query: str, num_rows: int = 10):
+    laws, endpoint, err = search_law_data(user_query, num_rows=num_rows)
+    if laws: return laws, endpoint, err, "primary"
+    keyword_map = {"정당방위":"형법","전세":"주택임대차보호법","상가임대차":"상가건물 임대차보호법","근로계약":"근로기준법","해고":"근로기준법","개인정보":"개인정보 보호법","산재":"산업재해보상보험법","이혼":"민법"}
+    text = (user_query or "")
+    for k, law_name in keyword_map.items():
+        if k in text:
+            laws2, ep2, err2 = search_law_data(law_name, num_rows=num_rows)
+            if laws2: return laws2, ep2, err2, f"fallback:{law_name}"
+    return [], endpoint, err, "none"
+
+def _append_message(role: str, content: str, **extra):
+    """
+    세션 메시지에 안전하게 추가하는 함수.
+    - 빈 문자열 / 공백만 있는 경우 무시
+    - 코드블록만 있는 경우 무시 (예: ```python ... ```)
+    """
+    txt = (content or "").strip()
+    is_code_only = (txt.startswith("```") and txt.endswith("```"))
+    if not txt or is_code_only:
+        return
+    st.session_state.messages.append({
+        "role": role,
+        "content": txt,
+        **extra,
+    })
+
+
+def format_law_context(law_data: list[dict]) -> str:
+    if not law_data: return "관련 법령 검색 결과가 없습니다."
+    rows = []
+    for i, law in enumerate(law_data, 1):
+        rows.append(
+            f"{i}. {law['법령명']} ({law['법령구분']})\n"
+            f"   - 소관부처: {law['소관부처명']}\n"
+            f"   - 시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}\n"
+            f"   - 링크: {law['법령상세링크'] or '없음'}"
+        )
+    return "\n\n".join(rows)
+
+def animate_law_results(law_data: list[dict], delay: float = 1.0):
+    if not law_data:
+        st.info("관련 법령 검색 결과가 없습니다.")
+        return
+    n = len(law_data)
+    prog = st.progress(0.0, text="관련 법령 미리보기")
+    placeholder = st.empty()
+    for i, law in enumerate(law_data, 1):
+        with placeholder.container():
+            st.markdown(
+                f"""
+                <div class='law-slide'>
+                    <div style='font-weight:700'>🔎 {i}. {law['법령명']} <span style='opacity:.7'>({law['법령구분']})</span></div>
+                    <div style='margin-top:6px'>소관부처: {law['소관부처명']}</div>
+                    <div>시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}</div>
+                    {f"<div style='margin-top:6px'><a href='{law['법령상세링크']}' target='_blank'>법령 상세보기</a></div>" if law.get('법령상세링크') else ''}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        prog.progress(i / n, text=f"관련 법령 미리보기 {i}/{n}")
+        time.sleep(max(0.0, delay))
+    prog.empty()
+
+# =============================
+# Azure 함수콜(툴) — 래퍼 & 스키마 & 오케스트레이션
+# =============================
+SUPPORTED_TARGETS = ["law", "admrul", "ordin", "trty"]
+
+def tool_search_one(target: str, query: str, num_rows: int = 5):
+    if target not in SUPPORTED_TARGETS:
+        return {"error": f"unsupported target: {target}"}
+    items, endpoint, err = _call_moleg_list(target, query, num_rows=num_rows)
+    return {"target": target, "query": query, "endpoint": endpoint, "error": err, "items": items}
+
+def tool_search_multi(queries: list, num_rows: int = 5):
+    out = []
+    for q in queries:
+        t = q.get("target","law"); s = q.get("query","")
+        out.append(tool_search_one(t, s, num_rows=num_rows))
+    return out
+
+TOOLS = [
+    {
+        "type":"function",
+        "function":{
+            "name":"search_one",
+            "description":"MOLEG 목록 API에서 단일 카테고리를 검색한다.",
+            "parameters":{
+                "type":"object",
+                "properties":{
+                    "target":{"type":"string","enum":SUPPORTED_TARGETS},
+                    "query":{"type":"string"},
+                    "num_rows":{"type":"integer","minimum":1,"maximum":10,"default":5}
+                },
+                "required":["target","query"]
+            }
+        }
+    },
+    {
+        "type":"function",
+        "function":{
+            "name":"search_multi",
+            "description":"여러 카테고리/질의어를 한 번에 검색한다.",
+            "parameters":{
+                "type":"object",
+                "properties":{
+                    "queries":{
+                        "type":"array",
+                        "items":{
+                            "type":"object",
+                            "properties":{
+                                "target":{"type":"string","enum":SUPPORTED_TARGETS},
+                                "query":{"type":"string"}
+                            },
+                            "required":["target","query"]
+                        }
+                    },
+                    "num_rows":{"type":"integer","minimum":1,"maximum":10,"default":5}
+                },
+                "required":["queries"]
+            }
+        }
+    }
+]
+
+# ============================
+# [GPT PATCH] app.py 연결부
+# 붙여넣는 위치: client/AZURE/TOOLS 등 준비가 끝난 "아래",
+#               사이드바/레이아웃 렌더링이 시작되기 "위"
+# ============================
+
+# 1) imports
+from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
+
+# 2) 엔진 생성 (한 번만)
+engine = None
+try:
+    # 아래 객체들은 app.py 상단에서 이미 정의되어 있어야 합니다.
+    # - client, AZURE, TOOLS
+    # - safe_chat_completion
+    # - tool_search_one, tool_search_multi
+    # - prefetch_law_context, _summarize_laws_for_primer
+    if client and AZURE and TOOLS:
+        engine = AdviceEngine(
+            client=client,
+            model=AZURE["deployment"],
+            tools=TOOLS,
+            safe_chat_completion=safe_chat_completion,
+            tool_search_one=tool_search_one,
+            tool_search_multi=tool_search_multi,
+            prefetch_law_context=prefetch_law_context,            # 있으면 그대로
+            summarize_laws_for_primer=_summarize_laws_for_primer, # 있으면 그대로
+            temperature=0.2,
+        )
+except NameError:
+    # 만약 위 객체들이 아직 정의되기 전 위치라면,
+    # 이 패치를 해당 정의 '아래'로 옮겨 붙이세요.
+    pass
+
+# =============================
+# 키워드 기본값/위젯 헬퍼 (with st.sidebar: 위에 배치)
+# =============================
+
+# 탭별 기본 키워드 1개(없으면 첫 항목 사용)
+DEFAULT_KEYWORD = {
+    "법령": "개정",
+    "행정규칙": "개정",
+    "자치법규": "개정",
+    "조약": "비준",
+    "판례": "대법원",
+    "헌재": "위헌",
+    "해석례": "유권해석",
+    "용어/별표": "정의",   # ← '용어' 대신 '정의'를 기본으로 권장
+}
 
 def one_default(options, prefer=None):
-    opts = list(options or [])
-    if prefer and prefer in opts:
+    """옵션 목록에서 기본으로 1개만 선택해 반환"""
+    if not options:
+        return []
+    if prefer and prefer in options:
         return [prefer]
-    return [opts[0]] if opts else []
+    return [options[0]]
 
+# st_tags가 있으면 태그 위젯, 없으면 multiselect로 동작
 try:
     from streamlit_tags import st_tags
     def kw_input(label, options, key, tab_name=None):
@@ -2137,4 +2238,20 @@ if user_q:
     # 프리뷰 컨테이너 비우기
     if stream_box is not None:
         stream_box.empty()
+    
+# ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
+if chat_started:
+    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
+    submitted, typed_text, files = chatbar(
+        placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
+        accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
+    )
+    st.markdown('</div>', unsafe_allow_html=True)                     # ← 래퍼 닫기
+    if submitted:
+        text = (typed_text or "").strip()
+        if text:
+            st.session_state["_pending_user_q"] = text
+            st.session_state["_pending_user_nonce"] = time.time_ns()
+        st.session_state["_clear_input"] = True
+        st.rerun()
 
