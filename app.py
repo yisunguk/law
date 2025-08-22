@@ -485,7 +485,7 @@ def render_pre_chat_center():
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
 
-# 기존 render_bottom_uploader() 전부 교체
+# 기존 # (removed duplicate) render_bottom_uploader() 전부 교체
 def render_bottom_uploader():
     # 업로더 바로 앞에 '앵커'만 출력
     st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
@@ -2080,11 +2080,8 @@ body.answering .block-container {
 if chat_started and not ANSWERING:
     render_bottom_uploader()
 
-# 채팅바 렌더
-if chat_started and not ANSWERING:
-    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)
-    submitted, typed_text, files = chatbar(...)
-    st.markdown('</div>', unsafe_allow_html=True)
+# (removed duplicate chatbar block)
+
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
 if not chat_started:
