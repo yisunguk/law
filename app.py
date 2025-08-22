@@ -288,12 +288,44 @@ def inject_sticky_layout_css(mode: str = "wide"):
         overflow: auto; z-index: 58;   /* 업로더(60)와 입력창(70)보다 낮게 */
         padding: 12px 14px; border-radius: 12px;
       }}
+
+          /* === 답변 중 전역 숨김 규칙 === */
+    body.answering [data-testid='stFileUploader'] { 
+      display: none !important; 
+    }
+    body.answering .center-hero {
+      display: none !important;
+    }
+
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
 
 
 inject_sticky_layout_css("wide")
+
+def _apply_body_flags():
+    flags = []
+    if _chat_started():           # 메시지가 있거나 pending이면 True
+        flags.append("chat-started")
+    if st.session_state.get("_answering"):
+        flags.append("answering")
+
+    js = """
+    <script>
+      (function(){
+        const b = window.parent?.document?.body || document.body;
+        if(!b) return;
+        b.classList.remove('chat-started','answering');
+        %s
+      })();
+    </script>
+    """ % "\n".join([f"b.classList.add('{c}');" for c in flags])
+
+    components.html(js, height=0)
+
+_apply_body_flags()
+
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
@@ -461,11 +493,13 @@ def _push_user_from_pending() -> str | None:
     return q
 
 def render_pre_chat_center():
-    """대화 전: 중앙 히어로 + 중앙 업로더(키: first_files) + 전송 폼"""
+    # 이미 대화를 시작했거나(버블이 있거나 pending) 답변 중이면 렌더하지 않음
+    if _chat_started() or st.session_state.get("_answering"):
+        return
+
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
     st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
 
-    # 중앙 업로더 (대화 전 전용)
     st.file_uploader(
         "Drag and drop files here",
         type=["pdf", "docx", "txt"],
@@ -473,7 +507,6 @@ def render_pre_chat_center():
         key="first_files",
     )
 
-    # 입력 폼 (전송 시 pending에 저장 후 rerun)
     with st.form("first_ask", clear_on_submit=True):
         q = st.text_input("질문을 입력해 주세요...", key="first_input")
         sent = st.form_submit_button("전송", use_container_width=True)
@@ -483,18 +516,16 @@ def render_pre_chat_center():
     if sent and (q or "").strip():
         st.session_state["_pending_user_q"] = q.strip()
         st.session_state["_pending_user_nonce"] = time.time_ns()
-        st.rerun()
+        st.session_state["_answering"] = True   # ✅ 답변 시작 플래그
+        st.rerun()                              # ✅ 다음 렌더부터 상단 업로더 숨김
 
-# 기존 render_bottom_uploader() 전부 교체
+
 def render_bottom_uploader():
-    # 답변 중이면 업로더를 표시하지 않음
-    if st.session_state.get("_answering"):
+    # 아직 대화를 시작하지 않았거나, 답변 중이면 표시하지 않음
+    if not _chat_started() or st.session_state.get("_answering"):
         return
 
-    # 업로더 바로 앞에 '앵커'만 출력
     st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
-
-    # 이 다음에 나오는 업로더를 CSS에서 #bu-anchor + div[...] 로 고정 배치
     st.file_uploader(
         "Drag and drop files here",
         type=["pdf", "docx", "txt"],
@@ -502,6 +533,7 @@ def render_bottom_uploader():
         key="bottom_files",
         help="대화 중에는 업로드 박스가 하단에 고정됩니다.",
     )
+
 
 
 # --- 작동 키워드 목록(필요시 보강/수정) ---
@@ -2050,7 +2082,25 @@ with st.sidebar:
 
 
 # 1) pending → messages 먼저 옮김
-user_q = _push_user_from_pending()
+# pending을 messages로 옮김
+q = _push_user_from_pending()
+if q:
+    st.session_state["_answering"] = True   # ▶ 답변 시작(렌더 전)
+    stream_box = st.empty()
+    full_text, collected_laws = "", []
+
+    try:
+        stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
+        for kind, payload, law_list in ask_llm_with_tools(q, num_rows=5, stream=True):
+            # ... (스트리밍 출력/누적)
+            pass
+    except Exception as e:
+        st.error(f"오류: {e}")
+    finally:
+        st.session_state["_answering"] = False  # ▶ 항상 해제
+        st.session_state["last_q"] = q
+        st.rerun()                               # ▶ 다음 렌더에서 업로더 복구
+
 
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
@@ -2194,7 +2244,8 @@ if user_q:
         final_text = ""
 
     # ▶ 답변 시작: 업로더 숨기기
-    st.session_state["_answering"] = True
+    st.session_state["_answering"] = True; st.rerun()
+
 
     try:
         stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
