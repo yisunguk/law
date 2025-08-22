@@ -2242,10 +2242,12 @@ if user_q:
     
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
 if chat_started:
+    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
     submitted, typed_text, files = chatbar(
         placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
         accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
     )
+    st.markdown('</div>', unsafe_allow_html=True)                     # ← 래퍼 닫기
     if submitted:
         text = (typed_text or "").strip()
         if text:
@@ -2254,86 +2256,51 @@ if chat_started:
         st.session_state["_clear_input"] = True
         st.rerun()
 
-
-
-
-st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
-
-
-# --- LIGHT MODE를 다크 톤으로 강제 오버라이드 (파일 맨 아래 권장) ---
-
 st.markdown("""
 <style>
-/* (신규) 채팅 메시지 내부에만 버블 적용 */
-[data-testid="stChatMessage"] .stMarkdown > div{
-  background: var(--bubble-bg,#1f1f1f) !important;
-  color: var(--bubble-fg,#f5f5f5) !important;
-  border-radius: 14px; padding: 14px 16px;
-  box-shadow: 0 1px 8px rgba(0,0,0,.12);
-}
+  :root{
+    --chatbar-h: 56px;      /* 입력창 높이(필요시 조정) */
+    --chat-gap: 12px;       /* 업로더와 간격 */
+    --rail: 420px;          /* 우측 패널 + 여유(= 360 + 60) */
+    --hgap: 24px;           /* 좌우 여백 */
+  }
 
-/* 헤더/히어로는 버블 해제 */
-.header, .hero, .header *, .hero * {
-  background: transparent !important; box-shadow:none !important; border:none !important;
-}
+  /* 1) 입력창(우리의 chatbar 래퍼)을 화면 하단 중앙 고정 */
+  #chatbar-fixed{
+    position: fixed !important;
+    left: 50% !important; transform: translateX(-50%) !important;
+    bottom: 12px !important;
+    width: var(--center-col) !important;
+    max-width: 92vw !important;
+    z-index: 70 !important;
+  }
 
-/* 어시스턴트/유저 버블 톤 */
-[data-testid="stChatMessage"]:has(.stMarkdown) > div div:not(.user-bubble) > .stMarkdown > div {
-  background: rgba(255,255,255,.03) !important;
-}
-.user-bubble > .stMarkdown > div {
-  background: rgba(255,255,255,.06) !important;
-}
+  /* 2) 업로더는 입력창 바로 위(같은 폭) */
+  .bottom-uploader{
+    position: fixed !important;
+    left: 50% !important; transform: translateX(-50%) !important;
+    width: var(--center-col) !important; max-width: 92vw !important;
+    bottom: calc(12px + var(--chatbar-h) + var(--chat-gap)) !important;
+    z-index: 60 !important; padding: 8px 0;
+  }
 
-/* 채팅 말풍선 폭 제한 */
-[data-testid="stChatMessage"] { max-width: var(--bubble-max) !important; width:100% !important; }
-[data-testid="stChatMessage"] .stMarkdown,
-[data-testid="stChatMessage"] .stMarkdown > div { width:100% !important; }
+  /* 3) 본문이 가려지지 않도록 하단 패딩 확보 */
+  .block-container{
+    padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
+  }
 
-/* === 라이트 테마를 다크 톤으로 강제 오버라이드 === */
-html[data-theme="light"],
-body[data-theme="light"],
-.stApp[data-theme="light"] {
-  background: #0f1115 !important;
-}
-html[data-theme="light"] [data-testid="stAppViewContainer"],
-html[data-theme="light"] section.main { background: #0f1115 !important; }
-html[data-theme="light"] [data-testid="stSidebar"],
-html[data-theme="light"] [data-testid="stSidebar"] > div:first-child {
-  background: #0b0e14 !important;
-  border-right: 1px solid #1c1f26 !important;
-}
-html[data-theme="light"] .stMarkdown > div {
-  --bubble-bg: #1a1f29;
-  --bubble-fg: #e6e8eb;
-  background: var(--bubble-bg) !important;
-  color: var(--bubble-fg) !important;
-  box-shadow: 0 1px 8px rgba(0,0,0,.25) !important;
-}
-html[data-theme="light"] .header {
-  background: #141821 !important;
-  color: #e6e8eb !important;
-  border-color: rgba(255,255,255,.12) !important;
-}
-html[data-theme="light"] #search-flyout {
-  background: #141821 !important;
-  border: 1px solid #1f2430 !important;
-  box-shadow: 0 8px 28px rgba(0,0,0,.35) !important;
-  color: #e6e8eb !important;
-}
-html[data-theme="light"] #search-flyout ol.law-list > li{
-  border: 1px solid rgba(255,255,255,.12) !important;
-}
-html[data-theme="light"] #search-flyout *{
-  background: none !important;
-  -webkit-background-clip: initial !important;
-  -webkit-text-fill-color: inherit !important;
-  mix-blend-mode: normal !important;
-  text-shadow: none !important;
-}
-html[data-theme="light"] .block-container{ background: transparent !important; }
+  /* 4) 데스크톱에서만 우측 레일을 피해서 좌표/폭 보정 */
+  @media (min-width:1280px){
+    body.chat-started .block-container{
+      padding-right: var(--rail) !important;  /* 본문 오른쪽 여백 */
+    }
+    body.chat-started #chatbar-fixed,
+    body.chat-started .bottom-uploader{
+      left: calc(50% - var(--rail)/2) !important;  /* 전체 중앙을 우측 레일 절반만큼 왼쪽으로 */
+      transform: translateX(-50%) !important;
+      width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap))) !important;
+      max-width: calc(100vw - var(--rail) - 2*var(--hgap)) !important;
+    }
+  }
 </style>
 """, unsafe_allow_html=True)
-
-
-
