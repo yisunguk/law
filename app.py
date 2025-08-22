@@ -227,97 +227,81 @@ def inject_sticky_layout_css(mode: str = "wide"):
     )
 
     css = f"""
-    <style>
-      {root_vars}
+<style>
+  {root_vars}
 
-      /* 본문/입력창 공통 중앙 정렬 & 동일 폭 */
-      .block-container, .stChatInput {{
-        max-width: var(--center-col) !important;
-        margin-left: auto !important;
-        margin-right: auto !important;
-      }}
+  /* 본문/입력창 공통 중앙 정렬 & 동일 폭 */
+  .block-container, .stChatInput {{
+    max-width: var(--center-col) !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+  }}
 
-      /* 채팅 말풍선 최대 폭 */
-      [data-testid="stChatMessage"] {{
-        max-width: var(--bubble-max) !important;
-        width: 100% !important;
-      }}
-      [data-testid="stChatMessage"] .stMarkdown,
-      [data-testid="stChatMessage"] .stMarkdown > div {{
-        width: 100% !important;
-      }}
+  /* 채팅 말풍선 최대 폭 */
+  [data-testid="stChatMessage"] {{
+    max-width: var(--bubble-max) !important;
+    width: 100% !important;
+  }}
+  [data-testid="stChatMessage"] .stMarkdown,
+  [data-testid="stChatMessage"] .stMarkdown > div {{
+    width: 100% !important;
+  }}
 
-      /* 대화 전 중앙 히어로 */
-      .center-hero {{
-        min-height: calc(100vh - 220px);
-        display: flex; flex-direction: column; align-items: center; justify-content: center;
-      }}
-      .center-hero .stFileUploader, .center-hero .stTextInput {{
-        width: 720px; max-width: 92vw;
-      }}
+  /* 대화 전 중앙 히어로 */
+  .center-hero {{
+    min-height: calc(100vh - 220px);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }}
+  .center-hero .stFileUploader, .center-hero .stTextInput {{
+    width: 720px; max-width: 92vw;
+  }}
 
-      /* 업로더 고정: 앵커 다음 형제 업로더 */
-      #bu-anchor + div[data-testid='stFileUploader'] {{
-        position: fixed;
-        left: 50%; transform: translateX(-50%);
-        bottom: calc(12px + var(--chatbar-h) + var(--chat-gap));
-        z-index: 60;
-        width: var(--center-col);
-        max-width: 92vw;
-        padding: 8px 0;
-      }}
+  /* 업로더 고정: 앵커 다음 형제 업로더 */
+  #bu-anchor + div[data-testid='stFileUploader'] {{
+    position: fixed;
+    left: 50%; transform: translateX(-50%);
+    bottom: calc(12px + var(--chatbar-h) + var(--chat-gap));
+    z-index: 60;
+    width: var(--center-col);
+    max-width: 92vw;
+    padding: 8px 0;
+  }}
 
-      /* 데스크톱에서는 우측 레일을 피해 정렬 */
-      @media (min-width:1280px){{
-        body.chat-started #bu-anchor + div[data-testid='stFileUploader'],
-        body.chat-started #chatbar-fixed {{
-          left: calc(50% - var(--rail)/2);
-          transform: translateX(-50%);
-          width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap)));
-          max-width: calc(100vw - var(--rail) - 2*var(--hgap));
-        }}
-      }}
+  /* 데스크톱에서는 우측 레일을 피해 정렬 */
+  @media (min-width:1280px){{
+    body.chat-started #bu-anchor + div[data-testid='stFileUploader'],
+    body.chat-started #chatbar-fixed {{
+      left: calc(50% - var(--rail)/2);
+      transform: translateX(-50%);
+      width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap)));
+      max-width: calc(100vw - var(--rail) - 2*var(--hgap));
+    }}
+  }}
 
-      /* 본문이 하단 고정 UI와 겹치지 않게 */
-      .block-container {{
-        padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
-      }}
+  /* 본문이 하단 고정 UI와 겹치지 않게 */
+  .block-container {{
+    padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
+  }}
 
-      /* 우측 플로팅 검색 패널 */
-      #search-flyout {{
-        position: fixed; top: 72px; right: 24px;
-        width: 360px; max-width: 38vw;
-        height: calc(100vh - 96px);
-        overflow: auto; z-index: 58;   /* 업로더(60)와 입력창(70)보다 낮게 */
-        padding: 12px 14px; border-radius: 12px;
-      }}
+  /* 우측 플로팅 검색 패널 */
+  #search-flyout {{
+    position: fixed; top: 72px; right: 24px;
+    width: 360px; max-width: 38vw;
+    height: calc(100vh - 96px);
+    overflow: auto; z-index: 58;
+    padding: 12px 14px; border-radius: 12px;
+  }}
 
-          /* === 답변 중 전역 숨김 규칙 === */
-    body.answering [data-testid='stFileUploader'] { 
-      display: none !important; 
-    }
-    body.answering .center-hero {
-      display: none !important;
-    }
-    # 3) 엔진 호출 (답변 중 플래그 on/off 포함)
-    st.session_state["_answering"] = True
-    try:
-        yield from engine.generate(
-            user_q,
-            system_prompt=sys_prompt,
-            allow_tools=use_tools,
-            num_rows=num_rows,
-            stream=stream,
-            primer_enable=True,
-        )
-    finally:
-        st.session_state["_answering"] = False
-
-
-    </style>
-    """
-    st.markdown(css, unsafe_allow_html=True)
-
+  /* === 답변 중 전역 숨김 규칙 === */
+  body.answering [data-testid='stFileUploader'] {{
+    display: none !important;
+  }}
+  body.answering .center-hero {{
+    display: none !important;
+  }}
+</style>
+"""
+st.markdown(css, unsafe_allow_html=True)
 
 inject_sticky_layout_css("wide")
 
