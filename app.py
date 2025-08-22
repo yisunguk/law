@@ -216,9 +216,10 @@ def inject_sticky_layout_css(mode: str = "wide"):
         "narrow": {"center": "880px",  "bubble_max": "640px"},
     }
     p = PRESETS.get(mode, PRESETS["wide"])
-    root_vars = f":root {{ --center-col: {p['center']}; --bubble-max: {p['bubble_max']}; }}"
+    # 예시: root_vars (필요 값은 프로젝트에 맞게 조정)
+root_vars = ":root { --center-col: 1160px; --bubble-max: 760px; --chatbar-h: 56px; --chat-gap: 12px; --rail: 420px; --hgap: 24px; }"
 
-    css = f"""
+css = f"""
 <style>
   /* 전역 변수 */
   {root_vars}
@@ -249,14 +250,31 @@ def inject_sticky_layout_css(mode: str = "wide"):
     width: 720px; max-width: 92vw;
   }}
 
-  /* 대화 중 하단 고정 업로더 */
-  .bottom-uploader {{
-    position: fixed; left: 50%; transform: translateX(-50%);
-    bottom: 96px; z-index: 50; width: var(--center-col); max-width: 92vw; padding: 8px 0;
+  /* 업로더 고정: 앵커 다음 형제 업로더 */
+  #bu-anchor + div[data-testid='stFileUploader'] {{
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: calc(12px + var(--chatbar-h) + var(--chat-gap));
+    z-index: 60;
+    width: var(--center-col);
+    max-width: 92vw;
+    padding: 8px 0;
   }}
 
-  /* 본문이 하단 고정 UI와 겹치지 않도록 */
-  .block-container {{ padding-bottom: 180px !important; }}
+  @media (min-width:1280px){{
+    body.chat-started #bu-anchor + div[data-testid='stFileUploader'] {{
+      left: calc(50% - var(--rail)/2);
+      transform: translateX(-50%);
+      width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap)));
+      max-width: calc(100vw - var(--rail) - 2*var(--hgap));
+    }}
+  }}
+
+  /* 본문이 하단 고정 UI와 겹치지 않도록 (중복 없이 한 번만 선언) */
+  .block-container {{
+    padding-bottom: 180px !important;
+  }}
 
   /* 우측 플로팅 검색 패널 고정 */
   #search-flyout {{
@@ -265,14 +283,11 @@ def inject_sticky_layout_css(mode: str = "wide"):
     height: calc(100vh - 96px);
     overflow: auto; z-index: 60;
     padding: 12px 14px; border-radius: 12px;
- 
   }}
 </style>
 """
-    import streamlit as st
-    st.markdown(css, unsafe_allow_html=True)
 
-
+st.markdown(css, unsafe_allow_html=True)
 
 inject_sticky_layout_css("wide")
 
@@ -2095,30 +2110,31 @@ else:
 st.markdown("""
 <style>
   :root{
-    --chatbar-h: 56px;      /* 입력창 높이 */
-    --chat-gap: 12px;       /* 업로더와 간격 */
-    --rail: 420px;          /* 우측 패널+마진(360 + 여유 60) */
-    --hgap: 24px;           /* 좌우 여백 */
+  --chatbar-h: 56px;
+  --chat-gap: 12px;
+  --rail: 420px;   /* 우측 패널(360) + 여유 60 */
+  --hgap: 24px;
+}
+
+/* 본문이 가려지지 않도록 하단 패딩 확보 */
+.block-container{
+  padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
+}
+
+/* 데스크톱 + 대화 시작 상태에서만 우측 레일을 피해서 배치 */
+@media (min-width:1280px){
+  body.chat-started .block-container{
+    padding-right: var(--rail) !important;
   }
-
-
-  /* 본문이 가려지지 않게 하단 패딩 확보 */
-  .block-container{
-    padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
+  body.chat-started #chatbar-fixed,
+  body.chat-started #bu-anchor + div[data-testid="stFileUploader"]{
+    left: calc(50% - var(--rail)/2) !important;
+    transform: translateX(-50%) !important;
+    width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap))) !important;
+    max-width: calc(100vw - var(--rail) - 2*var(--hgap)) !important;
   }
+}
 
-  /* ⬇️ 데스크톱 + 대화 시작 상태에서만: 우측 레일을 회피 */
-  @media (min-width:1280px){
-    body.chat-started .block-container{
-      padding-right: var(--rail) !important;   /* 본문은 원래대로 우측 여백 확보 */
-    }
-    body.chat-started .stChatInput,
-
-      /* 가용 폭(= 전체 - 레일 - 좌우 여백) 안으로 제한 */
-      width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap))) !important;
-      max-width: calc(100vw - var(--rail) - 2*var(--hgap)) !important;
-    }
-  }
 </style>
 """, unsafe_allow_html=True)
 
@@ -2254,14 +2270,21 @@ st.markdown("""
     z-index: 70 !important;
   }
 
-  /* 2) 업로더는 입력창 바로 위(같은 폭) */
-  .bottom-uploader{
-    position: fixed !important;
-    left: 50% !important; transform: translateX(-50%) !important;
-    width: var(--center-col) !important; max-width: 92vw !important;
-    bottom: calc(12px + var(--chatbar-h) + var(--chat-gap)) !important;
-    z-index: 60 !important; padding: 8px 0;
+  /* 2) 업로더는 입력창 바로 위(같은 폭) — 앵커 다음 형제 div */
+#bu-anchor + div[data-testid="stFileUploader"]{
+  position: fixed !important;
+  left: 50% !important; transform: translateX(-50%) !important;
+  width: var(--center-col) !important; max-width: 92vw !important;
+  bottom: calc(12px + var(--chatbar-h) + var(--chat-gap)) !important;
+  z-index: 60 !important; padding: 8px 0;
+}
+@media (min-width:1280px){
+  body.chat-started #bu-anchor + div[data-testid="stFileUploader"]{
+    left: calc(50% - var(--rail)/2) !important; transform: translateX(-50%) !important;
+    width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap))) !important;
+    max-width: calc(100vw - var(--rail) - 2*var(--hgap)) !important;
   }
+}
 
   /* 3) 본문이 가려지지 않도록 하단 패딩 확보 */
   .block-container{
