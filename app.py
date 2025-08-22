@@ -2054,27 +2054,33 @@ st.session_state["__answering__"] = ANSWERING
 chat_started = _chat_started()
 
 # chat_started 계산 직후에 추가
-st.markdown("""
+st.markdown(f"""
 <style>
 /* ✅ 답변 중(스트리밍)일 때만 입력/업로더/히어로 전부 숨김 */
 body.answering .center-hero,
 body.answering #chatbar-fixed,
 body.answering #bu-anchor + div[data-testid="stFileUploader"],
-body.answering [data-testid="stChatInput"]{
+body.answering [data-testid="stChatInput"] {{
   display: none !important;
-}
+}}
 
 /* 대화가 시작되면(첫 메시지 이후) 중앙 히어로는 항상 감춤(안전장치) */
-body.chat-started .center-hero{
+body.chat-started .center-hero {{
   display: none !important;
-}
+}}
 
 /* 답변 중일 때만 하단 여백 축소(있으면 유지) */
-body.answering .block-container{
+body.answering .block-container {{
   padding-bottom: calc(var(--chat-gap) + 24px) !important;
-}
+}}
 </style>
+
+<script>
+document.body.classList.toggle('chat-started', {str(chat_started).lower()});
+document.body.classList.toggle('answering', {str(st.session_state.get("__answering__", False)).lower()});
+</script>
 """, unsafe_allow_html=True)
+
 
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
