@@ -487,6 +487,10 @@ def render_pre_chat_center():
 
 # 기존 render_bottom_uploader() 전부 교체
 def render_bottom_uploader():
+    # 답변 중이면 업로더를 표시하지 않음
+    if st.session_state.get("_answering"):
+        return
+
     # 업로더 바로 앞에 '앵커'만 출력
     st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
 
@@ -498,6 +502,7 @@ def render_bottom_uploader():
         key="bottom_files",
         help="대화 중에는 업로드 박스가 하단에 고정됩니다.",
     )
+
 
 # --- 작동 키워드 목록(필요시 보강/수정) ---
 LINKGEN_KEYWORDS = {
@@ -2184,56 +2189,34 @@ if chat_started:
 # ===============================
 if user_q:
     if client and AZURE:
-        # 프리뷰/버퍼 초기화
         stream_box = st.empty()
         full_text, buffer, collected_laws = "", "", []
-        final_text = ""   # NameError 방지
+        final_text = ""
+
+    # ▶ 답변 시작: 업로더 숨기기
+    st.session_state["_answering"] = True
 
     try:
         stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
-
         for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
-            if kind == "delta":
-                buffer += (payload or "")
-                if len(buffer) >= 200:
-                    full_text += buffer
-                    buffer = ""
-                    if SHOW_STREAM_PREVIEW and stream_box is not None:
-                        stream_box.markdown(_normalize_text(full_text[-1500:]))
-
-            elif kind == "final":
-                if buffer:
-                    full_text += buffer
-                    buffer = ""
-                if payload:
-                    full_text += payload
-                collected_laws = law_list or []
-                break
-
-        # 루프 종료 후 남은 버퍼 반영
-        if buffer:
-            full_text += buffer
-
+            ...
     except Exception as e:
-        # 예외 시 폴백
-        laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
-        collected_laws = laws
-        law_ctx = format_law_context(laws)
-        title = "법률 자문 메모"
-        full_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
-        final_text = apply_final_postprocess(full_text, collected_laws)
+        ...
+    finally:
+        # ▶ 어떤 경우에도 플래그 해제 (예외 포함)
+        st.session_state["_answering"] = False
 
-    # --- ✅ 정상 경로 후처리: 항상 실행되도록 보장 ---
+    # --- 정상 후처리/세션 반영 ---
     if not final_text.strip():
         final_text = apply_final_postprocess(full_text, collected_laws)
 
-    # ▶ 답변을 세션에 넣고 rerun
     if final_text.strip():
         _append_message("assistant", final_text, law=collected_laws)
         st.session_state["last_q"] = user_q
         st.session_state.pop("_pending_user_q", None)
         st.session_state.pop("_pending_user_nonce", None)
         st.rerun()
+
 
     # 프리뷰 컨테이너 비우기
     if stream_box is not None:
