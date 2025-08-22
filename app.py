@@ -307,8 +307,16 @@ body.answering .center-hero { display: none !important; }
 inject_sticky_layout_css("wide")
 
 def _apply_body_flags():
+    # ▶ 여기서 바로 '대화 시작' 여부를 계산 (함수 호출 없이)
+    msgs = st.session_state.get("messages", [])
+    pending = bool(st.session_state.get("_pending_user_q"))
+    chat_started = any(
+        (m.get("role") == "user") and (m.get("content") or "").strip()
+        for m in msgs
+    ) or pending
+
     flags = []
-    if _chat_started():           # 메시지가 있거나 pending이면 True
+    if chat_started:
         flags.append("chat-started")
     if st.session_state.get("_answering"):
         flags.append("answering")
@@ -325,6 +333,7 @@ def _apply_body_flags():
     """ % "\n".join([f"b.classList.add('{c}');" for c in flags])
 
     components.html(js, height=0)
+
 
 _apply_body_flags()
 
