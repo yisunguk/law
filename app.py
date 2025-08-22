@@ -86,20 +86,17 @@ def ask_llm_with_tools(
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
-       # 3) 엔진 호출 (답변 중 플래그 on/off 포함)
-    st.session_state["_answering"] = True
-    try:
-        yield from engine.generate(
-            user_q,
-            system_prompt=sys_prompt,
-            allow_tools=use_tools,
-            num_rows=num_rows,
-            stream=stream,
-            primer_enable=True,
-        )
-    finally:
-        st.session_state["_answering"] = False
+    # 3) 엔진 호출 (새 시그니처에 맞게)
+    yield from engine.generate(
+        user_q,
+        system_prompt=sys_prompt,
+        allow_tools=use_tools,
+        num_rows=num_rows,
+        stream=stream,
+        primer_enable=True,
+    )
 
+import io, os, re, json, time, html
 
 if "_normalize_text" not in globals():
     def _normalize_text(s: str) -> str:
@@ -214,11 +211,11 @@ def inject_sticky_layout_css(mode: str = "wide"):
     }
     p = PRESETS.get(mode, PRESETS["wide"])
 
-    # 전역 CSS 변수 (center/bubble_max는 preset에서 가져와 주입)
+    # 전역 CSS 변수(한 군데에서만 선언)
     root_vars = (
         ":root {"
-        f" --center-col: {p['center']};"
-        f" --bubble-max: {p['bubble_max']};"
+        " --center-col: 1160px;"
+        " --bubble-max: 760px;"
         " --chatbar-h: 56px;"
         " --chat-gap: 12px;"
         " --rail: 420px;"
@@ -226,117 +223,77 @@ def inject_sticky_layout_css(mode: str = "wide"):
         " }"
     )
 
-    # ⚠️ f-string 중괄호 문제를 피하기 위해 root_vars만 더하고,
-    # 나머지 CSS는 일반 문자열로 작성 (중괄호 이스케이프 불필요)
-    css = (
-        "<style>\n"
-        + root_vars + "\n"
-        + """
-/* 본문/입력창 공통 중앙 정렬 & 동일 폭 */
-.block-container, .stChatInput {
-  max-width: var(--center-col) !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-}
+    css = f"""
+    <style>
+      {root_vars}
 
-/* 채팅 말풍선 최대 폭 */
-[data-testid="stChatMessage"] {
-  max-width: var(--bubble-max) !important;
-  width: 100% !important;
-}
-[data-testid="stChatMessage"] .stMarkdown,
-[data-testid="stChatMessage"] .stMarkdown > div {
-  width: 100% !important;
-}
+      /* 본문/입력창 공통 중앙 정렬 & 동일 폭 */
+      .block-container, .stChatInput {{
+        max-width: var(--center-col) !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
+      }}
 
-/* 대화 전 중앙 히어로 */
-.center-hero {
-  min-height: calc(100vh - 220px);
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-}
-.center-hero .stFileUploader, .center-hero .stTextInput {
-  width: 720px; max-width: 92vw;
-}
+      /* 채팅 말풍선 최대 폭 */
+      [data-testid="stChatMessage"] {{
+        max-width: var(--bubble-max) !important;
+        width: 100% !important;
+      }}
+      [data-testid="stChatMessage"] .stMarkdown,
+      [data-testid="stChatMessage"] .stMarkdown > div {{
+        width: 100% !important;
+      }}
 
-/* 업로더 고정: 앵커 다음 형제 업로더 */
-#bu-anchor + div[data-testid='stFileUploader'] {
-  position: fixed;
-  left: 50%; transform: translateX(-50%);
-  bottom: calc(12px + var(--chatbar-h) + var(--chat-gap));
-  z-index: 60;
-  width: var(--center-col);
-  max-width: 92vw;
-  padding: 8px 0;
-}
+      /* 대화 전 중앙 히어로 */
+      .center-hero {{
+        min-height: calc(100vh - 220px);
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+      }}
+      .center-hero .stFileUploader, .center-hero .stTextInput {{
+        width: 720px; max-width: 92vw;
+      }}
 
-/* 데스크톱에서는 우측 레일을 피해 정렬 */
-@media (min-width:1280px){
-  body.chat-started #bu-anchor + div[data-testid='stFileUploader'],
-  body.chat-started #chatbar-fixed {
-    left: calc(50% - var(--rail)/2);
-    transform: translateX(-50%);
-    width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap)));
-    max-width: calc(100vw - var(--rail) - 2*var(--hgap));
-  }
-}
+      /* 업로더 고정: 앵커 다음 형제 업로더 */
+      #bu-anchor + div[data-testid='stFileUploader'] {{
+        position: fixed;
+        left: 50%; transform: translateX(-50%);
+        bottom: calc(12px + var(--chatbar-h) + var(--chat-gap));
+        z-index: 60;
+        width: var(--center-col);
+        max-width: 92vw;
+        padding: 8px 0;
+      }}
 
-/* 본문이 하단 고정 UI와 겹치지 않게 */
-.block-container {
-  padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
-}
+      /* 데스크톱에서는 우측 레일을 피해 정렬 */
+      @media (min-width:1280px){{
+        body.chat-started #bu-anchor + div[data-testid='stFileUploader'],
+        body.chat-started #chatbar-fixed {{
+          left: calc(50% - var(--rail)/2);
+          transform: translateX(-50%);
+          width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap)));
+          max-width: calc(100vw - var(--rail) - 2*var(--hgap));
+        }}
+      }}
 
-/* 우측 플로팅 검색 패널 */
-#search-flyout {
-  position: fixed; top: 72px; right: 24px;
-  width: 360px; max-width: 38vw;
-  height: calc(100vh - 96px);
-  overflow: auto; z-index: 58;
-  padding: 12px 14px; border-radius: 12px;
-}
+      /* 본문이 하단 고정 UI와 겹치지 않게 */
+      .block-container {{
+        padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
+      }}
 
-/* === 답변 중 전역 숨김 규칙 === */
-body.answering [data-testid='stFileUploader'] { display: none !important; }
-body.answering .center-hero { display: none !important; }
-</style>
-"""
-    )
-
-    # 이 줄과 위의 모든 줄은 반드시 함수 "안"에 들여쓰기되어 있어야 합니다.
+      /* 우측 플로팅 검색 패널 */
+      #search-flyout {{
+        position: fixed; top: 72px; right: 24px;
+        width: 360px; max-width: 38vw;
+        height: calc(100vh - 96px);
+        overflow: auto; z-index: 58;   /* 업로더(60)와 입력창(70)보다 낮게 */
+        padding: 12px 14px; border-radius: 12px;
+      }}
+    </style>
+    """
     st.markdown(css, unsafe_allow_html=True)
 
+
 inject_sticky_layout_css("wide")
-
-def _apply_body_flags():
-    # ▶ 여기서 바로 '대화 시작' 여부를 계산 (함수 호출 없이)
-    msgs = st.session_state.get("messages", [])
-    pending = bool(st.session_state.get("_pending_user_q"))
-    chat_started = any(
-        (m.get("role") == "user") and (m.get("content") or "").strip()
-        for m in msgs
-    ) or pending
-
-    flags = []
-    if chat_started:
-        flags.append("chat-started")
-    if st.session_state.get("_answering"):
-        flags.append("answering")
-
-    js = """
-    <script>
-      (function(){
-        const b = window.parent?.document?.body || document.body;
-        if(!b) return;
-        b.classList.remove('chat-started','answering');
-        %s
-      })();
-    </script>
-    """ % "\n".join([f"b.classList.add('{c}');" for c in flags])
-
-    components.html(js, height=0)
-
-
-_apply_body_flags()
-
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
@@ -504,12 +461,11 @@ def _push_user_from_pending() -> str | None:
     return q
 
 def render_pre_chat_center():
-    if st.session_state.get("_answering"):  # ⬅️ 답변/로딩 중이면 프리챗 화면 자체 미표시
-        return
-  
+    """대화 전: 중앙 히어로 + 중앙 업로더(키: first_files) + 전송 폼"""
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
     st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
 
+    # 중앙 업로더 (대화 전 전용)
     st.file_uploader(
         "Drag and drop files here",
         type=["pdf", "docx", "txt"],
@@ -517,6 +473,7 @@ def render_pre_chat_center():
         key="first_files",
     )
 
+    # 입력 폼 (전송 시 pending에 저장 후 rerun)
     with st.form("first_ask", clear_on_submit=True):
         q = st.text_input("질문을 입력해 주세요...", key="first_input")
         sent = st.form_submit_button("전송", use_container_width=True)
@@ -526,14 +483,14 @@ def render_pre_chat_center():
     if sent and (q or "").strip():
         st.session_state["_pending_user_q"] = q.strip()
         st.session_state["_pending_user_nonce"] = time.time_ns()
-        st.session_state["_answering"] = True   # ✅ 답변 시작 플래그
-        st.rerun()                              # ✅ 다음 렌더부터 상단 업로더 숨김
+        st.rerun()
 
-
+# 기존 render_bottom_uploader() 전부 교체
 def render_bottom_uploader():
-    if st.session_state.get("_answering"):  # ⬅️ 답변/로딩 중이면 업로더 렌더 건너뜀
-        return
+    # 업로더 바로 앞에 '앵커'만 출력
     st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
+
+    # 이 다음에 나오는 업로더를 CSS에서 #bu-anchor + div[...] 로 고정 배치
     st.file_uploader(
         "Drag and drop files here",
         type=["pdf", "docx", "txt"],
@@ -541,9 +498,6 @@ def render_bottom_uploader():
         key="bottom_files",
         help="대화 중에는 업로드 박스가 하단에 고정됩니다.",
     )
-
-
-
 
 # --- 작동 키워드 목록(필요시 보강/수정) ---
 LINKGEN_KEYWORDS = {
@@ -2091,25 +2045,7 @@ with st.sidebar:
 
 
 # 1) pending → messages 먼저 옮김
-# pending을 messages로 옮김
-q = _push_user_from_pending()
-if q:
-    st.session_state["_answering"] = True   # ▶ 답변 시작(렌더 전)
-    stream_box = st.empty()
-    full_text, collected_laws = "", []
-
-    try:
-        stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
-        for kind, payload, law_list in ask_llm_with_tools(q, num_rows=5, stream=True):
-            # ... (스트리밍 출력/누적)
-            pass
-    except Exception as e:
-        st.error(f"오류: {e}")
-    finally:
-        st.session_state["_answering"] = False  # ▶ 항상 해제
-        st.session_state["last_q"] = q
-        st.rerun()                               # ▶ 다음 렌더에서 업로더 복구
-
+user_q = _push_user_from_pending()
 
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
@@ -2248,35 +2184,56 @@ if chat_started:
 # ===============================
 if user_q:
     if client and AZURE:
+        # 프리뷰/버퍼 초기화
         stream_box = st.empty()
         full_text, buffer, collected_laws = "", "", []
-        final_text = ""
-
-    # ▶ 답변 시작: 업로더 숨기기
-    st.session_state["_answering"] = True; st.rerun()
-
+        final_text = ""   # NameError 방지
 
     try:
         stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
-        for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
-            ...
-    except Exception as e:
-        ...
-    finally:
-        # ▶ 어떤 경우에도 플래그 해제 (예외 포함)
-        st.session_state["_answering"] = False
 
-    # --- 정상 후처리/세션 반영 ---
+        for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
+            if kind == "delta":
+                buffer += (payload or "")
+                if len(buffer) >= 200:
+                    full_text += buffer
+                    buffer = ""
+                    if SHOW_STREAM_PREVIEW and stream_box is not None:
+                        stream_box.markdown(_normalize_text(full_text[-1500:]))
+
+            elif kind == "final":
+                if buffer:
+                    full_text += buffer
+                    buffer = ""
+                if payload:
+                    full_text += payload
+                collected_laws = law_list or []
+                break
+
+        # 루프 종료 후 남은 버퍼 반영
+        if buffer:
+            full_text += buffer
+
+    except Exception as e:
+        # 예외 시 폴백
+        laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
+        collected_laws = laws
+        law_ctx = format_law_context(laws)
+        title = "법률 자문 메모"
+        full_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
+        final_text = apply_final_postprocess(full_text, collected_laws)
+
+    # --- ✅ 정상 경로 후처리: 항상 실행되도록 보장 ---
     if not final_text.strip():
         final_text = apply_final_postprocess(full_text, collected_laws)
 
+    # ▶ 답변을 세션에 넣고 rerun
     if final_text.strip():
         _append_message("assistant", final_text, law=collected_laws)
         st.session_state["last_q"] = user_q
         st.session_state.pop("_pending_user_q", None)
         st.session_state.pop("_pending_user_nonce", None)
         st.rerun()
-
 
     # 프리뷰 컨테이너 비우기
     if stream_box is not None:
