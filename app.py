@@ -205,89 +205,93 @@ def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
 def inject_sticky_layout_css(mode: str = "wide"):
-    """
-    대화 전엔 중앙, 대화 시작 후엔 하단 고정 입력/업로더 + 우측 패널 고정 + 좌측 사이드바 유지
-    - 중앙 열 너비(--center-col), 말풍선 최대폭(--bubble-max) 변수 제공
-    - 하단 고정 UI와 겹침 막도록 본문 padding-bottom 확보
-    - 우측 검색 패널 #search-flyout 고정
-    """
     PRESETS = {
         "wide":   {"center": "1160px", "bubble_max": "760px"},
         "narrow": {"center": "880px",  "bubble_max": "640px"},
     }
     p = PRESETS.get(mode, PRESETS["wide"])
-    # 예시: root_vars (필요 값은 프로젝트에 맞게 조정)
-root_vars = ":root { --center-col: 1160px; --bubble-max: 760px; --chatbar-h: 56px; --chat-gap: 12px; --rail: 420px; --hgap: 24px; }"
 
-css = f"""
-<style>
-  /* 전역 변수 */
-  {root_vars}
+    # 전역 CSS 변수(한 군데에서만 선언)
+    root_vars = (
+        ":root {"
+        " --center-col: 1160px;"
+        " --bubble-max: 760px;"
+        " --chatbar-h: 56px;"
+        " --chat-gap: 12px;"
+        " --rail: 420px;"
+        " --hgap: 24px;"
+        " }"
+    )
 
-  /* 본문/입력창 공통 중앙 정렬 & 동일 폭 */
-  .block-container, .stChatInput {{
-    max-width: var(--center-col) !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-  }}
+    css = f"""
+    <style>
+      {root_vars}
 
-  /* 채팅 말풍선 최대 폭 제한 */
-  [data-testid="stChatMessage"] {{
-    max-width: var(--bubble-max) !important;
-    width: 100% !important;
-  }}
-  [data-testid="stChatMessage"] .stMarkdown,
-  [data-testid="stChatMessage"] .stMarkdown > div {{
-    width: 100% !important;
-  }}
+      /* 본문/입력창 공통 중앙 정렬 & 동일 폭 */
+      .block-container, .stChatInput {{
+        max-width: var(--center-col) !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
+      }}
 
-  /* 대화 전 중앙 히어로(업로더/첫 입력) */
-  .center-hero {{
-    min-height: calc(100vh - 220px);
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-  }}
-  .center-hero .stFileUploader, .center-hero .stTextInput {{
-    width: 720px; max-width: 92vw;
-  }}
+      /* 채팅 말풍선 최대 폭 */
+      [data-testid="stChatMessage"] {{
+        max-width: var(--bubble-max) !important;
+        width: 100% !important;
+      }}
+      [data-testid="stChatMessage"] .stMarkdown,
+      [data-testid="stChatMessage"] .stMarkdown > div {{
+        width: 100% !important;
+      }}
 
-  /* 업로더 고정: 앵커 다음 형제 업로더 */
-  #bu-anchor + div[data-testid='stFileUploader'] {{
-    position: fixed;
-    left: 50%;
-    transform: translateX(-50%);
-    bottom: calc(12px + var(--chatbar-h) + var(--chat-gap));
-    z-index: 60;
-    width: var(--center-col);
-    max-width: 92vw;
-    padding: 8px 0;
-  }}
+      /* 대화 전 중앙 히어로 */
+      .center-hero {{
+        min-height: calc(100vh - 220px);
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+      }}
+      .center-hero .stFileUploader, .center-hero .stTextInput {{
+        width: 720px; max-width: 92vw;
+      }}
 
-  @media (min-width:1280px){{
-    body.chat-started #bu-anchor + div[data-testid='stFileUploader'] {{
-      left: calc(50% - var(--rail)/2);
-      transform: translateX(-50%);
-      width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap)));
-      max-width: calc(100vw - var(--rail) - 2*var(--hgap));
-    }}
-  }}
+      /* 업로더 고정: 앵커 다음 형제 업로더 */
+      #bu-anchor + div[data-testid='stFileUploader'] {{
+        position: fixed;
+        left: 50%; transform: translateX(-50%);
+        bottom: calc(12px + var(--chatbar-h) + var(--chat-gap));
+        z-index: 60;
+        width: var(--center-col);
+        max-width: 92vw;
+        padding: 8px 0;
+      }}
 
-  /* 본문이 하단 고정 UI와 겹치지 않도록 (중복 없이 한 번만 선언) */
-  .block-container {{
-    padding-bottom: 180px !important;
-  }}
+      /* 데스크톱에서는 우측 레일을 피해 정렬 */
+      @media (min-width:1280px){{
+        body.chat-started #bu-anchor + div[data-testid='stFileUploader'],
+        body.chat-started #chatbar-fixed {{
+          left: calc(50% - var(--rail)/2);
+          transform: translateX(-50%);
+          width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap)));
+          max-width: calc(100vw - var(--rail) - 2*var(--hgap));
+        }}
+      }}
 
-  /* 우측 플로팅 검색 패널 고정 */
-  #search-flyout {{
-    position: fixed; top: 72px; right: 24px;
-    width: 360px; max-width: 38vw;
-    height: calc(100vh - 96px);
-    overflow: auto; z-index: 60;
-    padding: 12px 14px; border-radius: 12px;
-  }}
-</style>
-"""
+      /* 본문이 하단 고정 UI와 겹치지 않게 */
+      .block-container {{
+        padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
+      }}
 
-st.markdown(css, unsafe_allow_html=True)
+      /* 우측 플로팅 검색 패널 */
+      #search-flyout {{
+        position: fixed; top: 72px; right: 24px;
+        width: 360px; max-width: 38vw;
+        height: calc(100vh - 96px);
+        overflow: auto; z-index: 58;   /* 업로더(60)와 입력창(70)보다 낮게 */
+        padding: 12px 14px; border-radius: 12px;
+      }}
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
+
 
 inject_sticky_layout_css("wide")
 
@@ -2251,58 +2255,3 @@ if chat_started:
         st.session_state["_clear_input"] = True
         st.rerun()
 
-st.markdown("""
-<style>
-  :root{
-    --chatbar-h: 56px;      /* 입력창 높이(필요시 조정) */
-    --chat-gap: 12px;       /* 업로더와 간격 */
-    --rail: 420px;          /* 우측 패널 + 여유(= 360 + 60) */
-    --hgap: 24px;           /* 좌우 여백 */
-  }
-
-  /* 1) 입력창(우리의 chatbar 래퍼)을 화면 하단 중앙 고정 */
-  #chatbar-fixed{
-    position: fixed !important;
-    left: 50% !important; transform: translateX(-50%) !important;
-    bottom: 12px !important;
-    width: var(--center-col) !important;
-    max-width: 92vw !important;
-    z-index: 70 !important;
-  }
-
-  /* 2) 업로더는 입력창 바로 위(같은 폭) — 앵커 다음 형제 div */
-#bu-anchor + div[data-testid="stFileUploader"]{
-  position: fixed !important;
-  left: 50% !important; transform: translateX(-50%) !important;
-  width: var(--center-col) !important; max-width: 92vw !important;
-  bottom: calc(12px + var(--chatbar-h) + var(--chat-gap)) !important;
-  z-index: 60 !important; padding: 8px 0;
-}
-@media (min-width:1280px){
-  body.chat-started #bu-anchor + div[data-testid="stFileUploader"]{
-    left: calc(50% - var(--rail)/2) !important; transform: translateX(-50%) !important;
-    width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap))) !important;
-    max-width: calc(100vw - var(--rail) - 2*var(--hgap)) !important;
-  }
-}
-
-  /* 3) 본문이 가려지지 않도록 하단 패딩 확보 */
-  .block-container{
-    padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
-  }
-
-  /* 4) 데스크톱에서만 우측 레일을 피해서 좌표/폭 보정 */
-  @media (min-width:1280px){
-    body.chat-started .block-container{
-      padding-right: var(--rail) !important;  /* 본문 오른쪽 여백 */
-    }
-    body.chat-started #chatbar-fixed,
-    body.chat-started .bottom-uploader{
-      left: calc(50% - var(--rail)/2) !important;  /* 전체 중앙을 우측 레일 절반만큼 왼쪽으로 */
-      transform: translateX(-50%) !important;
-      width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap))) !important;
-      max-width: calc(100vw - var(--rail) - 2*var(--hgap)) !important;
-    }
-  }
-</style>
-""", unsafe_allow_html=True)
