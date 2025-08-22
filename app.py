@@ -301,7 +301,8 @@ def inject_sticky_layout_css(mode: str = "wide"):
   }}
 </style>
 """
-st.markdown(css, unsafe_allow_html=True)
+st.markdown(css, unsafe_allow_html=True)   # ✅ 정상
+
 
 inject_sticky_layout_css("wide")
 
