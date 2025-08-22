@@ -290,7 +290,7 @@ def inject_sticky_layout_css(mode: str = "wide"):
       }}
 
       /* 하단 고정 채팅창 스타일 */
-      .fixed-chat-input {
+      .fixed-chat-input {{
           position: fixed;
           bottom: 0;
           left: 0;
@@ -301,29 +301,29 @@ def inject_sticky_layout_css(mode: str = "wide"):
           padding: 1rem;
           z-index: 1000;
           box-shadow: 0 -4px 20px rgba(0,0,0,0.1);
-      }
+      }}
 
-      .fixed-chat-input .stForm {
+      .fixed-chat-input .stForm {{
           max-width: 900px;
           margin: 0 auto;
           width: 100%;
-      }
+      }}
 
-      .fixed-chat-input .stTextArea textarea {
+      .fixed-chat-input .stTextArea textarea {{
           border-radius: 20px;
           border: 2px solid #e9ecef;
           padding: 12px 16px;
           font-size: 16px;
           resize: none;
           transition: all 0.3s ease;
-      }
+      }}
 
-      .fixed-chat-input .stTextArea textarea:focus {
+      .fixed-chat-input .stTextArea textarea:focus {{
           border-color: #667eea;
           box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-      }
+      }}
 
-      .fixed-chat-input .stButton > button {
+      .fixed-chat-input .stButton > button {{
           background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
           color: white;
           border: none;
@@ -332,38 +332,38 @@ def inject_sticky_layout_css(mode: str = "wide"):
           font-weight: 600;
           transition: all 0.3s ease;
           box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
-      }
+      }}
 
-      .fixed-chat-input .stButton > button:hover {
+      .fixed-chat-input .stButton > button:hover {{
           transform: translateY(-2px);
           box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-      }
+      }}
 
       /* 반응형 디자인 */
-      @media (max-width: 768px) {
-          .chat-container {
+      @media (max-width: 768px) {{
+          .chat-container {{
               max-width: 100%;
               padding: 0 0.5rem;
               padding-bottom: 120px;
-          }
+          }}
           
-          .chat-content {
+          .chat-content {{
               max-width: 85%;
-          }
+          }}
           
-          .chat-header h1 {
+          .chat-header h1 {{
               font-size: 2rem;
-          }
+          }}
           
-          .fixed-chat-input {
+          .fixed-chat-input {{
               padding: 0.5rem;
-          }
+          }}
           
-          .fixed-chat-input .stForm {
+          .fixed-chat-input .stForm {{
               max-width: 100%;
               margin: 0 0.5rem;
-          }
-      }
+          }}
+      }}
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
@@ -507,14 +507,14 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
 
 # =========================================
 # 세션에 임시로 담아 둔 첫 질문을 messages로 옮기는 유틸
-# (이 블록을 파일 상단 ‘레이아웃/스타일 주입’ 직후 정도로 올려둡니다)
+# (이 블록을 파일 상단 ‘레이아웃/스타일 주입' 직후 정도로 올려둡니다)
 # =========================================
 from datetime import datetime
 
 has_chat = bool(st.session_state.get("messages")) or bool(st.session_state.get("_pending_user_q"))
 
 
-# ✅ 중요: ‘최초 화면' 렌더링 전에 먼저 호출
+# ✅ 중요: '최초 화면' 렌더링 전에 먼저 호출
 
 from datetime import datetime
 import time
@@ -1249,7 +1249,7 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
 # 통합 미리보기 전용: 과한 문장부호/따옴표 제거 + '법령명 (제n조)'만 추출
 def _clean_query_for_api(q: str) -> str:
     q = (q or "").strip()
-    q = re.sub(r'[“”"\'‘’.,!?()<>\\[\\]{}:;~…]', ' ', q)
+    q = re.sub(r'[“"\'‘’.,!?()<>\\[\\]{}:;~…]', ' ', q)
     q = re.sub(r'\\s+', ' ', q).strip()
     # 법령명(OO법/령/규칙/조례) + (제n조) 패턴
     name = re.search(r'([가-힣A-Za-z0-9·\\s]{1,40}?(법|령|규칙|조례))', q)
