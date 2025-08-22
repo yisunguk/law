@@ -86,17 +86,20 @@ def ask_llm_with_tools(
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
-    # 3) 엔진 호출 (새 시그니처에 맞게)
-    yield from engine.generate(
-        user_q,
-        system_prompt=sys_prompt,
-        allow_tools=use_tools,
-        num_rows=num_rows,
-        stream=stream,
-        primer_enable=True,
-    )
+       # 3) 엔진 호출 (답변 중 플래그 on/off 포함)
+    st.session_state["_answering"] = True
+    try:
+        yield from engine.generate(
+            user_q,
+            system_prompt=sys_prompt,
+            allow_tools=use_tools,
+            num_rows=num_rows,
+            stream=stream,
+            primer_enable=True,
+        )
+    finally:
+        st.session_state["_answering"] = False
 
-import io, os, re, json, time, html
 
 if "_normalize_text" not in globals():
     def _normalize_text(s: str) -> str:
@@ -296,6 +299,20 @@ def inject_sticky_layout_css(mode: str = "wide"):
     body.answering .center-hero {
       display: none !important;
     }
+    # 3) 엔진 호출 (답변 중 플래그 on/off 포함)
+    st.session_state["_answering"] = True
+    try:
+        yield from engine.generate(
+            user_q,
+            system_prompt=sys_prompt,
+            allow_tools=use_tools,
+            num_rows=num_rows,
+            stream=stream,
+            primer_enable=True,
+        )
+    finally:
+        st.session_state["_answering"] = False
+
 
     </style>
     """
@@ -493,10 +510,9 @@ def _push_user_from_pending() -> str | None:
     return q
 
 def render_pre_chat_center():
-    # 이미 대화를 시작했거나(버블이 있거나 pending) 답변 중이면 렌더하지 않음
-    if _chat_started() or st.session_state.get("_answering"):
+    if st.session_state.get("_answering"):  # ⬅️ 답변/로딩 중이면 프리챗 화면 자체 미표시
         return
-
+  
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
     st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
 
@@ -521,10 +537,8 @@ def render_pre_chat_center():
 
 
 def render_bottom_uploader():
-    # 아직 대화를 시작하지 않았거나, 답변 중이면 표시하지 않음
-    if not _chat_started() or st.session_state.get("_answering"):
+    if st.session_state.get("_answering"):  # ⬅️ 답변/로딩 중이면 업로더 렌더 건너뜀
         return
-
     st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
     st.file_uploader(
         "Drag and drop files here",
@@ -533,6 +547,7 @@ def render_bottom_uploader():
         key="bottom_files",
         help="대화 중에는 업로드 박스가 하단에 고정됩니다.",
     )
+
 
 
 
