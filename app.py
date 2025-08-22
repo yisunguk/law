@@ -1707,6 +1707,15 @@ def extract_keywords_llm(q: str) -> list[str]:
     return []
 
 # st_tags가 있으면 태그 위젯, 없으면 multiselect로 동작
+# 기본 프리셋(탭별 선호 키워드를 지정할 수 있음). 비어 있으면 첫 항목을 기본으로 사용.
+DEFAULT_KEYWORD = {}
+
+def one_default(options, prefer=None):
+    opts = list(options or [])
+    if prefer and prefer in opts:
+        return [prefer]
+    return [opts[0]] if opts else []
+
 try:
     from streamlit_tags import st_tags
     def kw_input(label, options, key, tab_name=None):
