@@ -470,7 +470,7 @@ def render_pre_chat_center():
         "Drag and drop files here",
         type=["pdf", "docx", "txt"],
         accept_multiple_files=True,
-        key="first_files_v2",
+        key="first_files",
     )
 
     # 입력 폼 (전송 시 pending에 저장 후 rerun)
@@ -495,7 +495,7 @@ def render_bottom_uploader():
         "Drag and drop files here",
         type=["pdf", "docx", "txt"],
         accept_multiple_files=True,
-        key="bottom_files_v2",
+        key="bottom_files",
         help="대화 중에는 업로드 박스가 하단에 고정됩니다.",
     )
 
@@ -2048,33 +2048,37 @@ with st.sidebar:
 user_q = _push_user_from_pending()
 
 
-# === 지금 턴이 '답변 생성 런'인지 여부 (스트리밍 중 표시/숨김)
+# === 지금 턴이 '답변을 생성하는 런'인지 여부 (스트리밍 중 표시/숨김에 사용)
 ANSWERING = bool(user_q)
 st.session_state["__answering__"] = ANSWERING
+
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
+
+# chat_started 계산 직후에 추가
+st.markdown(f"""
+<script>
+document.body.classList.toggle('chat-started', {str(chat_started).lower()});
+</script>
+""", unsafe_allow_html=True)
 
 st.markdown(f"""
 <script>
 document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-document.body.classList.toggle('answering', {str(ANSWERING).lower()});
+document.body.classList.toggle('answering', {str(st.session_state.get('__answering__', False)).lower()});
 </script>
 """, unsafe_allow_html=True)
 
-
 st.markdown("""
 <style>
-/* 답변(스트리밍) 중에는 첨부/채팅 입력 전부 숨김 */
-body.answering [data-testid="stFileUploader"] { display: none !important; }  /* 모든 업로더 */
-body.answering #chatbar-fixed { display: none !important; }                  /* 커스텀 채팅바 */
-body.answering [data-testid="stChatInput"] { display: none !important; }     /* 기본 st.chat_input 대비 */
-
-/* 숨겨질 때 빈 공간 줄이기 */
-body.answering .block-container {
-  padding-bottom: calc(var(--chat-gap) + 24px) !important;
-}
+/* 답변(스트리밍) 중에는 모든 첨부 UI 숨김 */
+body.answering #bu-anchor + div[data-testid="stFileUploader"] { display: none !important; }
+body.answering #chatbar-fixed { display: none !important; }
+/* 업로더가 숨겨진 동안 불필요한 하단 여백 축소 */
+body.answering .block-container { padding-bottom: calc(var(--chat-gap) + 24px) !important; }
 </style>
 """, unsafe_allow_html=True)
+
 
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
@@ -2128,7 +2132,8 @@ if not chat_started:
     render_pre_chat_center()   # 중앙 히어로 + 중앙 업로더
     st.stop()
 else:
-    if not st.session_state.get("__answering__", False):
+    # 스트리밍 중에는 업로더 숨김 (렌더 자체 생략)
+    if not ANSWERING:
         render_bottom_uploader()   # 하단 고정 업로더
 # === 대화 시작 후: 우측 레일을 피해서 배치(침범 방지) ===
 st.markdown("""
@@ -2260,7 +2265,7 @@ if user_q:
         stream_box.empty()
     
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
-if chat_started:
+if chat_started and not st.session_state.get("__answering__", False):
     st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
     submitted, typed_text, files = chatbar(
         placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
