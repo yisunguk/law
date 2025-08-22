@@ -1,109 +1,9 @@
+# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
 import streamlit as st
 
-# ✅ 먼저 page_config를 '완결된 호출'로 닫습니다.
 st.set_page_config(
-    page_title="법제처 법무 상담사",
-    page_icon="⚖️",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# === CLEAN_LAYOUT_PATCH ===
-st.markdown("""<style>
-:root {
-  --center-col: 1120px;
-  --chatbar-h: 56px;
-  --chat-gap: 12px;
-  --rail: 420px;  /* default; JS에서 #search-flyout 너비로 갱신 */
-  --hgap: 24px;
-}
-
-/* 본문 max-width(중앙 정렬) */
-.block-container {
-  max-width: var(--center-col) !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-  padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
-}
-
-/* 고정 채팅바 컨테이너 (우리가 감싸는 래퍼) */
-#chatbar-fixed {
-  position: fixed !important;
-  left: 50% !important;
-  transform: translateX(-50%) !important;
-  bottom: 12px !important;
-  z-index: 70 !important;
-  width: min(var(--center-col), calc(100vw - 2*var(--hgap))) !important;
-  max-width: calc(100vw - 2*var(--hgap)) !important;
-}
-
-/* 하단 업로더가 들어갈 고정 컨테이너 (JS로 DOM 이동) */
-#bottom-uploader {
-  position: fixed !important;
-  left: 50% !important;
-  transform: translateX(-50%) !important;
-  bottom: calc(12px + var(--chatbar-h) + var(--chat-gap)) !important;
-  z-index: 60 !important;
-  width: min(var(--center-col), calc(100vw - 2*var(--hgap))) !important;
-  max-width: calc(100vw - 2*var(--hgap)) !important;
-  padding: 0;
-}
-
-/* 스트리밍(답변 중)에는 하단 UI 전부 숨김 */
-body.answering #chatbar-fixed,
-body.answering #bottom-uploader {
-  display: none !important;
-}
-
-/* 데스크톱 + 대화 시작 상태: 우측 검색 레일(통합검색) 폭만큼 좌로 이동/폭 축소 */
-@media (min-width:1280px) {
-  body.chat-started #chatbar-fixed,
-  body.chat-started #bottom-uploader {
-    left: calc(50% - var(--rail)/2) !important;
-    transform: translateX(-50%) !important;
-    width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap))) !important;
-    max-width: calc(100vw - var(--rail) - 2*var(--hgap)) !important;
-  }
-  body.chat-started .block-container {
-    padding-right: var(--rail) !important;
-  }
-}
-
-/* 대화 전(히어로 화면)에는 우측 패널 숨김 & 여백 제거 */
-body:not(.chat-started) #search-flyout { display:none !important; }
-body:not(.chat-started) .block-container { padding-right: 0 !important; }
-
-</style>
-""", unsafe_allow_html=True)
-
-# 오른쪽 패널 실제 너비를 --rail 변수에 반영(리사이즈 포함)
-st.markdown("""<script>
-(function(){
-  function setRailVar(){
-    var fly = document.getElementById('search-flyout');
-    var w = (fly && fly.getBoundingClientRect().width) || 360;
-    var extra = 60; /* 여유 */
-    document.documentElement.style.setProperty('--rail', (w + extra) + 'px');
-  }
-  window.addEventListener('load', setRailVar);
-  window.addEventListener('resize', setRailVar);
-  setRailVar();
-})();
-</script>
-<!-- 고정 업로더 컨테이너가 없으면 생성 -->
-<script>
-(function(){
-  if(!document.getElementById('bottom-uploader')){
-    var div = document.createElement('div');
-    div.id = 'bottom-uploader';
-    document.body.appendChild(div);
-  }
-})();
-</script>
-""", unsafe_allow_html=True)
-
     page_title="법제처 법무 상담사",
     page_icon="⚖️",
     layout="wide",
@@ -586,64 +486,20 @@ def render_pre_chat_center():
         st.rerun()
 
 # 기존 render_bottom_uploader() 전부 교체
-
 def render_bottom_uploader():
-    # 1) Sentinel just before the uploader to help DOM picking
-    st.markdown('<div id="bu-sentinel"></div>', unsafe_allow_html=True)
+    # 업로더 바로 앞에 '앵커'만 출력
+    st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
 
-    # 2) The actual Streamlit uploader (normal flow)
+    # 이 다음에 나오는 업로더를 CSS에서 #bu-anchor + div[...] 로 고정 배치
     st.file_uploader(
         "Drag and drop files here",
         type=["pdf", "docx", "txt"],
         accept_multiple_files=True,
         key="bottom_files",
-        help="대화 중 파일 첨부는 여기로 올려주세요.",
+        help="대화 중에는 업로드 박스가 하단에 고정됩니다.",
     )
 
-    # 3) After render, move the uploader's DOM into #bottom-uploader
-    st.markdown(
-        """<script>
-        (function(){
-          function moveUploader(){
-            var sentinel = document.getElementById('bu-sentinel');
-            var targetWrap = document.getElementById('bottom-uploader');
-            if (!sentinel || !targetWrap) return;
-
-            // 찾기: sentinel 이후로 등장하는 첫 번째 stFileUploader
-            var up = null;
-            var all = document.querySelectorAll('[data-testid="stFileUploader"]');
-            for (var i=0;i<all.length;i++){
-              var el = all[i];
-              if (!up && sentinel.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING){
-                up = el;
-                break;
-              }
-            }
-            if (!up) return;
-
-            // 이미 옮겨졌다면 무시
-            if (up.parentElement && up.parentElement.id === 'bottom-uploader') return;
-
-            // 컨테이너로 이동
-            targetWrap.innerHTML = '';
-            targetWrap.appendChild(up);
-          }
-
-          // 초기 1회 + 지연 재시도
-          window.requestAnimationFrame(moveUploader);
-          setTimeout(moveUploader, 200);
-          setTimeout(moveUploader, 800);
-
-          // 레이아웃 변화 감지(간단)
-          if (window.ResizeObserver){
-            var ro = new ResizeObserver(moveUploader);
-            ro.observe(document.body);
-          }
-        })();
-        </script>"""
-        , unsafe_allow_html=True
-    )
-
+# --- 작동 키워드 목록(필요시 보강/수정) ---
 LINKGEN_KEYWORDS = {
     "법령": ["제정", "전부개정", "개정", "폐지", "부칙", "정정", "시행", "별표", "별지서식"],
     "행정규칙": ["훈령", "예규", "고시", "지침", "공고", "전부개정", "개정", "정정", "폐지"],
@@ -1316,23 +1172,14 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
 
 # 통합 미리보기 전용: 과한 문장부호/따옴표 제거 + '법령명 (제n조)'만 추출
 def _clean_query_for_api(q: str) -> str:
-    import re
     q = (q or "").strip()
-
-    # 1) 문장부호 제거 (따옴표/괄호/기호 등)
-    q = re.sub(r'[\u201C\u201D\u2018\u2019"\'.,!?()<>\[\]{}:;~…]', ' ', q)
-
-    # 2) 공백 정리 (연속된 공백을 하나로)
-    q = re.sub(r'\s+', ' ', q).strip()
-
-    # 3) 법령명 + (선택) 조문 패턴 추출
-    name = re.search(r'([가-힣A-Za-z0-9·\s]{1,40}?(?:법|령|규칙|조례))', q)
-    article = re.search(r'제\d+조(?:의\d+)?', q)
-
-    if name and article:
-        return f"{name.group(0).strip()} {article.group(0)}"
-    if name:
-        return name.group(0).strip()
+    q = re.sub(r'[“”"\'‘’.,!?()<>\\[\\]{}:;~…]', ' ', q)
+    q = re.sub(r'\\s+', ' ', q).strip()
+    # 법령명(OO법/령/규칙/조례) + (제n조) 패턴
+    name = re.search(r'([가-힣A-Za-z0-9·\\s]{1,40}?(법|령|규칙|조례))', q)
+    article = re.search(r'제\\d+조(의\\d+)?', q)
+    if name and article: return f"{name.group(0).strip()} {article.group(0)}"
+    if name: return name.group(0).strip()
     return q
 
 # === add: LLM 리랭커(맥락 필터) ===
@@ -2200,20 +2047,9 @@ with st.sidebar:
 # 1) pending → messages 먼저 옮김
 user_q = _push_user_from_pending()
 
-
-# === 스트리밍 여부 플래그 (이 런이 답변 생성 런이면 True)
-ANSWERING = bool(user_q)
-st.session_state['__answering__'] = ANSWERING
-
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
 
-
-# Body class toggles for layout control
-st.markdown(f'''<script>
-document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-document.body.classList.toggle('answering', {str(st.session_state.get('__answering__', False)).lower()});
-</script>''', unsafe_allow_html=True)
 # chat_started 계산 직후에 추가
 st.markdown(f"""
 <script>
@@ -2273,9 +2109,7 @@ if not chat_started:
     render_pre_chat_center()   # 중앙 히어로 + 중앙 업로더
     st.stop()
 else:
-    # 스트리밍 중에는 업로더 렌더 자체도 생략
-    if not st.session_state.get('__answering__', False):
-        render_bottom_uploader()   # 하단 고정 업로더
+    render_bottom_uploader()   # 하단 고정 업로더
 # === 대화 시작 후: 우측 레일을 피해서 배치(침범 방지) ===
 st.markdown("""
 <style>
@@ -2401,22 +2235,91 @@ if user_q:
         st.session_state.pop("_pending_user_nonce", None)
         st.rerun()
 
-   # --- 2390~2420 교체 시작 ---
-
-# 기존 render_bottom_uploader() 전후에 엉킨 부분을 정리합니다.
-# 'div' 식별자 단독 사용을 모두 제거하고, HTML은 문자열로 감싸 안전하게 주입합니다.
-
-def render_bottom_uploader():
-    # 업로더 바로 앞에 '앵커'를 마크업으로 출력 (CSS가 이 다음 div를 하단 고정시킴)
-    st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
-
-    # 이 다음에 생성되는 업로더가 CSS 선택자(#bu-anchor + div[data-testid="stFileUploader"])에 걸립니다.
-    st.file_uploader(
-        "Drag and drop files here",
-        type=["pdf", "docx", "txt"],
-        accept_multiple_files=True,
-        key="bottom_files",
-        help="대화 중에는 업로드 박스가 하단에 고정됩니다.",
+    # 프리뷰 컨테이너 비우기
+    if stream_box is not None:
+        stream_box.empty()
+    
+# ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
+if chat_started:
+    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
+    submitted, typed_text, files = chatbar(
+        placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
+        accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
     )
+    st.markdown('</div>', unsafe_allow_html=True)                     # ← 래퍼 닫기
+    if submitted:
+        text = (typed_text or "").strip()
+        if text:
+            st.session_state["_pending_user_q"] = text
+            st.session_state["_pending_user_nonce"] = time.time_ns()
+        st.session_state["_clear_input"] = True
+        st.rerun()
 
-# --- 2390~2420 교체 끝 ---
+
+
+
+# # === RAIL_SAFE_PATCH ===
+st.markdown("""
+<style>
+/* --- 공통: 채팅 바를 고정(기본 중심 정렬) --- */
+#chatbar-fixed {
+  position: fixed !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  bottom: 12px !important;
+  z-index: 70 !important;
+  width: var(--center-col) !important;
+  max-width: 92vw !important;
+}
+
+/* --- 스트리밍(답변 중)에는 업로더/채팅바 전부 숨김 --- */
+body.answering #chatbar-fixed {
+  display: none !important;
+}
+body.answering #bu-anchor + div[data-testid="stFileUploader"] {
+  display: none !important;
+}
+
+/* --- 우측 플라이아웃(검색 패널) 폭을 피해 배치: 데스크톱 이상 --- */
+@media (min-width: 1280px) {
+  body.chat-started .block-container{
+    padding-right: var(--rail, 420px) !important;
+  }
+  body.chat-started #chatbar-fixed,
+  body.chat-started #bu-anchor + div[data-testid="stFileUploader"] {
+    left: calc(50% - (var(--rail, 420px))/2) !important;
+    transform: translateX(-50%) !important;
+    width: min(var(--center-col), calc(100vw - var(--rail, 420px) - 2*var(--hgap))) !important;
+    max-width: calc(100vw - var(--rail, 420px) - 2*var(--hgap)) !important;
+  }
+}
+</style>
+""", unsafe_allow_html=True)
+
+# 동적으로 --rail 값을 검색패널 실제 너비로 계산(리사이즈 반영)
+st.markdown("""
+<script>
+(function() {
+  function setRailVar() {
+    var fly = document.getElementById('search-flyout');
+    var root = document.documentElement;
+    var extra = 60; // 패널과 본문 사이 여유
+    if (fly) {
+      var w = fly.getBoundingClientRect().width || 360;
+      root.style.setProperty('--rail', (w + extra) + 'px');
+    } else {
+      root.style.setProperty('--rail', '420px');
+    }
+  }
+  // 초기 1회 & 리사이즈/패널 변화 감지
+  if (window.ResizeObserver) {
+    var ro = new ResizeObserver(setRailVar);
+    var fly = document.getElementById('search-flyout');
+    if (fly) ro.observe(fly);
+  }
+  window.addEventListener('load', setRailVar);
+  window.addEventListener('resize', setRailVar);
+  setRailVar();
+})();
+</script>
+""", unsafe_allow_html=True)
