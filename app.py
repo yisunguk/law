@@ -2043,10 +2043,8 @@ with st.sidebar:
             d = st.session_state["gen_file"]
             present_url_with_fallback(d["url"], d["kind"], d["q"])
 
-
 # 1) pending → messages 먼저 옮김
 user_q = _push_user_from_pending()
-
 
 # === 지금 턴이 '답변을 생성하는 런'인지 여부 (스트리밍 중 표시/숨김에 사용)
 ANSWERING = bool(user_q)
@@ -2059,27 +2057,26 @@ chat_started = _chat_started()
 st.markdown(f"""
 <script>
 document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-</script>
-""", unsafe_allow_html=True)
-
-st.markdown(f"""
-<script>
-document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-document.body.classList.toggle('answering', {str(st.session_state.get('__answering__', False)).lower()});
+document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 </script>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <style>
-/* 답변(스트리밍) 중에는 모든 첨부 UI 숨김 */
-body.answering #bu-anchor + div[data-testid="stFileUploader"] { display: none !important; }
-body.answering #chatbar-fixed { display: none !important; }
-/* 업로더가 숨겨진 동안 불필요한 하단 여백 축소 */
-body.answering .block-container { padding-bottom: calc(var(--chat-gap) + 24px) !important; }
+/* 🔧 대화 시작 후에는 모든 첨부파일 업로더를 완전히 숨김 */
+body.chat-started #bu-anchor + div[data-testid="stFileUploader"] { 
+    display: none !important; 
+}
+body.chat-started #chatbar-fixed { 
+    display: none !important; 
+}
+
+/* 답변 중일 때만 하단 여백 축소 */
+body.answering .block-container { 
+    padding-bottom: calc(var(--chat-gap) + 24px) !important; 
+}
 </style>
 """, unsafe_allow_html=True)
-
-
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
 if not chat_started:
@@ -2110,8 +2107,6 @@ if not chat_started:
     </style>
     """, unsafe_allow_html=True)
 
-
-
 # 🎯 대화 전에는 우측 패널 숨기고, 여백을 0으로 만들어 완전 중앙 정렬
 if not chat_started:
     st.markdown("""
@@ -2132,9 +2127,12 @@ if not chat_started:
     render_pre_chat_center()   # 중앙 히어로 + 중앙 업로더
     st.stop()
 else:
+    # 🔧 대화 시작 후에는 첨부파일 박스를 렌더링하지 않음 (완전히 제거)
     # 스트리밍 중에는 업로더 숨김 (렌더 자체 생략)
-    if not ANSWERING:
-        render_bottom_uploader()   # 하단 고정 업로더
+    # if not ANSWERING:
+    #     render_bottom_uploader()   # 하단 고정 업로더 - 주석 처리
+    pass
+
 # === 대화 시작 후: 우측 레일을 피해서 배치(침범 방지) ===
 st.markdown("""
 <style>
