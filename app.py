@@ -2063,44 +2063,17 @@ document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 
 st.markdown("""
 <style>
-/* 🔧 답변 중에는 모든 UI 요소 숨김 */
-body.answering #bu-anchor + div[data-testid="stFileUploader"] { 
+/* 🔧 대화 시작 후에는 모든 첨부파일 업로더를 완전히 숨김 */
+body.chat-started #bu-anchor + div[data-testid="stFileUploader"] { 
     display: none !important; 
 }
-body.answering #chatbar-fixed { 
-    display: none !important; 
-}
-body.answering .stChatInput { 
+body.chat-started #chatbar-fixed { 
     display: none !important; 
 }
 
-/* 답변 중일 때 하단 여백 축소 */
+/* 답변 중일 때만 하단 여백 축소 */
 body.answering .block-container { 
     padding-bottom: calc(var(--chat-gap) + 24px) !important; 
-}
-
-/* 🔧 답변 완료 후 UI 요소들이 사이드바를 침범하지 않도록 수정 */
-body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"],
-body.chat-started:not(.answering) #chatbar-fixed,
-body.chat-started:not(.answering) .stChatInput {
-    display: block !important;
-}
-
-/* 데스크톱에서 우측 사이드바 침범 방지 강화 */
-@media (min-width: 1280px) {
-    body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"],
-    body.chat-started:not(.answering) #chatbar-fixed {
-        right: calc(var(--rail) + var(--hgap)) !important;
-        width: calc(100vw - var(--rail) - 4*var(--hgap)) !important;
-        max-width: var(--center-col) !important;
-    }
-    
-    /* 채팅 입력창도 사이드바 피하도록 */
-    body.chat-started:not(.answering) .stChatInput {
-        margin-right: calc(var(--rail) + var(--hgap)) !important;
-        width: calc(100vw - var(--rail) - 4*var(--hgap)) !important;
-        max-width: var(--center-col) !important;
-    }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -2154,9 +2127,11 @@ if not chat_started:
     render_pre_chat_center()   # 중앙 히어로 + 중앙 업로더
     st.stop()
 else:
-    # 🔧 답변 중이 아닐 때만 하단 업로더 렌더링
-    if not ANSWERING:
-        render_bottom_uploader()   # 하단 고정 업로더
+    # 🔧 대화 시작 후에는 첨부파일 박스를 렌더링하지 않음 (완전히 제거)
+    # 스트리밍 중에는 업로더 숨김 (렌더 자체 생략)
+    # if not ANSWERING:
+    #     render_bottom_uploader()   # 하단 고정 업로더 - 주석 처리
+    pass
 
 # === 대화 시작 후: 우측 레일을 피해서 배치(침범 방지) ===
 st.markdown("""
@@ -2178,10 +2153,8 @@ st.markdown("""
   body.chat-started .block-container{
     padding-right: var(--rail) !important;
   }
-  
-  /* 🔧 답변 완료 후에만 적용되는 배치 (답변 중에는 숨겨짐) */
-  body.chat-started:not(.answering) #chatbar-fixed,
-  body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"]{
+  body.chat-started #chatbar-fixed,
+  body.chat-started #bu-anchor + div[data-testid="stFileUploader"]{
     left: calc(50% - var(--rail)/2) !important;
     transform: translateX(-50%) !important;
     width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap))) !important;
