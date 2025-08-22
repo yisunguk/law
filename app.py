@@ -466,9 +466,12 @@ def render_pre_chat_center():
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
 
+# 기존 render_bottom_uploader() 전부 교체
 def render_bottom_uploader():
-    """대화 중: 하단 고정 업로더(키: bottom_files)만 노출"""
-    st.markdown('<div class="bottom-uploader">', unsafe_allow_html=True)
+    # 업로더 바로 앞에 '앵커'만 출력
+    st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
+
+    # 이 다음에 나오는 업로더를 CSS에서 #bu-anchor + div[...] 로 고정 배치
     st.file_uploader(
         "Drag and drop files here",
         type=["pdf", "docx", "txt"],
@@ -476,8 +479,6 @@ def render_bottom_uploader():
         key="bottom_files",
         help="대화 중에는 업로드 박스가 하단에 고정됩니다.",
     )
-    st.markdown("</div>", unsafe_allow_html=True)
-
 
 # --- 작동 키워드 목록(필요시 보강/수정) ---
 LINKGEN_KEYWORDS = {
@@ -2100,24 +2101,6 @@ st.markdown("""
     --hgap: 24px;           /* 좌우 여백 */
   }
 
-  /* 공통: 입력창/업로더의 기본 배치(중앙) */
-  .stChatInput{
-    position: fixed !important;
-    left: 50% !important; transform: translateX(-50%) !important;
-    bottom: 12px !important;
-    width: var(--center-col) !important;
-    max-width: 92vw !important;
-    z-index: 60 !important;
-  }
-  .stChatInput textarea{ min-height: var(--chatbar-h) !important; }
-
-  .bottom-uploader{
-    position: fixed !important;
-    left: 50% !important; transform: translateX(-50%) !important;
-    width: var(--center-col) !important; max-width: 92vw !important;
-    bottom: calc(12px + var(--chatbar-h) + var(--chat-gap)) !important;
-    z-index: 55 !important; padding: 8px 0;
-  }
 
   /* 본문이 가려지지 않게 하단 패딩 확보 */
   .block-container{
@@ -2130,10 +2113,6 @@ st.markdown("""
       padding-right: var(--rail) !important;   /* 본문은 원래대로 우측 여백 확보 */
     }
     body.chat-started .stChatInput,
-    body.chat-started .bottom-uploader{
-      /* 우측 패널만큼 전체 중앙을 왼쪽으로 반 칸 이동 */
-      left: calc(50% - var(--rail)/2) !important;
-      transform: translateX(-50%) !important;
 
       /* 가용 폭(= 전체 - 레일 - 좌우 여백) 안으로 제한 */
       width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap))) !important;
