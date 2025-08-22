@@ -2264,10 +2264,6 @@ st.markdown('<div style="height: 8px"></div>', unsafe_allow_html=True)
 
 st.markdown("""
 <style>
-/* 우측 패널은 넓은 화면에서만 공간 확보 */
-@media (min-width: 1280px) { .block-container { padding-right:380px !important; } }
-@media (max-width: 1279px) { .block-container { padding-right:0 !important; } }
-
 /* (신규) 채팅 메시지 내부에만 버블 적용 */
 [data-testid="stChatMessage"] .stMarkdown > div{
   background: var(--bubble-bg,#1f1f1f) !important;
