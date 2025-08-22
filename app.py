@@ -2047,11 +2047,6 @@ with st.sidebar:
 # 1) pending → messages 먼저 옮김
 user_q = _push_user_from_pending()
 
-
-# === 지금 턴이 '답변을 생성하는 런'인지 여부 (스트리밍 중 표시/숨김에 사용)
-ANSWERING = bool(user_q)
-st.session_state["__answering__"] = ANSWERING
-
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
 
@@ -2061,24 +2056,6 @@ st.markdown(f"""
 document.body.classList.toggle('chat-started', {str(chat_started).lower()});
 </script>
 """, unsafe_allow_html=True)
-
-st.markdown(f"""
-<script>
-document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-document.body.classList.toggle('answering', {str(st.session_state.get('__answering__', False)).lower()});
-</script>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<style>
-/* 답변(스트리밍) 중에는 모든 첨부 UI 숨김 */
-body.answering #bu-anchor + div[data-testid="stFileUploader"] { display: none !important; }
-body.answering #chatbar-fixed { display: none !important; }
-/* 업로더가 숨겨진 동안 불필요한 하단 여백 축소 */
-body.answering .block-container { padding-bottom: calc(var(--chat-gap) + 24px) !important; }
-</style>
-""", unsafe_allow_html=True)
-
 
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
@@ -2132,9 +2109,7 @@ if not chat_started:
     render_pre_chat_center()   # 중앙 히어로 + 중앙 업로더
     st.stop()
 else:
-    # 스트리밍 중에는 업로더 숨김 (렌더 자체 생략)
-    if not ANSWERING:
-        render_bottom_uploader()   # 하단 고정 업로더
+    render_bottom_uploader()   # 하단 고정 업로더
 # === 대화 시작 후: 우측 레일을 피해서 배치(침범 방지) ===
 st.markdown("""
 <style>
@@ -2265,7 +2240,7 @@ if user_q:
         stream_box.empty()
     
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
-if chat_started and not st.session_state.get("__answering__", False):
+if chat_started:
     st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
     submitted, typed_text, files = chatbar(
         placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
@@ -2280,3 +2255,71 @@ if chat_started and not st.session_state.get("__answering__", False):
         st.session_state["_clear_input"] = True
         st.rerun()
 
+
+
+
+# # === RAIL_SAFE_PATCH ===
+st.markdown("""
+<style>
+/* --- 공통: 채팅 바를 고정(기본 중심 정렬) --- */
+#chatbar-fixed {
+  position: fixed !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  bottom: 12px !important;
+  z-index: 70 !important;
+  width: var(--center-col) !important;
+  max-width: 92vw !important;
+}
+
+/* --- 스트리밍(답변 중)에는 업로더/채팅바 전부 숨김 --- */
+body.answering #chatbar-fixed {
+  display: none !important;
+}
+body.answering #bu-anchor + div[data-testid="stFileUploader"] {
+  display: none !important;
+}
+
+/* --- 우측 플라이아웃(검색 패널) 폭을 피해 배치: 데스크톱 이상 --- */
+@media (min-width: 1280px) {
+  body.chat-started .block-container{
+    padding-right: var(--rail, 420px) !important;
+  }
+  body.chat-started #chatbar-fixed,
+  body.chat-started #bu-anchor + div[data-testid="stFileUploader"] {
+    left: calc(50% - (var(--rail, 420px))/2) !important;
+    transform: translateX(-50%) !important;
+    width: min(var(--center-col), calc(100vw - var(--rail, 420px) - 2*var(--hgap))) !important;
+    max-width: calc(100vw - var(--rail, 420px) - 2*var(--hgap)) !important;
+  }
+}
+</style>
+""", unsafe_allow_html=True)
+
+# 동적으로 --rail 값을 검색패널 실제 너비로 계산(리사이즈 반영)
+st.markdown("""
+<script>
+(function() {
+  function setRailVar() {
+    var fly = document.getElementById('search-flyout');
+    var root = document.documentElement;
+    var extra = 60; // 패널과 본문 사이 여유
+    if (fly) {
+      var w = fly.getBoundingClientRect().width || 360;
+      root.style.setProperty('--rail', (w + extra) + 'px');
+    } else {
+      root.style.setProperty('--rail', '420px');
+    }
+  }
+  // 초기 1회 & 리사이즈/패널 변화 감지
+  if (window.ResizeObserver) {
+    var ro = new ResizeObserver(setRailVar);
+    var fly = document.getElementById('search-flyout');
+    if (fly) ro.observe(fly);
+  }
+  window.addEventListener('load', setRailVar);
+  window.addEventListener('resize', setRailVar);
+  setRailVar();
+})();
+</script>
+""", unsafe_allow_html=True)
