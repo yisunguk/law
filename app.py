@@ -307,8 +307,8 @@ st.markdown("""
   :root{
     /* 여기 숫자만 바꾸면 됩니다 */
     --flyout-width: 360px;   /* 패널 폭 */
-    --flyout-gap:   56px;    /* 패널-답변영역 사이 여백 */
-    --flyout-top:   140px;   /* 상단에서 얼마나 내릴지 (예: 140px) */
+    --flyout-gap:   100px;    /* 패널-답변영역 사이 여백 */
+    --flyout-top:   200px;   /* 상단에서 얼마나 내릴지 (예: 140px) */
   }
 
   @media (min-width:1100px){
