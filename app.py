@@ -1,57 +1,77 @@
-# === [CRITICAL PREFLIGHT ANSWERING] DO NOT REMOVE ===
-# This block must stay at the very top of the file.
-# It hides chat input and file uploader while an answer is streaming.
-try:
-    import streamlit as st
-    import streamlit as _st_pref  # internal alias, safe to import twice
-except Exception:
-    import streamlit as _st_pref
-    st = _st_pref
-
-def __has_user_msg_pref():
-    msgs = _st_pref.session_state.get("messages", [])
-    try:
-        return any((getattr(m, "get", lambda *_: None)("role")=="user") and ((getattr(m, "get", lambda *_: "")("content") or "").strip()) for m in msgs)                or any((m.get("role")=="user") and ((m.get("content") or "").strip()) for m in msgs if isinstance(m, dict))
-    except Exception:
-        return False
-
-# Heuristic: treat any of these flags as "streaming/answering"
-_answer_flags = ["_pending_user_q","__answering__","_streaming","is_streaming","answering","_answering"]
-ANSWERING = any(bool(_st_pref.session_state.get(k)) for k in _answer_flags)
-chat_started = bool(ANSWERING or __has_user_msg_pref())
-
-# Persist for downstream guards
-_st_pref.session_state["__answering__"] = ANSWERING
-
-# Attach classes to <body> ASAP
-_st_pref.markdown(f"""
-<script>
-document.body.classList.remove('answering','chat-started');
-document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-document.body.classList.toggle('answering', {str(ANSWERING).lower()});
-</script>
-""", unsafe_allow_html=True)
-
-# Global CSS: hide all inputs/uploaders while answering
-_st_pref.markdown("""
-<style>
-body.answering .center-hero,
-body.answering #chatbar-fixed,
-body.answering section[data-testid="stChatInput"],
-body.answering [data-testid="stFileUploader"],
-body.answering [data-testid="stFileUploaderDropzone"],
-body.answering .stTextInput,
-body.answering form,
-body.answering button.stButton{
-  display: none !important;
-}
-body.answering .block-container{ padding-bottom: 24px !important; }
-</style>
-""", unsafe_allow_html=True)
-# === [END PREFLIGHT ANSWERING] ===
-
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
+
+# === [CRITICAL PREFLIGHT ANSWERING v3] DO NOT REMOVE ===
+# This preflight must appear near the top (after __future__ imports).
+# It guarantees: while the app is streaming an answer, chat input & file uploader never render.
+import streamlit as st
+
+def __has_user_msg_pref():
+    msgs = st.session_state.get("messages") or []
+    try:
+        for m in msgs:
+            role = (m.get("role") if isinstance(m, dict) else getattr(m, "role", None))
+            content = (m.get("content") if isinstance(m, dict) else getattr(m, "content", None))
+            if role == "user" and str(content or "").strip():
+                return True
+    except Exception:
+        pass
+    return False
+
+# Heuristic flags used across your app
+_answer_flags = ["_pending_user_q","__answering__","_streaming","is_streaming","answering","_answering"]
+ANSWERING = any(bool(st.session_state.get(k)) for k in _answer_flags)
+if not ANSWERING:
+    ANSWERING = False  # reserved for future toggles
+st.session_state["__answering__"] = ANSWERING
+
+# CSS-only (no <script>): inject hide rules *only when answering*
+if ANSWERING:
+    st.markdown("""
+<style>
+/* Hide all inputs/uploader/hero/chatbar while streaming */
+.center-hero,
+#chatbar-fixed,
+section[data-testid="stChatInput"],
+[data-testid="stFileUploader"],
+[data-testid="stFileUploaderDropzone"],
+.stTextInput, .stTextArea, .stTextInputContainer,
+form, button.stButton {
+  display: none !important;
+}
+.block-container { padding-bottom: 24px !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# Monkeypatch selected Streamlit widgets so accidental calls won't render during answering
+if not getattr(st, "__answering_patched__", False):
+    _orig_file_uploader = st.file_uploader
+    _orig_chat_input    = getattr(st, "chat_input", None)
+    _orig_text_input    = st.text_input
+    _orig_text_area     = st.text_area
+
+    def _wrap_none(fn):
+        def _inner(*args, **kwargs):
+            if st.session_state.get("__answering__", False):
+                return None
+            return fn(*args, **kwargs)
+        return _inner
+
+    def _wrap_emptystr(fn):
+        def _inner(*args, **kwargs):
+            if st.session_state.get("__answering__", False):
+                return ""
+            return fn(*args, **kwargs)
+        return _inner
+
+    st.file_uploader = _wrap_none(_orig_file_uploader)
+    if _orig_chat_input:
+        st.chat_input = _wrap_none(_orig_chat_input)
+    st.text_input = _wrap_emptystr(_orig_text_input)
+    st.text_area  = _wrap_emptystr(_orig_text_area)
+
+    st.__answering_patched__ = True
+# === [END PREFLIGHT ANSWERING v3] ===
 
 import streamlit as st
 
@@ -78,20 +98,6 @@ document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 """, unsafe_allow_html=True)
 
 _st_pref.markdown("""
-<style>
-/* 🔒 로딩(스트리밍) 중엔 어떤 경로로든 나타난 입력/업로더/폼 모두 숨김 */
-body.answering .center-hero,
-body.answering #chatbar-fixed,
-body.answering section[data-testid="stChatInput"],
-body.answering [data-testid="stFileUploader"],
-body.answering [data-testid="stFileUploaderDropzone"],
-body.answering .stTextInput,
-body.answering form,
-body.answering button.stButton{
-  display: none !important;
-}
-body.answering .block-container{ padding-bottom: 24px !important; }
-</style>
 """, unsafe_allow_html=True)
 # === END PREFLIGHT ===
 
@@ -319,66 +325,6 @@ def inject_sticky_layout_css(mode: str = "wide"):
     )
 
     css = f"""
-    <style>
-      {root_vars}
-
-      /* 본문/입력창 공통 중앙 정렬 & 동일 폭 */
-      .block-container, .stChatInput {{
-        max-width: var(--center-col) !important;
-        margin-left: auto !important;
-        margin-right: auto !important;
-      }}
-
-      /* 채팅 말풍선 최대 폭 */
-      [data-testid="stChatMessage"] {{
-        max-width: var(--bubble-max) !important;
-        width: 100% !important;
-      }}
-      [data-testid="stChatMessage"] .stMarkdown,
-      [data-testid="stChatMessage"] .stMarkdown > div {{
-        width: 100% !important;
-      }}
-
-      /* 대화 전 중앙 히어로 */
-      .center-hero {{
-        min-height: calc(100vh - 220px);
-        display: flex; flex-direction: column; align-items: center; justify-content: center;
-      }}
-      .center-hero .stFileUploader, .center-hero .stTextInput {{
-        width: 720px; max-width: 92vw;
-      }}
-
-      /* 업로더 고정: 앵커 다음 형제 업로더 */
-      #bu-anchor + div[data-testid='stFileUploader'] {{
-        position: fixed;
-        left: 50%; transform: translateX(-50%);
-        bottom: calc(var(--chatbar-h) + var(--chat-gap) + 12px);
-        width: clamp(340px, calc(var(--center-col) - 2*var(--hgap)), calc(100vw - var(--rail) - 2*var(--hgap)));
-        max-width: calc(100vw - var(--rail) - 2*var(--hgap));
-        z-index: 60;
-        background: rgba(0,0,0,0.35);
-        padding: 10px 12px; border-radius: 12px;
-        backdrop-filter: blur(6px);
-      }}
-      #bu-anchor + div [data-testid='stFileUploader'] {{
-        background: transparent !important; border: none !important;
-      }}
-
-      /* 입력창 하단 고정 */
-      section[data-testid="stChatInput"] {{
-        position: fixed; left: 50%; transform: translateX(-50%);
-        bottom: 0; z-index: 70;
-        width: clamp(340px, calc(var(--center-col) - 2*var(--hgap)), calc(100vw - var(--rail) - 2*var(--hgap)));
-        max-width: calc(100vw - var(--rail) - 2*var(--hgap));
-      }}
-
-      /* 본문이 하단 고정 UI와 겹치지 않게 */
-      .block-container {{
-        padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
-      }}
-
-      
-    </style>
     """
     st.markdown(css, unsafe_allow_html=True)
 
@@ -390,76 +336,6 @@ inject_sticky_layout_css("wide")
 import streamlit as st
 
 st.markdown("""
-<style>
-  :root{
-    --right-rail: 360px;   /* 우측 레일 폭 (검색+챗바 공용) */
-    --right-gap:  80px;    /* 본문과 간격 */
-    --right-pad:  24px;    /* 화면 오른쪽 여백 */
-    --right-top:  96px;    /* 상단 시작 위치(헤더/버튼 피해서) */
-
-    /* 좌측 레일을 쓰고 있다면 실제 폭과 간격으로 값만 주면 됨(없으면 0으로 처리됨) */
-    --left-rail: 0px;
-    --left-gap:  0px;
-  }
-
-  @media (min-width:1280px){
-    /* 본문은 양쪽 레일만큼 공간을 비워 중앙에 배치 */
-    body.rightRailDocked .block-container{
-      padding-left:  calc(var(--left-rail)  + var(--left-gap))  !important;
-      padding-right: calc(var(--right-rail) + var(--right-gap)) !important;
-    }
-
-    /* ✅ 우측 '하나의' 레일 컨테이너 (상단=검색, 하단=챗바) */
-    body.rightRailDocked #right-rail{
-      position: fixed !important;
-      top: var(--right-top) !important;
-      right: var(--right-pad) !important;
-      width: var(--right-rail) !important;
-      bottom: 12px !important;     /* 하단 여백 */
-      display: flex !important;
-      flex-direction: column !important;
-      gap: 12px !important;
-      z-index: 70 !important;      /* 본문 위, 헤더/모달보다 낮게 필요시 조정 */
-    }
-
-    /* 상단 통합검색: 내부만 스크롤 */
-    body.rightRailDocked #right-rail .rail-content{
-      flex: 1 1 auto !important;
-      min-height: 0 !important;
-      overflow: auto !important;
-    }
-
-    /* 하단 챗바 래퍼 */
-    body.rightRailDocked #right-rail .rail-chat{
-      flex: 0 0 auto !important;
-    }
-
-    /* ⛔ 기존 고정 규칙 무력화: 검색 패널/챗바를 레일 안에서 '정적'으로 배치 */
-    body.rightRailDocked #search-flyout{
-      position: static !important;
-      top: auto !important; right: auto !important; left: auto !important; bottom: auto !important;
-      width: 100% !important; max-width: none !important; max-height: none !important;
-      overflow: visible !important;
-      z-index: auto !important;
-    }
-    body.rightRailDocked #chatbar-fixed,
-    body.rightRailDocked section[data-testid="stChatInput"]{
-      position: static !important;
-      left: auto !important; right: auto !important; bottom: auto !important; transform: none !important;
-      width: 100% !important; max-width: none !important;
-      z-index: auto !important;
-    }
-  }
-
-  /* 좁은 화면은 원래 흐름 유지(우측 레일 감춤) */
-  @media (max-width:1279px){
-    body.rightRailDocked #right-rail{ display: none !important; }
-    body.rightRailDocked .block-container{
-      padding-left: 0 !important; padding-right: 0 !important;
-    }
-  }
-</style>
-
 <script>
 /* DOM을 안전하게 '도킹': #right-rail을 만들고 #search-flyout과 chat_input을 안으로 옮김
    - Streamlit이 재렌더링해도 MutationObserver가 계속 붙잡아 줍니다. */
@@ -2273,73 +2149,17 @@ chat_started = bool(ANSWERING or _chat_started())
 
 # --- hide chat input & uploaders ONLY while answering ---
 # [DISABLED by PREFLIGHT] st.markdown("""
-# [DISABLED by PREFLIGHT] <style>
-# [DISABLED by PREFLIGHT] /* ▶ 스트리밍 중(=answering)일 때만 숨김 */
-# [DISABLED by PREFLIGHT] body.answering #chatbar-fixed,
-# [DISABLED by PREFLIGHT] body.answering section[data-testid="stChatInput"],
-# [DISABLED by PREFLIGHT] body.answering #bu-anchor + div[data-testid="stFileUploader"],
-# [DISABLED by PREFLIGHT] body.answering .center-hero{
-# [DISABLED by PREFLIGHT]   display: none !important;
-# [DISABLED by PREFLIGHT] }
-# [DISABLED by PREFLIGHT] 
-# [DISABLED by PREFLIGHT] /* ▶ 스트리밍이 아닐 때는 정상 노출 */
-# [DISABLED by PREFLIGHT] body.chat-started:not(.answering) #chatbar-fixed{
-# [DISABLED by PREFLIGHT]   display: block !important;
-# [DISABLED by PREFLIGHT] }
-# [DISABLED by PREFLIGHT] body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"]{
-# [DISABLED by PREFLIGHT]   display: block !important;
-# [DISABLED by PREFLIGHT] }
-# [DISABLED by PREFLIGHT] 
-# [DISABLED by PREFLIGHT] /* ▶ 숨긴 동안 본문 여백 과도하게 남지 않게 보정 */
-# [DISABLED by PREFLIGHT] body.answering .block-container{
-# [DISABLED by PREFLIGHT]   padding-bottom: 24px !important;
-# [DISABLED by PREFLIGHT] }
-# [DISABLED by PREFLIGHT] </style>
-# [DISABLED by PREFLIGHT] """, unsafe_allow_html=True)
+# [DISABLED by PREFLIGHT] # [DISABLED by PREFLIGHT] """, unsafe_allow_html=True)
 
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
 if not chat_started:
     st.markdown("""
-    <style>
-      /* 우측 패널 숨김 */
-      #search-flyout{ display:none !important; }
-
-      /* 우측/하단 여백 제거 */
-      @media (min-width:1280px){ .block-container{ padding-right:0 !important; } }
-      .block-container{ padding-bottom:0 !important; }
-
-      /* 히어로를 뷰포트 절대 중앙에 고정 */
-      .center-hero{
-        position: fixed !important;
-        left: 50% !important; top: 50% !important;
-        transform: translate(-50%, -50%) !important;
-        width: var(--center-col); max-width: 92vw;
-        margin: 0 !important; padding: 0 !important;
-        display: flex; flex-direction: column; align-items: center;
-        justify-content: center;
-      }
-
-      /* 히어로 내부 위젯 폭 */
-      .center-hero .stFileUploader, .center-hero .stTextInput{
-        width: 720px; max-width: 92vw;
-      }
-    </style>
     """, unsafe_allow_html=True)
 
 # 🎯 대화 전에는 우측 패널 숨기고, 여백을 0으로 만들어 완전 중앙 정렬
 if not chat_started:
     st.markdown("""
-    <style>
-      /* hide right rail before first message */
-      #search-flyout { display: none !important; }
-      /* remove right gutter so hero sits dead-center */
-      @media (min-width:1280px) { .block-container { padding-right: 0 !important; } }
-      /* bottom padding 크게 줄여서 화면 정중앙에 오도록 */
-      .block-container { padding-bottom: 64px !important; }
-      /* hero 높이 살짝 줄여 위/아래 균형 */
-      .center-hero { min-height: calc(100vh - 160px) !important; }
-    </style>
     """, unsafe_allow_html=True)
 
 # 3) 화면 분기
@@ -2356,230 +2176,6 @@ else:
 # === 대화 시작 후: 우측 레일을 피해서 배치(침범 방지) ===
 # ----- RIGHT FLYOUT: align once to the question box, stable -----
 st.markdown("""
-<style>
-  :root{
-    --flyout-width: 360px;   /* 우측 패널 폭 */
-    --flyout-gap:   80px;    /* 본문(답변영역)과의 가로 간격 */
-  }
-
-  /* 본문이 우측 패널을 피해 배치되도록 여백 확보 */
-  @media (min-width:1280px){
-    .block-container{
-      padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
-    }
-  }
-
-  /* ====== 패널 배치 모드 ======
-     (A) 화면 고정(스크롤해도 항상 보임) → position: fixed (기본)
-     (B) 따라오지 않게(본문과 함께 위로 올라가도록) → position: sticky 로 교체
-     원하는 쪽 한 줄만 쓰세요.
-  */
-  @media (min-width:1280px){
-    #search-flyout{
-      position: fixed !important;                 /* ← A) 화면 고정 */
-      /* position: sticky !important;             /* ← B) 따라오지 않게: 이 줄로 교체 */
-      top: var(--flyout-top, 120px) !important;   /* JS가 한 번 계산해 넣음 */
-      right: 24px !important;
-      left: auto !important; bottom: auto !important;
-
-      width: var(--flyout-width) !important;
-      max-width: 38vw !important;
-      max-height: calc(100vh - var(--flyout-top,120px) - 24px) !important;
-      overflow: auto !important;
-      z-index: 58 !important;                     /* 업로더(60), 입력창(70)보다 낮게 */
-    }
-  }
-
-  /* 모바일/좁은 화면은 자연스럽게 문서 흐름 */
-  @media (max-width:1279px){
-    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
-    .block-container{ padding-right: 0 !important; }
-  }
-</style>
-
-<script>
-(() => {
-  // 질문 입력 위치를 "한 번만" 읽어서 --flyout-top 을 설정
-  const CANDIDATES = [
-    '#chatbar-fixed',
-    'section[data-testid="stChatInput"]',
-    '.block-container textarea'
-  ];
-  let done = false;
-
-  function alignOnce(){
-    if (done) return;
-    const fly = document.querySelector('#search-flyout');
-    if (!fly) return;
-
-    let target = null;
-    for (const sel of CANDIDATES){
-      target = document.querySelector(sel);
-      if (target) break;
-    }
-    if (!target) return;
-
-    const r = target.getBoundingClientRect();       // viewport 기준
-    const top = Math.max(12, Math.round(r.top));
-    document.documentElement.style.setProperty('--flyout-top', top + 'px');
-    done = true;  // 한 번만
-  }
-
-  // 1) 첫 렌더 직후
-  window.addEventListener('load', () => setTimeout(alignOnce, 0));
-
-  // 2) 대상이 늦게 생겨도 한 번만 정렬
-  const mo = new MutationObserver(() => alignOnce());
-  mo.observe(document.body, {childList: true, subtree: true});
-  (function stopWhenDone(){ if (done) mo.disconnect(); requestAnimationFrame(stopWhenDone); })();
-
-  // 3) 창 크기 변경 시 한 번 재정렬
-  window.addEventListener('resize', () => { done = false; alignOnce(); });
-})();
-</script>
-""", unsafe_allow_html=True)
-
-
-
-
-with st.container():
-    for i, m in enumerate(st.session_state.messages):
-        role = m.get("role")
-        content = (m.get("content") or "")
-        if role == "assistant" and not content.strip():
-            continue  # ✅ 내용이 비면 말풍선 자체를 만들지 않음
-
-        with st.chat_message(role):
-            if role == "assistant":
-                render_bubble_with_copy(content, key=f"past-{i}")
-                if m.get("law"):
-                    with st.expander("📋 이 턴에서 참고한 법령 요약"):
-                        for j, law in enumerate(m["law"], 1):
-                            st.write(f"**{j}. {law['법령명']}** ({law['법령구분']})  | 시행 {law['시행일자']}  | 공포 {law['공포일자']}")
-                            if law.get("법령상세링크"):
-                                st.write(f"- 링크: {law['법령상세링크']}")
-            else:
-                st.markdown(content)
-
-# ✅ 메시지 루프 바로 아래(이미 _inject_right_rail_css() 다음 추천) — 항상 호출
-def _current_q_and_answer():
-    msgs = st.session_state.get("messages", [])
-    last_q = next((m for m in reversed(msgs) if m.get("role")=="user" and (m.get("content") or "").strip()), None)
-    last_a = next((m for m in reversed(msgs) if m.get("role")=="assistant" and (m.get("content") or "").strip()), None)
-    return (last_q or {}).get("content",""), (last_a or {}).get("content","")
-
-# 🔽 대화가 시작된 뒤에만 우측 패널 노출
-# ✅ 로딩(스트리밍) 중에는 패널을 렌더링하지 않음
-if chat_started and not st.session_state.get("__answering__", False):
-    q_for_panel, ans_for_panel = _current_q_and_answer()
-    hints = extract_law_names_from_answer(ans_for_panel) if ans_for_panel else None
-    render_search_flyout(q_for_panel or user_q, num_rows=8, hint_laws=hints, show_debug=SHOW_SEARCH_DEBUG)
-
-# ===============================
-# 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
-# ===============================
-if user_q:
-    if client and AZURE:
-        # 프리뷰/버퍼 초기화
-        stream_box = st.empty()
-        full_text, buffer, collected_laws = "", "", []
-        final_text = ""   # NameError 방지
-
-    try:
-        stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
-
-        for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
-            if kind == "delta":
-                buffer += (payload or "")
-                if len(buffer) >= 200:
-                    full_text += buffer
-                    buffer = ""
-                    if SHOW_STREAM_PREVIEW and stream_box is not None:
-                        stream_box.markdown(_normalize_text(full_text[-1500:]))
-
-            elif kind == "final":
-                if buffer:
-                    full_text += buffer
-                    buffer = ""
-                if payload:
-                    full_text += payload
-                collected_laws = law_list or []
-                break
-
-        # 루프 종료 후 남은 버퍼 반영
-        if buffer:
-            full_text += buffer
-
-    except Exception as e:
-        # 예외 시 폴백
-        laws, ep, err, mode = find_law_with_fallback(user_q, num_rows=10)
-        collected_laws = laws
-        law_ctx = format_law_context(laws)
-        title = "법률 자문 메모"
-        full_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
-        final_text = apply_final_postprocess(full_text, collected_laws)
-
-    # --- ✅ 정상 경로 후처리: 항상 실행되도록 보장 ---
-    if not final_text.strip():
-        final_text = apply_final_postprocess(full_text, collected_laws)
-
-    # ▶ 답변을 세션에 넣고 rerun
-    if final_text.strip():
-        _append_message("assistant", final_text, law=collected_laws)
-        st.session_state["last_q"] = user_q
-        st.session_state.pop("_pending_user_q", None)
-        st.session_state.pop("_pending_user_nonce", None)
-        st.rerun()
-
-    # 프리뷰 컨테이너 비우기
-    if stream_box is not None:
-        stream_box.empty()
-    
-# ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
-if chat_started and not st.session_state.get("__answering__", False):
-    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
-    submitted, typed_text, files = chatbar(
-        placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
-        accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
-    )
-    st.markdown('</div>', unsafe_allow_html=True)                     # ← 래퍼 닫기
-    if submitted:
-        text = (typed_text or "").strip()
-        if text:
-            st.session_state["_pending_user_q"] = text
-            st.session_state["_pending_user_nonce"] = time.time_ns()
-        st.session_state["_clear_input"] = True
-        st.rerun()
-
-
-
-
-# --- PATCH: hide chat input & uploaders ONLY while answering ---
-# [DISABLED by PREFLIGHT] st.markdown("""
-# [DISABLED by PREFLIGHT] <style>
-# [DISABLED by PREFLIGHT] /* ▶ 스트리밍 중(=answering)일 때만 숨김 */
-# [DISABLED by PREFLIGHT] body.answering #chatbar-fixed,
-# [DISABLED by PREFLIGHT] body.answering section[data-testid="stChatInput"],
-# [DISABLED by PREFLIGHT] body.answering #bu-anchor + div[data-testid="stFileUploader"],
-# [DISABLED by PREFLIGHT] body.answering .center-hero,
-# [DISABLED by PREFLIGHT] body.answering [data-testid="stFileUploader"],
-# [DISABLED by PREFLIGHT] body.answering [data-testid="stFileUploaderDropzone"]{
-# [DISABLED by PREFLIGHT]   display: none !important;
-# [DISABLED by PREFLIGHT] }
-# [DISABLED by PREFLIGHT] 
-# [DISABLED by PREFLIGHT] /* ▶ 스트리밍이 아닐 때는 정상 노출 */
-# [DISABLED by PREFLIGHT] body.chat-started:not(.answering) #chatbar-fixed{
-# [DISABLED by PREFLIGHT]   display: block !important;
-# [DISABLED by PREFLIGHT] }
-# [DISABLED by PREFLIGHT] body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"]{
-# [DISABLED by PREFLIGHT]   display: block !important;
-# [DISABLED by PREFLIGHT] }
-# [DISABLED by PREFLIGHT] 
-# [DISABLED by PREFLIGHT] /* ▶ 숨긴 동안 본문 여백 과도하게 남지 않게 보정 */
-# [DISABLED by PREFLIGHT] body.answering .block-container{
-# [DISABLED by PREFLIGHT]   padding-bottom: 24px !important;
-# [DISABLED by PREFLIGHT] }
-# [DISABLED by PREFLIGHT] </style>
 # [DISABLED by PREFLIGHT] """, unsafe_allow_html=True)
 
 
