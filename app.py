@@ -3,6 +3,47 @@ from __future__ import annotations
 
 import streamlit as st
 
+
+# === [CRITICAL PREFLIGHT] answering/chat-started — injected by ChatGPT on 2025-08-23 ===
+import streamlit as _st_pref  # safe re-import
+def __has_user_msg_pref():
+    msgs = _st_pref.session_state.get("messages", [])
+    try:
+        return any((m.get("role")=="user") and (m.get("content") or "").strip() for m in msgs)
+    except Exception:
+        return False
+
+_pending_pref = bool(_st_pref.session_state.get("_pending_user_q"))
+ANSWERING = bool(_pending_pref)
+chat_started = bool(_pending_pref or __has_user_msg_pref())
+_st_pref.session_state["__answering__"] = ANSWERING
+
+_st_pref.markdown(f"""
+<script>
+document.body.classList.toggle('chat-started', {str(chat_started).lower()});
+document.body.classList.toggle('answering', {str(ANSWERING).lower()});
+</script>
+""", unsafe_allow_html=True)
+
+_st_pref.markdown("""
+<style>
+/* 🔒 로딩(스트리밍) 중엔 어떤 경로로든 나타난 입력/업로더/폼 모두 숨김 */
+body.answering .center-hero,
+body.answering #chatbar-fixed,
+body.answering section[data-testid="stChatInput"],
+body.answering [data-testid="stFileUploader"],
+body.answering [data-testid="stFileUploaderDropzone"],
+body.answering .stTextInput,
+body.answering form,
+body.answering button.stButton{
+  display: none !important;
+}
+body.answering .block-container{ padding-bottom: 24px !important; }
+</style>
+""", unsafe_allow_html=True)
+# === END PREFLIGHT ===
+
+
 st.set_page_config(
     page_title="법제처 법무 상담사",
     page_icon="⚖️",
@@ -2171,38 +2212,38 @@ st.session_state["__answering__"] = ANSWERING
 chat_started = bool(ANSWERING or _chat_started())
 
 # chat_started 계산 직후에 추가
-st.markdown(f"""
-<script>
-document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-document.body.classList.toggle('answering', {str(ANSWERING).lower()});
-</script>
-""", unsafe_allow_html=True)
+# [DISABLED by PREFLIGHT] st.markdown(f"""
+# [DISABLED by PREFLIGHT] <script>
+# [DISABLED by PREFLIGHT] document.body.classList.toggle('chat-started', {str(chat_started).lower()});
+# [DISABLED by PREFLIGHT] document.body.classList.toggle('answering', {str(ANSWERING).lower()});
+# [DISABLED by PREFLIGHT] </script>
+# [DISABLED by PREFLIGHT] """, unsafe_allow_html=True)
 
 # --- hide chat input & uploaders ONLY while answering ---
-st.markdown("""
-<style>
-/* ▶ 스트리밍 중(=answering)일 때만 숨김 */
-body.answering #chatbar-fixed,
-body.answering section[data-testid="stChatInput"],
-body.answering #bu-anchor + div[data-testid="stFileUploader"],
-body.answering .center-hero{
-  display: none !important;
-}
-
-/* ▶ 스트리밍이 아닐 때는 정상 노출 */
-body.chat-started:not(.answering) #chatbar-fixed{
-  display: block !important;
-}
-body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"]{
-  display: block !important;
-}
-
-/* ▶ 숨긴 동안 본문 여백 과도하게 남지 않게 보정 */
-body.answering .block-container{
-  padding-bottom: 24px !important;
-}
-</style>
-""", unsafe_allow_html=True)
+# [DISABLED by PREFLIGHT] st.markdown("""
+# [DISABLED by PREFLIGHT] <style>
+# [DISABLED by PREFLIGHT] /* ▶ 스트리밍 중(=answering)일 때만 숨김 */
+# [DISABLED by PREFLIGHT] body.answering #chatbar-fixed,
+# [DISABLED by PREFLIGHT] body.answering section[data-testid="stChatInput"],
+# [DISABLED by PREFLIGHT] body.answering #bu-anchor + div[data-testid="stFileUploader"],
+# [DISABLED by PREFLIGHT] body.answering .center-hero{
+# [DISABLED by PREFLIGHT]   display: none !important;
+# [DISABLED by PREFLIGHT] }
+# [DISABLED by PREFLIGHT] 
+# [DISABLED by PREFLIGHT] /* ▶ 스트리밍이 아닐 때는 정상 노출 */
+# [DISABLED by PREFLIGHT] body.chat-started:not(.answering) #chatbar-fixed{
+# [DISABLED by PREFLIGHT]   display: block !important;
+# [DISABLED by PREFLIGHT] }
+# [DISABLED by PREFLIGHT] body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"]{
+# [DISABLED by PREFLIGHT]   display: block !important;
+# [DISABLED by PREFLIGHT] }
+# [DISABLED by PREFLIGHT] 
+# [DISABLED by PREFLIGHT] /* ▶ 숨긴 동안 본문 여백 과도하게 남지 않게 보정 */
+# [DISABLED by PREFLIGHT] body.answering .block-container{
+# [DISABLED by PREFLIGHT]   padding-bottom: 24px !important;
+# [DISABLED by PREFLIGHT] }
+# [DISABLED by PREFLIGHT] </style>
+# [DISABLED by PREFLIGHT] """, unsafe_allow_html=True)
 
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
@@ -2462,42 +2503,43 @@ if chat_started and not st.session_state.get("__answering__", False):
 
 
 # --- PATCH: hide chat input & uploaders ONLY while answering ---
-st.markdown("""
-<style>
-/* ▶ 스트리밍 중(=answering)일 때만 숨김 */
-body.answering #chatbar-fixed,
-body.answering section[data-testid="stChatInput"],
-body.answering #bu-anchor + div[data-testid="stFileUploader"],
-body.answering .center-hero,
-body.answering [data-testid="stFileUploader"],
-body.answering [data-testid="stFileUploaderDropzone"]{
-  display: none !important;
-}
-
-/* ▶ 스트리밍이 아닐 때는 정상 노출 */
-body.chat-started:not(.answering) #chatbar-fixed{
-  display: block !important;
-}
-body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"]{
-  display: block !important;
-}
-
-/* ▶ 숨긴 동안 본문 여백 과도하게 남지 않게 보정 */
-body.answering .block-container{
-  padding-bottom: 24px !important;
-}
-</style>
-""", unsafe_allow_html=True)
+# [DISABLED by PREFLIGHT] st.markdown("""
+# [DISABLED by PREFLIGHT] <style>
+# [DISABLED by PREFLIGHT] /* ▶ 스트리밍 중(=answering)일 때만 숨김 */
+# [DISABLED by PREFLIGHT] body.answering #chatbar-fixed,
+# [DISABLED by PREFLIGHT] body.answering section[data-testid="stChatInput"],
+# [DISABLED by PREFLIGHT] body.answering #bu-anchor + div[data-testid="stFileUploader"],
+# [DISABLED by PREFLIGHT] body.answering .center-hero,
+# [DISABLED by PREFLIGHT] body.answering [data-testid="stFileUploader"],
+# [DISABLED by PREFLIGHT] body.answering [data-testid="stFileUploaderDropzone"]{
+# [DISABLED by PREFLIGHT]   display: none !important;
+# [DISABLED by PREFLIGHT] }
+# [DISABLED by PREFLIGHT] 
+# [DISABLED by PREFLIGHT] /* ▶ 스트리밍이 아닐 때는 정상 노출 */
+# [DISABLED by PREFLIGHT] body.chat-started:not(.answering) #chatbar-fixed{
+# [DISABLED by PREFLIGHT]   display: block !important;
+# [DISABLED by PREFLIGHT] }
+# [DISABLED by PREFLIGHT] body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"]{
+# [DISABLED by PREFLIGHT]   display: block !important;
+# [DISABLED by PREFLIGHT] }
+# [DISABLED by PREFLIGHT] 
+# [DISABLED by PREFLIGHT] /* ▶ 숨긴 동안 본문 여백 과도하게 남지 않게 보정 */
+# [DISABLED by PREFLIGHT] body.answering .block-container{
+# [DISABLED by PREFLIGHT]   padding-bottom: 24px !important;
+# [DISABLED by PREFLIGHT] }
+# [DISABLED by PREFLIGHT] </style>
+# [DISABLED by PREFLIGHT] """, unsafe_allow_html=True)
 
 
 
 # --- PATCH: body class toggles for chat-started / answering ---
 try:
-    st.markdown(f"""
-    <script>
-    document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-    document.body.classList.toggle('answering', {str(ANSWERING).lower()});
-    </script>
-    """, unsafe_allow_html=True)
+    pass
+# [DISABLED by PREFLIGHT]     st.markdown(f"""
+# [DISABLED by PREFLIGHT]     <script>
+# [DISABLED by PREFLIGHT]     document.body.classList.toggle('chat-started', {str(chat_started).lower()});
+# [DISABLED by PREFLIGHT]     document.body.classList.toggle('answering', {str(ANSWERING).lower()});
+# [DISABLED by PREFLIGHT]     </script>
+# [DISABLED by PREFLIGHT]     """, unsafe_allow_html=True)
 except Exception:
     pass
