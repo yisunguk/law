@@ -2418,3 +2418,39 @@ st.markdown("""
   }
 </style>
 """, unsafe_allow_html=True)
+
+
+# === unified right-flyout layout (single source of truth) ===
+import streamlit as st
+
+st.markdown("""
+<style>
+  :root{
+    --flyout-width: 360px;   /* right panel width */
+    --flyout-gap:   80px;    /* gap between content and panel */
+    --flyout-top:   120px;   /* distance from top of content container */
+  }
+  @media (min-width:1280px){
+    .block-container{
+      position: relative !important;
+      padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
+    }
+    #search-flyout{
+      position: absolute !important;
+      top: var(--flyout-top) !important;
+      right: var(--flyout-gap) !important;
+      left: auto !important; bottom: auto !important;
+      width: var(--flyout-width) !important;
+      max-width: 38vw !important;
+      max-height: none !important;
+      overflow: visible !important;
+      z-index: 5 !important;
+    }
+  }
+  @media (max-width:1279px){
+    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
+    .block-container{ padding-right: 0 !important; }
+  }
+</style>
+""", unsafe_allow_html=True)
+# === /unified right-flyout layout ===
