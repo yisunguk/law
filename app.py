@@ -305,41 +305,46 @@ inject_sticky_layout_css("wide")
 st.markdown("""
 <style>
   :root{
-    /* ← 여기 숫자만 바꿔서 미세조정하세요 */
+    /* 필요하면 이 3개만 조절 */
     --flyout-width: 360px;   /* 패널 폭 */
-    --flyout-gap:   64px;    /* 패널과 본문(답변영역) 사이 여백 */
-    --flyout-top:   140px;   /* 화면 상단으로부터 떨어지는 거리(크면 더 아래로) */
+    --flyout-gap:   64px;    /* 본문과 패널 사이 간격 */
+    --flyout-top:   140px;   /* 상단에서 떨어진 거리(커질수록 더 아래) */
   }
 
-  /* 데스크톱만 고정, 모바일은 원래 흐름 */
-  @media (min-width:1100px){
-    /* inject_sticky_layout_css()가 넣은 top:12px/bottom:12px !important를 무력화 */
+  @media (min-width: 1100px){
+    /* 1) 본문 컨테이너를 기준점으로 */
+    .block-container{ position: relative !important; }
+
+    /* 2) 패널을 컨테이너 오른쪽 '밖'으로 배치 + 스크롤 시 함께 위로 사라짐 */
     #search-flyout{
-      position: absolute !important;
+      position: absolute !important;       /* fixed 아님 */
       top: var(--flyout-top) !important;
-      bottom: auto !important;              /* ← bottom:12px !important 덮어쓰기 */
-      right: 24px !important;
+      left: calc(100% + var(--flyout-gap)) !important;  /* ← 핵심: 컨테이너 오른쪽 밖 */
+      right: auto !important;
 
       width: var(--flyout-width) !important;
       max-width: 38vw !important;
-      max-height: calc(100vh - var(--flyout-top) - 24px) !important;
-      overflow: auto !important;
-      z-index: 10;
+
+      /* 내부 스크롤 불필요하면 아래 두 줄 유지 */
+      max-height: none !important;
+      overflow: visible !important;
+
+      z-index: 5 !important;               /* 겹침 심하면 4~6 사이로 조정 */
     }
 
-    /* 답변 영역을 왼쪽으로 밀어 실제 간격 확보 */
+    /* 본문이 가려지지 않도록 우측 여백 확보(있으면 유지해도 무방) */
     .block-container{
       padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
     }
   }
 
-  @media (max-width:1099px){
-    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
+  /* 모바일/좁은 화면에서는 자연스럽게 본문 흐름으로 */
+  @media (max-width: 1099px){
+    #search-flyout{ position: static !important; left:auto !important; right:auto !important; }
     .block-container{ padding-right: 0 !important; }
   }
 </style>
 """, unsafe_allow_html=True)
-
 
 
 
