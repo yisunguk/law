@@ -308,7 +308,7 @@ st.markdown("""
     /* 숫자만 바꾸면 됩니다 */
     --flyout-width: 360px;     /* 우측 패널 폭 */
     --flyout-gap:   64px;      /* 본문과 패널 사이 간격 */
-    --flyout-top:   24px;      /* 컨테이너 기준 상단 여백 (작을수록 위로 올라감) */
+    --flyout-top:   150px;      /* 컨테이너 기준 상단 여백 (작을수록 위로 올라감) */
   }
 
   @media (min-width:1100px){
