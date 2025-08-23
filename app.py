@@ -297,23 +297,26 @@ def inject_sticky_layout_css(mode: str = "wide"):
     """
     st.markdown(css, unsafe_allow_html=True)
 
-import streamlit as st
+# 호출 위치: 파일 맨 아래, 모든 컴포넌트를 그린 뒤
+inject_sticky_layout_css("wide")
+
+# ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
 
 st.markdown("""
 <style>
   :root{
-    /* 숫자만 조정하면 됩니다 */
-    --flyout-width: 360px;   /* 우측 패널 폭 */
-    --flyout-gap:   130px;    /* 패널과 본문(답변영역) 사이 여백 */
-    --flyout-top:   160px;    /* 화면 상단에서 패널까지 간격 */
+    /* 여기 숫자만 바꾸면 됩니다 */
+    --flyout-width: 360px;   /* 패널 폭 */
+    --flyout-gap:   56px;    /* 패널-답변영역 사이 여백 */
+    --flyout-top:   140px;   /* 상단에서 얼마나 내릴지 (예: 140px) */
   }
 
-  /* 데스크톱 + 대화 시작 후에만 적용 */
   @media (min-width:1100px){
-    body.chat-started #search-flyout{
+    /* 더 높은 특이도로 최종 오버라이드 */
+    html body.chat-started #search-flyout{
       position: fixed !important;
       top: var(--flyout-top) !important;
-      bottom: auto !important;                 /* 이전 bottom:12px 제어 무력화 */
+      bottom: auto !important;                 /* 이전 bottom:12px !important 무력화 */
       right: 24px !important;
       width: var(--flyout-width) !important;
       max-width: 38vw !important;
@@ -321,13 +324,13 @@ st.markdown("""
       overflow: auto !important;
       z-index: 10;
     }
-    body.chat-started .block-container{
-      /* 답변영역을 왼쪽으로 밀어 실제 간격 확보 */
+    html body.chat-started .block-container{
+      /* 패널 폭 + 여백만큼 오른쪽 공간 비워서 답변창이 안 붙게 */
       padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
     }
   }
 
-  /* 모바일/좁은 화면은 원래 흐름 유지 */
+  /* 모바일/좁은 화면에서는 원래 흐름 */
   @media (max-width:1099px){
     #search-flyout{ position: static !important; max-height: none !important; overflow: visible !important; }
     .block-container{ padding-right: 0 !important; }
@@ -335,11 +338,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
-# 호출 위치: 파일 맨 아래, 모든 컴포넌트를 그린 뒤
-inject_sticky_layout_css("wide")
-
-# ===== 끝 =====
 
 
 
