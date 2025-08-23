@@ -296,47 +296,47 @@ inject_sticky_layout_css("wide")
 st.markdown("""
 <style>
   :root{
-    --flyout-width: 360px;      /* 패널 폭 */
-    --flyout-gap:   80px;       /* 본문과 패널 사이 가로 간격 */
-    --flyout-top:   120px;      /* 화면 상단에서 패널까지 거리(지금 보이는 위치로 맞춰 주세요) */
-    --chatbar-h:    56px;       /* 하단 입력창 높이 */
-    --chat-gap:     12px;       /* 입력창 위 여백 */
+    /* 원하는 값만 숫자 조정 */
+    --flyout-width: 360px;   /* 우측 패널 폭 */
+    --flyout-gap:   80px;    /* 본문과의 가로 간격 */
+    --flyout-top:   120px;   /* 화면 상단에서 패널까지 거리 */
+    --chatbar-h:    56px;    /* 하단 채팅 입력창 높이 */
+    --chat-gap:     12px;    /* 입력창 위 여백 */
   }
 
+  /* 데스크톱에서만 별도 배치 */
   @media (min-width:1280px){
-    /* 본문이 우측 패널과 겹치지 않게 우측 여백 확보 */
+    /* 본문이 우측 패널을 피해 배치되도록 우측 여백 확보 */
     .block-container{
       padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
     }
 
-    /* 패널: 상단에 '고정', 하단은 채팅창 위에서 멈추도록 높이 제한 */
+    /* 우측 통합검색 패널: 상단 고정 + 하단(입력창)과는 절대 겹치지 않도록 높이 제한 */
     #search-flyout{
-      position: fixed !important;
-      top: var(--flyout-top) !important;
+      position: fixed !important;           /* 화면에 고정 (스크롤해도 제자리) */
+      top: var(--flyout-top) !important;    /* 현재 보이는 상단 위치 고정 */
       right: 24px !important;
-      bottom: auto !important;  /* 기존 bottom:12px 같은 규칙 무력화 */
+      left: auto !important;
+      bottom: auto !important;              /* 기존 bottom 규칙 무력화 */
 
       width: var(--flyout-width) !important;
       max-width: 38vw !important;
 
-      /* ▼ 패널 높이 = 화면높이 - (상단간격 + 채팅바 높이 + 여백) */
-      max-height: calc(
-        100vh - var(--flyout-top) - var(--chatbar-h) - var(--chat-gap) - 16px
-      ) !important;
-      overflow: auto !important;   /* 내용은 패널 내부에서만 스크롤 */
-      z-index: 58 !important;      /* 입력창(70)보다 낮게 */
+      /* ↓ 패널 최대 높이 = 뷰포트 - (상단여백 + 입력창 높이 + 입력창 위여백 + 여유 16) */
+      max-height: calc(100vh - var(--flyout-top) - var(--chatbar-h) - var(--chat-gap) - 16px) !important;
+
+      overflow: auto !important;            /* 내용은 패널 안에서만 스크롤 */
+      z-index: 58 !important;               /* 입력창(보통 70)보다 낮게 */
     }
   }
 
-  /* 모바일/좁은 화면: 자연스러운 흐름 */
+  /* 모바일/좁은 화면: 자연스러운 흐름으로 복귀 */
   @media (max-width:1279px){
     #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
     .block-container{ padding-right: 0 !important; }
   }
 </style>
 """, unsafe_allow_html=True)
-
-
 
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
