@@ -1,37 +1,47 @@
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
-# === [CRITICAL PREFLIGHT ANSWERING v6] DO NOT REMOVE ===
-# Minimal, no-CSS, no-JS preflight (after __future__ imports).
-# Goal: while an answer is streaming, prevent chat input & file uploader from rendering,
-# without touching any other UI or styles.
+# === [CRITICAL PREFLIGHT ANSWERING v7] DO NOT REMOVE ===
+# Minimal preflight to hide inputs only during answer streaming.
+# Place after __future__ imports.
 import streamlit as st
 
-def _is_answering_now():
-    return bool(
-        st.session_state.get("_pending_user_q") or
-        st.session_state.get("__answering__")
-    )
+# Derive answering for *this* run only (no latching).
+_answer_keys = ["_pending_user_q","_streaming","is_streaming","_answering_now"]
+ANSWERING_NOW = any(bool(st.session_state.get(k)) for k in _answer_keys)
+# Keep a normalized flag other code can read, but recompute each run.
+st.session_state["__answering__"] = bool(ANSWERING_NOW)
 
-# Do NOT set or latch anything here; just read existing flags.
-# Monkeypatch a *very small* set of widgets. Everything else remains untouched.
-if not getattr(st, "__answering_patch_v6__", False):
+# Guard core input widgets so they don't render while answering.
+# (We don't touch any other UI or CSS.)
+if not getattr(st, "__answering_patch_v7__", False):
     _orig_file_uploader = st.file_uploader
     _orig_chat_input    = getattr(st, "chat_input", None)
+    _orig_text_input    = st.text_input
+    _orig_text_area     = st.text_area
 
     def _guard_none(fn):
         def _inner(*args, **kwargs):
-            if _is_answering_now():
+            if st.session_state.get("__answering__", False):
                 return None
+            return fn(*args, **kwargs)
+        return _inner
+
+    def _guard_text(fn):
+        def _inner(*args, **kwargs):
+            if st.session_state.get("__answering__", False):
+                return ""
             return fn(*args, **kwargs)
         return _inner
 
     st.file_uploader = _guard_none(_orig_file_uploader)
     if _orig_chat_input:
         st.chat_input = _guard_none(_orig_chat_input)
+    st.text_input = _guard_text(_orig_text_input)
+    st.text_area  = _guard_text(_orig_text_area)
 
-    st.__answering_patch_v6__ = True
-# === [END PREFLIGHT ANSWERING v6] ===
+    st.__answering_patch_v7__ = True
+# === [END PREFLIGHT ANSWERING v7] ===
 
 import streamlit as st
 
