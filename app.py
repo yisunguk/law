@@ -205,22 +205,25 @@ def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
 def inject_sticky_layout_css(mode: str = "wide"):
+    import streamlit as st
+
+    # 중앙 폭/말풍선 폭 프리셋
     PRESETS = {
         "wide":   {"center": "1160px", "bubble_max": "760px"},
         "narrow": {"center": "880px",  "bubble_max": "640px"},
     }
     p = PRESETS.get(mode, PRESETS["wide"])
 
-    # 전역 CSS 변수(한 군데에서만 선언)
+    # 전역 CSS 변수
     root_vars = (
-        ":root {"
-        " --center-col: 1160px;"
-        " --bubble-max: 760px;"
-        " --chatbar-h: 56px;"
-        " --chat-gap: 12px;"
-        " --rail: 420px;"
-        " --hgap: 24px;"
-        " }"
+        f":root{{"
+        f" --center-col: {p['center']};"
+        f" --bubble-max: {p['bubble_max']};"
+        f" --chatbar-h: 56px;"     # 입력바 높이
+        f" --chat-gap: 12px;"      # 입력바-업로더 간격
+        f" --rail: 420px;"         # 우측 패널(사이드 레일) 폭 + 여유
+        f" --hgap: 24px;"          # 좌우 여백
+        f"}}"
     )
 
     css = f"""
@@ -234,7 +237,7 @@ def inject_sticky_layout_css(mode: str = "wide"):
         margin-right: auto !important;
       }}
 
-      /* 채팅 말풍선 최대 폭 */
+      /* 채팅 말풍선 최대 폭 제한 */
       [data-testid="stChatMessage"] {{
         max-width: var(--bubble-max) !important;
         width: 100% !important;
@@ -249,29 +252,40 @@ def inject_sticky_layout_css(mode: str = "wide"):
         min-height: calc(100vh - 220px);
         display: flex; flex-direction: column; align-items: center; justify-content: center;
       }}
-      .center-hero .stFileUploader, .center-hero .stTextInput {{
-        width: 720px; max-width: 92vw;
+
+      /* 하단 고정 입력바 래퍼 */
+      #chatbar-fixed {{
+        position: fixed !important;
+        left: 50% !important; transform: translateX(-50%) !important;
+        bottom: 12px !important;
+        width: var(--center-col) !important;
+        max-width: 92vw !important;
+        z-index: 70 !important;
       }}
 
-      /* 업로더 고정: 앵커 다음 형제 업로더 */
-      #bu-anchor + div[data-testid='stFileUploader'] {{
-        position: fixed;
-        left: 50%; transform: translateX(-50%);
-        bottom: calc(12px + var(--chatbar-h) + var(--chat-gap));
-        z-index: 60;
-        width: var(--center-col);
-        max-width: 92vw;
-        padding: 8px 0;
+      /* 하단 고정 업로더 — bu-anchor 바로 다음 형제 */
+      #bu-anchor + div[data-testid="stFileUploader"] {{
+        position: fixed !important;
+        left: 50% !important; transform: translateX(-50%) !important;
+        bottom: calc(12px + var(--chatbar-h) + var(--chat-gap)) !important;
+        width: var(--center-col) !important;
+        max-width: 92vw !important;
+        z-index: 69 !important;
       }}
 
-      /* 데스크톱에서는 우측 레일을 피해 정렬 */
+      /* 데스크톱에서는 우측 레일(사이드바 영역)을 피해 정렬 */
       @media (min-width:1280px){{
-        body.chat-started #bu-anchor + div[data-testid='stFileUploader'],
-        body.chat-started #chatbar-fixed {{
-          left: calc(50% - var(--rail)/2);
-          transform: translateX(-50%);
-          width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap)));
-          max-width: calc(100vw - var(--rail) - 2*var(--hgap));
+        /* 우측 패널 공간만큼 본문을 오른쪽에서 띄움 */
+        body.chat-started .block-container {{
+          padding-right: var(--rail) !important;
+        }}
+        /* 하단 입력/업로더의 '위치만' 조정 (숨기지 않음) */
+        body.chat-started #chatbar-fixed,
+        body.chat-started #bu-anchor + div[data-testid='stFileUploader'] {{
+          left: calc(50% - var(--rail)/2) !important;
+          transform: translateX(-50%) !important;
+          width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap))) !important;
+          max-width: calc(100vw - var(--rail) - 2*var(--hgap)) !important;
         }}
       }}
 
@@ -279,19 +293,10 @@ def inject_sticky_layout_css(mode: str = "wide"):
       .block-container {{
         padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
       }}
-
-      /* 우측 플로팅 검색 패널 */
-      #search-flyout {{
-        position: fixed; top: 72px; right: 24px;
-        width: 360px; max-width: 38vw;
-        height: calc(100vh - 96px);
-        overflow: auto; z-index: 58;   /* 업로더(60)와 입력창(70)보다 낮게 */
-        padding: 12px 14px; border-radius: 12px;
-      }}
     </style>
     """
-    st.markdown(css, unsafe_allow_html=True)
 
+    st.markdown(css, unsafe_allow_html=True)
 
 inject_sticky_layout_css("wide")
 
@@ -2046,9 +2051,10 @@ with st.sidebar:
 # 1) pending → messages 먼저 옮김
 user_q = _push_user_from_pending()
 
-# === 지금 턴이 '답변을 생성하는 런'인지 여부 (스트리밍 중 표시/숨김에 사용)
-ANSWERING = bool(user_q)
-st.session_state["__answering__"] = ANSWERING
+# 스트리밍이 시작되면 True로 ‘고정’
+if user_q is not None:
+    st.session_state["__answering__"] = True
+
 
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
@@ -2056,20 +2062,23 @@ chat_started = _chat_started()
 # chat_started 계산 직후에 추가
 st.markdown(f"""
 <style>
-/* ✅ 답변 중(스트리밍)일 때만 입력/업로더/히어로 전부 숨김 */
+/* ✅ 답변(스트리밍) 중에는 중앙/하단 입력과 업로더, 중앙 폼 위젯까지 전부 숨김 */
 body.answering .center-hero,
 body.answering #chatbar-fixed,
 body.answering #bu-anchor + div[data-testid="stFileUploader"],
-body.answering [data-testid="stChatInput"] {{
+body.answering [data-testid="stChatInput"],
+body.answering .block-container .stForm,
+body.answering .block-container .stTextInput,
+body.answering .block-container .stFileUploader {{
   display: none !important;
 }}
 
-/* 대화가 시작되면(첫 메시지 이후) 중앙 히어로는 항상 감춤(안전장치) */
+/* 안전장치: 첫 메시지 이후엔 중앙 히어로는 항상 감춤 */
 body.chat-started .center-hero {{
   display: none !important;
 }}
 
-/* 답변 중일 때만 하단 여백 축소(있으면 유지) */
+/* 답변 중일 때만 하단 여백 살짝 축소 */
 body.answering .block-container {{
   padding-bottom: calc(var(--chat-gap) + 24px) !important;
 }}
@@ -2077,7 +2086,7 @@ body.answering .block-container {{
 
 <script>
 document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-document.body.classList.toggle('answering', {str(st.session_state.get("__answering__", False)).lower()});
+document.body.classList.toggle('answering', {str(bool(st.session_state.get("__answering__", False))).lower()});
 </script>
 """, unsafe_allow_html=True)
 
@@ -2255,13 +2264,15 @@ if user_q:
     if not final_text.strip():
         final_text = apply_final_postprocess(full_text, collected_laws)
 
-    # ▶ 답변을 세션에 넣고 rerun
-    if final_text.strip():
-        _append_message("assistant", final_text, law=collected_laws)
-        st.session_state["last_q"] = user_q
-        st.session_state.pop("_pending_user_q", None)
-        st.session_state.pop("_pending_user_nonce", None)
-        st.rerun()
+   # ▶ 답변을 세션에 넣고 rerun
+if final_text.strip():
+    _append_message("assistant", final_text, law=collected_laws)
+    st.session_state["last_q"] = user_q
+    st.session_state.pop("_pending_user_q", None)
+    st.session_state.pop("_pending_user_nonce", None)
+    st.session_state["__answering__"] = False   # ← 여기 추가
+    st.rerun()
+
 
     # 프리뷰 컨테이너 비우기
     if stream_box is not None:
