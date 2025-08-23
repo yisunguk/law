@@ -2378,13 +2378,12 @@ if chat_started and not st.session_state.get("__answering__", False):
         st.rerun()
 
 
-# app.py 하단(우측 패널 스타일 넣는 위치)에 이 블록만 남기세요.
 st.markdown("""
 <style>
   :root{
-    --flyout-width: 360px;  /* 패널 폭 */
-    --flyout-gap:   80px;   /* 본문과 패널 사이 가로 간격 */
-    --flyout-top:   120px;  /* 컨테이너(본문) 상단에서부터 거리 */
+    --flyout-width: 360px;   /* 우측 패널 폭 */
+    --flyout-gap:   80px;    /* 본문과 패널 사이 가로 간격 */
+    --flyout-top:   120px;   /* 컨테이너(본문) 상단에서부터 거리 */
   }
 
   @media (min-width:1280px){
@@ -2394,9 +2393,9 @@ st.markdown("""
       padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
     }
 
-    /* 패널: 컨테이너 기준 배치(문서와 함께 스크롤됨 = 안내려옴) */
+    /* 패널: 컨테이너 기준 '위치 고정' (문서와 함께만 스크롤 = 안내려옴) */
     #search-flyout{
-      position: absolute !important;
+      position: absolute !important;   /* ← 핵심: fixed/sticky 금지 */
       top: var(--flyout-top) !important;
       right: var(--flyout-gap) !important;
       left: auto !important; bottom: auto !important;
@@ -2404,15 +2403,15 @@ st.markdown("""
       width: var(--flyout-width) !important;
       max-width: 38vw !important;
 
-      /* 내부 스크롤 별도 사용 안 함(필요하면 overflow:auto로 바꾸세요) */
+      /* 내부 스크롤은 끔(필요하면 auto로 교체) */
       max-height: none !important;
       overflow: visible !important;
 
-      z-index: 5 !important; /* 입력창/업로더보다 낮게 */
+      z-index: 5 !important; /* 채팅 입력창/업로더보다 아래 */
     }
   }
 
-  /* 모바일/좁은 화면은 원래 흐름 */
+  /* 모바일/좁은 화면은 문서 흐름 그대로 */
   @media (max-width:1279px){
     #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
     .block-container{ padding-right: 0 !important; }
