@@ -1,47 +1,28 @@
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
-# === [DROP-IN: hide chat input & uploader ONLY while streaming] ===
+# === [STREAMING CSS ONLY — hide inputs while answering] ===
 import streamlit as st
 
-def _answering_now() -> bool:
+def __is_answering() -> bool:
     ss = st.session_state
-    return bool(
-        ss.get("_pending_user_q") or    # when user message is staged
-        ss.get("__answering__") or      # normalized flag some apps set
-        ss.get("_streaming") or         # custom streaming flag
-        ss.get("is_streaming")          # another common name
-    )
+    return bool(ss.get("_pending_user_q") or ss.get("__answering__") or ss.get("_streaming") or ss.get("is_streaming"))
 
-# Guard: during streaming, these widgets won't render even if called
-if not st.session_state.get("_dropin_guarded_", False):
-    _orig_file_uploader = st.file_uploader
-    _orig_chat_input    = getattr(st, "chat_input", None)
-
-    def _guard_none(fn):
-        def _inner(*args, **kwargs):
-            return None if _answering_now() else fn(*args, **kwargs)
-        return _inner
-
-    st.file_uploader = _guard_none(_orig_file_uploader)
-    if _orig_chat_input:
-        st.chat_input = _guard_none(_orig_chat_input)
-
-    st.session_state["_dropin_guarded_"] = True
-
-# CSS fallback (applies only while streaming)
-if _answering_now():
+if __is_answering():
     st.markdown("""
     <style>
+      /* Hide *only during streaming* */
       section[data-testid="stChatInput"],
       [data-testid="stFileUploader"],
       [data-testid="stFileUploaderDropzone"],
       #chatbar-fixed,
-      .center-hero .stFileUploader,
-      .center-hero .stTextInput { display: none !important; }
+      .center-hero [data-testid="stFileUploader"],
+      .center-hero .stTextInput {
+        display: none !important;
+      }
     </style>
     """, unsafe_allow_html=True)
-# === [END DROP-IN] ===
+# === [END STREAMING CSS ONLY] ===
 
 import streamlit as st
 
