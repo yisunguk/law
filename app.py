@@ -2075,6 +2075,10 @@ body.chat-started #chatbar-fixed {
 body.answering .block-container { 
     padding-bottom: calc(var(--chat-gap) + 24px) !important; 
 }
+            
+/* ✅ 답변 중에는 우측 통합검색 패널 숨김 */
+body.answering #search-flyout { 
+    display: none !important; 
 </style>
 """, unsafe_allow_html=True)
 
@@ -2194,13 +2198,16 @@ def _current_q_and_answer():
     return (last_q or {}).get("content",""), (last_a or {}).get("content","")
 
 # 🔽 대화가 시작된 뒤에만 우측 패널 노출
-if chat_started:
+# (변경 전) if chat_started:
+if chat_started and not st.session_state.get("__answering__", False):
     q_for_panel, ans_for_panel = _current_q_and_answer()
     hints = extract_law_names_from_answer(ans_for_panel) if ans_for_panel else None
-    render_search_flyout(q_for_panel or user_q, num_rows=8, hint_laws=hints, show_debug=SHOW_SEARCH_DEBUG)
-
-
-
+    render_search_flyout(
+        q_for_panel or user_q,
+        num_rows=8,
+        hint_laws=hints,
+        show_debug=SHOW_SEARCH_DEBUG
+    )
 
 # ===============================
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
