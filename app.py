@@ -305,38 +305,41 @@ inject_sticky_layout_css("wide")
 st.markdown("""
 <style>
   :root{
-    /* 여기 숫자만 바꾸면 됩니다 */
+    /* ← 여기 숫자만 바꿔서 미세조정하세요 */
     --flyout-width: 360px;   /* 패널 폭 */
-    --flyout-gap:   100px;    /* 패널-답변영역 사이 여백 */
-    --flyout-top:   200px;   /* 상단에서 얼마나 내릴지 (예: 140px) */
+    --flyout-gap:   64px;    /* 패널과 본문(답변영역) 사이 여백 */
+    --flyout-top:   140px;   /* 화면 상단으로부터 떨어지는 거리(크면 더 아래로) */
   }
 
+  /* 데스크톱만 고정, 모바일은 원래 흐름 */
   @media (min-width:1100px){
-    /* 더 높은 특이도로 최종 오버라이드 */
-    html body.chat-started #search-flyout{
+    /* inject_sticky_layout_css()가 넣은 top:12px/bottom:12px !important를 무력화 */
+    #search-flyout{
       position: fixed !important;
       top: var(--flyout-top) !important;
-      bottom: auto !important;                 /* 이전 bottom:12px !important 무력화 */
+      bottom: auto !important;              /* ← bottom:12px !important 덮어쓰기 */
       right: 24px !important;
+
       width: var(--flyout-width) !important;
       max-width: 38vw !important;
       max-height: calc(100vh - var(--flyout-top) - 24px) !important;
       overflow: auto !important;
       z-index: 10;
     }
-    html body.chat-started .block-container{
-      /* 패널 폭 + 여백만큼 오른쪽 공간 비워서 답변창이 안 붙게 */
+
+    /* 답변 영역을 왼쪽으로 밀어 실제 간격 확보 */
+    .block-container{
       padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
     }
   }
 
-  /* 모바일/좁은 화면에서는 원래 흐름 */
   @media (max-width:1099px){
-    #search-flyout{ position: static !important; max-height: none !important; overflow: visible !important; }
+    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
     .block-container{ padding-right: 0 !important; }
   }
 </style>
 """, unsafe_allow_html=True)
+
 
 
 
