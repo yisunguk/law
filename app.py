@@ -283,14 +283,14 @@ def inject_sticky_layout_css(mode: str = "wide"):
       }}
 
       /* 우측 플로팅 검색 패널 — 상단 고정 + 답변창과 간격 확보 */
-      #search-flyout {{
+       #search-flyout {{
         position: fixed !important;
-        top: 12px !important;
-        bottom: 12px !important;
-        right: 24px;
-        width: 360px; max-width: 38vw;
+        top: var(--flyout-top) !important;           /* 상단에서 더 띄움 */
+        bottom: 12px !important;                     /* 하단 소폭 여백 */
+        right: var(--flyout-right);
+        width: var(--flyout-width); max-width: 38vw;
         height: auto !important;
-        overflow: auto; z-index: 58;   /* 업로더(60)와 입력창(70)보다 낮게 */
+        overflow: auto; z-index: 58;                 /* 업로더(60), 입력창(70)보다 낮게 */
         padding: 12px 14px; border-radius: 12px;
       }}
     </style>
