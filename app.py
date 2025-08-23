@@ -293,50 +293,52 @@ inject_sticky_layout_css("wide")
 # ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
 
 # --- Right flyout: 상단 고정 + 하단(채팅창)과 겹치지 않게 ---
+# --- Right flyout: 하단 답변창(입력창) 위에 맞춰 고정 ---
+import streamlit as st
 st.markdown("""
 <style>
   :root{
-    /* 원하는 값만 숫자 조정 */
-    --flyout-width: 360px;   /* 우측 패널 폭 */
-    --flyout-gap:   80px;    /* 본문과의 가로 간격 */
-    --flyout-top:   120px;   /* 화면 상단에서 패널까지 거리 */
-    --chatbar-h:    56px;    /* 하단 채팅 입력창 높이 */
-    --chat-gap:     12px;    /* 입력창 위 여백 */
+    /* 숫자만 바꾸면 미세조정 됩니다 */
+    --flyout-width: 360px;     /* 우측 패널 폭 */
+    --flyout-gap:   80px;      /* 본문과 패널 사이 가로 간격 */
+    --chatbar-h:    56px;      /* 하단 입력창 높이 */
+    --chat-gap:     12px;      /* 입력창 위 여백 */
+    /* 패널 하단이 멈출 위치(= 입력창 바로 위) */
+    --flyout-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 16px);
   }
 
-  /* 데스크톱에서만 별도 배치 */
   @media (min-width:1280px){
-    /* 본문이 우측 패널을 피해 배치되도록 우측 여백 확보 */
+    /* 본문이 패널과 겹치지 않도록 우측 여백 확보 */
     .block-container{
       padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
     }
 
-    /* 우측 통합검색 패널: 상단 고정 + 하단(입력창)과는 절대 겹치지 않도록 높이 제한 */
+    /* 패널: 화면 하단 기준으로 ‘입력창 위’에 딱 붙이기 */
     #search-flyout{
-      position: fixed !important;           /* 화면에 고정 (스크롤해도 제자리) */
-      top: var(--flyout-top) !important;    /* 현재 보이는 상단 위치 고정 */
-      right: 24px !important;
-      left: auto !important;
-      bottom: auto !important;              /* 기존 bottom 규칙 무력화 */
+      position: fixed !important;
+      bottom: var(--flyout-bottom) !important;  /* ⬅ 핵심: 답변창 위에 정렬 */
+      top: auto !important;                     /* 기존 top 규칙 무력화 */
+      right: 24px !important; left: auto !important;
 
       width: var(--flyout-width) !important;
       max-width: 38vw !important;
 
-      /* ↓ 패널 최대 높이 = 뷰포트 - (상단여백 + 입력창 높이 + 입력창 위여백 + 여유 16) */
-      max-height: calc(100vh - var(--flyout-top) - var(--chatbar-h) - var(--chat-gap) - 16px) !important;
+      /* 패널 내부만 스크롤되게 최대 높이 제한 */
+      max-height: calc(100vh - var(--flyout-bottom) - 24px) !important;
+      overflow: auto !important;
 
-      overflow: auto !important;            /* 내용은 패널 안에서만 스크롤 */
-      z-index: 58 !important;               /* 입력창(보통 70)보다 낮게 */
+      z-index: 58 !important; /* 입력창(보통 z=70)보다 낮게 */
     }
   }
 
-  /* 모바일/좁은 화면: 자연스러운 흐름으로 복귀 */
+  /* 모바일/좁은 화면은 자연 흐름 */
   @media (max-width:1279px){
     #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
     .block-container{ padding-right: 0 !important; }
   }
 </style>
 """, unsafe_allow_html=True)
+
 
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
