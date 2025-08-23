@@ -282,11 +282,14 @@ def inject_sticky_layout_css(mode: str = "wide"):
 
       /* 우측 플로팅 검색 패널 */
       #search-flyout {{
-        position: fixed; top: 72px; right: 24px;
-        width: 360px; max-width: 38vw;
-        height: calc(100vh - 96px);
-        overflow: auto; z-index: 58;   /* 업로더(60)와 입력창(70)보다 낮게 */
-        padding: 12px 14px; border-radius: 12px;
+        position: fixed !important;
+        top: 12px !important;      /* 상단에 붙이기 */
+        bottom: 12px !important;   /* 하단 여백 지정 → height 자동 */
+        height: auto !important;   /* 기존 고정 높이 무시 */
+    /* 2) 답변영역과 패널 사이 간격(여백) 더 벌리기 (데스크톱 기준) */
+        /*   패널 너비 360px + 여유 100px = 460px */
+        @media (min-width:1280px)
+         :root { --rail: 460px; }   /* 기존 420px → 460px 로 살짝 확대 */
       }}
     </style>
     """
@@ -2199,10 +2202,6 @@ if chat_started and not st.session_state.get("__answering__", False):
     q_for_panel, ans_for_panel = _current_q_and_answer()
     hints = extract_law_names_from_answer(ans_for_panel) if ans_for_panel else None
     render_search_flyout(q_for_panel or user_q, num_rows=8, hint_laws=hints, show_debug=SHOW_SEARCH_DEBUG)
-
-
-
-
 
 # ===============================
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
