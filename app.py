@@ -1,19 +1,23 @@
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
-# === [DROP-IN: HIDE INPUTS WHILE STREAMING] ===
+# === [DROP-IN: HIDE INPUTS WHILE STREAMING — FINAL] ===
 import streamlit as st
+
+# Per-run flag (resets on each rerun)
+__DROPIN_ANSWERING_NOW = False
 
 def __answering_now() -> bool:
     ss = st.session_state
     return bool(
+        __DROPIN_ANSWERING_NOW or
         ss.get("_pending_user_q") or
         ss.get("_streaming") or
         ss.get("is_streaming") or
         ss.get("__answering__")
     )
 
-if not st.session_state.get("_hide_inputs_pat_", False):
+if not st.session_state.get("_hide_inputs_dropin_v8_", False):
     _orig_file_uploader = st.file_uploader
     _orig_chat_input    = getattr(st, "chat_input", None)
     _orig_text_input    = st.text_input
@@ -21,22 +25,37 @@ if not st.session_state.get("_hide_inputs_pat_", False):
 
     def _guard_none(fn):
         def _inner(*args, **kwargs):
-            return None if __answering_now() else fn(*args, **kwargs)
+            if __answering_now():
+                return None
+            return fn(*args, **kwargs)
         return _inner
 
     def _guard_text(fn):
         def _inner(*args, **kwargs):
-            return "" if __answering_now() else fn(*args, **kwargs)
+            if __answering_now():
+                return ""
+            return fn(*args, **kwargs)
         return _inner
 
-    st.file_uploader = _guard_none(_orig_file_uploader)
+    # Wrap chat_input specially: when user submits, mark this rerun as "answering now"
     if _orig_chat_input:
-        st.chat_input = _guard_none(_orig_chat_input)
-    st.text_input = _guard_text(_orig_text_input)
-    st.text_area  = _guard_text(_orig_text_area)
+        def _chat_input_wrapped(*args, **kwargs):
+            global __DROPIN_ANSWERING_NOW
+            val = _orig_chat_input(*args, **kwargs)
+            if val is not None and str(val).strip() != "":
+                __DROPIN_ANSWERING_NOW = True
+            if __answering_now():
+                return None
+            return val
+        st.chat_input = _chat_input_wrapped
 
-    st.session_state["_hide_inputs_pat_"] = True  # <-- fixed missing quote
+    st.file_uploader = _guard_none(_orig_file_uploader)
+    st.text_input    = _guard_text(_orig_text_input)
+    st.text_area     = _guard_text(_orig_text_area)
 
+    st.session_state["_hide_inputs_dropin_v8_"] = True
+
+# CSS fallback: applies only when answering now
 if __answering_now():
     st.markdown("""
     <style>
