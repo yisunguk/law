@@ -1,35 +1,20 @@
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
-# === [CRITICAL PREFLIGHT ANSWERING v3] DO NOT REMOVE ===
-# This preflight must appear near the top (after __future__ imports).
-# It guarantees: while the app is streaming an answer, chat input & file uploader never render.
+# === [CRITICAL PREFLIGHT ANSWERING v4] DO NOT REMOVE ===
+# Ensure this block stays after __future__ imports.
+# Fixes: "always hidden" state by avoiding self-latching flags.
 import streamlit as st
 
-def __has_user_msg_pref():
-    msgs = st.session_state.get("messages") or []
-    try:
-        for m in msgs:
-            role = (m.get("role") if isinstance(m, dict) else getattr(m, "role", None))
-            content = (m.get("content") if isinstance(m, dict) else getattr(m, "content", None))
-            if role == "user" and str(content or "").strip():
-                return True
-    except Exception:
-        pass
-    return False
-
-# Heuristic flags used across your app
-_answer_flags = ["_pending_user_q","__answering__","_streaming","is_streaming","answering","_answering"]
-ANSWERING = any(bool(st.session_state.get(k)) for k in _answer_flags)
-if not ANSWERING:
-    ANSWERING = False  # reserved for future toggles
+# Only treat as answering when a pending user question is set this run.
+ANSWERING = bool(st.session_state.get("_pending_user_q"))
+# Auto-unlatch: overwrite any previous value
 st.session_state["__answering__"] = ANSWERING
 
-# CSS-only (no <script>): inject hide rules *only when answering*
+# Inject CSS only while answering (no JS)
 if ANSWERING:
     st.markdown("""
 <style>
-/* Hide all inputs/uploader/hero/chatbar while streaming */
 .center-hero,
 #chatbar-fixed,
 section[data-testid="stChatInput"],
@@ -43,12 +28,10 @@ form, button.stButton {
 </style>
 """, unsafe_allow_html=True)
 
-# Monkeypatch selected Streamlit widgets so accidental calls won't render during answering
-if not getattr(st, "__answering_patched__", False):
+# Defensive guard: if dev code still calls these during streaming, return None
+if not getattr(st, "__answering_patch_v4__", False):
     _orig_file_uploader = st.file_uploader
     _orig_chat_input    = getattr(st, "chat_input", None)
-    _orig_text_input    = st.text_input
-    _orig_text_area     = st.text_area
 
     def _wrap_none(fn):
         def _inner(*args, **kwargs):
@@ -57,49 +40,13 @@ if not getattr(st, "__answering_patched__", False):
             return fn(*args, **kwargs)
         return _inner
 
-    def _wrap_emptystr(fn):
-        def _inner(*args, **kwargs):
-            if st.session_state.get("__answering__", False):
-                return ""
-            return fn(*args, **kwargs)
-        return _inner
-
     st.file_uploader = _wrap_none(_orig_file_uploader)
     if _orig_chat_input:
         st.chat_input = _wrap_none(_orig_chat_input)
-    st.text_input = _wrap_emptystr(_orig_text_input)
-    st.text_area  = _wrap_emptystr(_orig_text_area)
-
-    st.__answering_patched__ = True
-# === [END PREFLIGHT ANSWERING v3] ===
+    st.__answering_patch_v4__ = True
+# === [END PREFLIGHT ANSWERING v4] ===
 
 import streamlit as st
-
-
-# === [CRITICAL PREFLIGHT] answering/chat-started — injected by ChatGPT on 2025-08-23 ===
-import streamlit as _st_pref  # safe re-import
-def __has_user_msg_pref():
-    msgs = _st_pref.session_state.get("messages", [])
-    try:
-        return any((m.get("role")=="user") and (m.get("content") or "").strip() for m in msgs)
-    except Exception:
-        return False
-
-_pending_pref = bool(_st_pref.session_state.get("_pending_user_q"))
-ANSWERING = bool(_pending_pref)
-chat_started = bool(_pending_pref or __has_user_msg_pref())
-_st_pref.session_state["__answering__"] = ANSWERING
-
-_st_pref.markdown(f"""
-<script>
-document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-document.body.classList.toggle('answering', {str(ANSWERING).lower()});
-</script>
-""", unsafe_allow_html=True)
-
-_st_pref.markdown("""
-""", unsafe_allow_html=True)
-# === END PREFLIGHT ===
 
 
 st.set_page_config(
@@ -2160,23 +2107,7 @@ if not chat_started:
 # 🎯 대화 전에는 우측 패널 숨기고, 여백을 0으로 만들어 완전 중앙 정렬
 if not chat_started:
     st.markdown("""
-    """, unsafe_allow_html=True)
-
-# 3) 화면 분기
-if (not chat_started) and (not ANSWERING):
-    render_pre_chat_center()
-    st.stop()
-else:
-    # 🔧 대화 시작 후에는 첨부파일 박스를 렌더링하지 않음 (완전히 제거)
-    # 스트리밍 중에는 업로더 숨김 (렌더 자체 생략)
-    # if not ANSWERING:
-    #     render_bottom_uploader()   # 하단 고정 업로더 - 주석 처리
-    pass
-
-# === 대화 시작 후: 우측 레일을 피해서 배치(침범 방지) ===
-# ----- RIGHT FLYOUT: align once to the question box, stable -----
-st.markdown("""
-# [DISABLED by PREFLIGHT] """, unsafe_allow_html=True)
+    # [DISABLED by PREFLIGHT] """, unsafe_allow_html=True)
 
 
 
