@@ -1,17 +1,31 @@
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
-# === [STREAMING CSS ONLY — hide inputs while answering] ===
+# === [DROP-IN: single-flag answering + CSS fallback] ===
 import streamlit as st
 
-def __is_answering() -> bool:
-    ss = st.session_state
-    return bool(ss.get("_pending_user_q") or ss.get("__answering__") or ss.get("_streaming") or ss.get("is_streaming"))
+def answering_now() -> bool:
+    # ✅ 단일 진실원: 이 플래그 하나만으로 "답변 중"을 판단
+    return bool(st.session_state.get("_pending_user_q", False))
 
-if __is_answering():
+# 사용자가 chat_input으로 전송하는 순간, pending 플래그를 세팅해 다음 런에서 숨김이 즉시 적용되도록 함
+if not st.session_state.get("_dropin_chat_input_patched_", False):
+    _orig_chat_input = getattr(st, "chat_input", None)
+
+    if _orig_chat_input:
+        def _chat_input_with_pending(*args, **kwargs):
+            val = _orig_chat_input(*args, **kwargs)
+            # 사용자가 실제로 입력을 보냈을 때만 True
+            if val is not None and str(val).strip() != "":
+                st.session_state["_pending_user_q"] = True
+            return val
+        st.chat_input = _chat_input_with_pending
+    st.session_state["_dropin_chat_input_patched_"] = True
+
+# 폴백 CSS: 답변 중일 때만 입력/업로더/하단 바/히어로 입력을 숨김 (렌더 자체는 손대지 않음)
+if answering_now():
     st.markdown("""
     <style>
-      /* Hide *only during streaming* */
       section[data-testid="stChatInput"],
       [data-testid="stFileUploader"],
       [data-testid="stFileUploaderDropzone"],
@@ -22,7 +36,7 @@ if __is_answering():
       }
     </style>
     """, unsafe_allow_html=True)
-# === [END STREAMING CSS ONLY] ===
+# === [END DROP-IN] ===
 
 import streamlit as st
 
