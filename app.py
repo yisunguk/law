@@ -293,49 +293,51 @@ inject_sticky_layout_css("wide")
 # ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
 
 # --- Right flyout: 상단 고정 + 하단(채팅창)과 겹치지 않게 ---
+# --- Right flyout: 하단 답변창(입력창) 위에 맞춰 고정 ---
+import streamlit as st
 st.markdown("""
 <style>
   :root{
-    --flyout-width: 360px;      /* 패널 폭 */
-    --flyout-gap:   80px;       /* 본문과 패널 사이 가로 간격 */
-    --flyout-top:   120px;      /* 화면 상단에서 패널까지 거리(지금 보이는 위치로 맞춰 주세요) */
-    --chatbar-h:    56px;       /* 하단 입력창 높이 */
-    --chat-gap:     12px;       /* 입력창 위 여백 */
+    /* 숫자만 바꾸면 미세조정 됩니다 */
+    --flyout-width: 360px;     /* 우측 패널 폭 */
+    --flyout-gap:   80px;      /* 본문과 패널 사이 가로 간격 */
+    --chatbar-h:    56px;      /* 하단 입력창 높이 */
+    --chat-gap:     12px;      /* 입력창 위 여백 */
+    /* 패널 하단이 멈출 위치(= 입력창 바로 위) */
+    --flyout-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 16px);
   }
 
   @media (min-width:1280px){
-    /* 본문이 우측 패널과 겹치지 않게 우측 여백 확보 */
+    /* 본문이 패널과 겹치지 않도록 우측 여백 확보 */
     .block-container{
       padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
     }
 
-    /* 패널: 상단에 '고정', 하단은 채팅창 위에서 멈추도록 높이 제한 */
+    /* 패널: 화면 하단 기준으로 ‘입력창 위’에 딱 붙이기 */
     #search-flyout{
       position: fixed !important;
-      top: var(--flyout-top) !important;
-      right: 24px !important;
-      bottom: auto !important;  /* 기존 bottom:12px 같은 규칙 무력화 */
+      bottom: var(--flyout-bottom) !important;  /* ⬅ 핵심: 답변창 위에 정렬 */
+      top: auto !important;                     /* 기존 top 규칙 무력화 */
+      right: 24px !important; left: auto !important;
 
       width: var(--flyout-width) !important;
       max-width: 38vw !important;
 
-      /* ▼ 패널 높이 = 화면높이 - (상단간격 + 채팅바 높이 + 여백) */
-      max-height: calc(
-        100vh - var(--flyout-top) - var(--chatbar-h) - var(--chat-gap) - 16px
-      ) !important;
-      overflow: auto !important;   /* 내용은 패널 내부에서만 스크롤 */
-      z-index: 58 !important;      /* 입력창(70)보다 낮게 */
+      /* 패널 내부만 스크롤되게 최대 높이 제한 */
+      max-height: calc(100vh - var(--flyout-bottom) - 24px) !important;
+      overflow: auto !important;
+
+      z-index: 58 !important; /* 입력창(보통 z=70)보다 낮게 */
     }
   }
 
-  /* 모바일/좁은 화면: 자연스러운 흐름 */
+  /* 모바일/좁은 화면은 자연 흐름 */
   @media (max-width:1279px){
     #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
     .block-container{ padding-right: 0 !important; }
   }
 </style>
 """, unsafe_allow_html=True)
-
 
 
 
@@ -2377,80 +2379,3 @@ if chat_started and not st.session_state.get("__answering__", False):
         st.session_state["_clear_input"] = True
         st.rerun()
 
-
-st.markdown("""
-<style>
-  :root{
-    --flyout-width: 360px;   /* 우측 패널 폭 */
-    --flyout-gap:   80px;    /* 본문과 패널 사이 가로 간격 */
-    --flyout-top:   120px;   /* 컨테이너(본문) 상단에서부터 거리 */
-  }
-
-  @media (min-width:1280px){
-    /* 본문이 패널과 겹치지 않게 우측 여백 확보 + 기준점 제공 */
-    .block-container{
-      position: relative !important;
-      padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
-    }
-
-    /* 패널: 컨테이너 기준 '위치 고정' (문서와 함께만 스크롤 = 안내려옴) */
-    #search-flyout{
-      position: absolute !important;   /* ← 핵심: fixed/sticky 금지 */
-      top: var(--flyout-top) !important;
-      right: var(--flyout-gap) !important;
-      left: auto !important; bottom: auto !important;
-
-      width: var(--flyout-width) !important;
-      max-width: 38vw !important;
-
-      /* 내부 스크롤은 끔(필요하면 auto로 교체) */
-      max-height: none !important;
-      overflow: visible !important;
-
-      z-index: 5 !important; /* 채팅 입력창/업로더보다 아래 */
-    }
-  }
-
-  /* 모바일/좁은 화면은 문서 흐름 그대로 */
-  @media (max-width:1279px){
-    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
-    .block-container{ padding-right: 0 !important; }
-  }
-</style>
-""", unsafe_allow_html=True)
-
-
-# === unified right-flyout layout (single source of truth) ===
-import streamlit as st
-
-st.markdown("""
-<style>
-  :root{
-    --flyout-width: 360px;   /* right panel width */
-    --flyout-gap:   80px;    /* gap between content and panel */
-    --flyout-top:   120px;   /* distance from top of content container */
-  }
-  @media (min-width:1280px){
-    .block-container{
-      position: relative !important;
-      padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
-    }
-    #search-flyout{
-      position: absolute !important;
-      top: var(--flyout-top) !important;
-      right: var(--flyout-gap) !important;
-      left: auto !important; bottom: auto !important;
-      width: var(--flyout-width) !important;
-      max-width: 38vw !important;
-      max-height: none !important;
-      overflow: visible !important;
-      z-index: 5 !important;
-    }
-  }
-  @media (max-width:1279px){
-    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
-    .block-container{ padding-right: 0 !important; }
-  }
-</style>
-""", unsafe_allow_html=True)
-# === /unified right-flyout layout ===
