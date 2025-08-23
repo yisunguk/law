@@ -297,62 +297,51 @@ def inject_sticky_layout_css(mode: str = "wide"):
     """
     st.markdown(css, unsafe_allow_html=True)
 
-# ===== 우측 통합검색 패널 상단 고정 + 본문과 간격 확보 (최소 패치) =====
-def _pin_flyout_only():
-    st.markdown("""
-    <style>
-      /* 조정값: 필요시 이 숫자 3개만 바꾸면 됩니다. */
-      :root{
-        --flyout-width: 360px;   /* 우측 패널 폭 */
-        --flyout-gap:   100px;    /* 패널과 본문(답변영역) 사이 여백 */
-        --flyout-top:   150px;    /* 화면 상단에서 띄우는 거리 */
-      }
+import streamlit as st
 
-      /* 데스크톱에서만 패널 고정 & 본문 우측 여백 확보 */
-      @media (min-width: 1100px){
-        /* 1) 우측 패널을 화면 상단에 고정 */
-        #search-flyout{
-          position: fixed !important;
-          top: var(--flyout-top) !important;
-          right: 24px !important;
-          width: var(--flyout-width) !important;
-          max-width: 38vw !important;
+st.markdown("""
+<style>
+  :root{
+    /* 숫자만 조정하면 됩니다 */
+    --flyout-width: 360px;   /* 우측 패널 폭 */
+    --flyout-gap:   56px;    /* 패널과 본문(답변영역) 사이 여백 */
+    --flyout-top:   96px;    /* 화면 상단에서 패널까지 간격 */
+  }
 
-          /* 화면 높이를 넘지 않도록 내부 스크롤만 생성 */
-          max-height: calc(100vh - var(--flyout-top) - 24px) !important;
-          overflow: auto !important;
+  /* 데스크톱 + 대화 시작 후에만 적용 */
+  @media (min-width:1100px){
+    body.chat-started #search-flyout{
+      position: fixed !important;
+      top: var(--flyout-top) !important;
+      bottom: auto !important;                 /* 이전 bottom:12px 제어 무력화 */
+      right: 24px !important;
+      width: var(--flyout-width) !important;
+      max-width: 38vw !important;
+      max-height: calc(100vh - var(--flyout-top) - 24px) !important;
+      overflow: auto !important;
+      z-index: 10;
+    }
+    body.chat-started .block-container{
+      /* 답변영역을 왼쪽으로 밀어 실제 간격 확보 */
+      padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
+    }
+  }
 
-          z-index: 10;                 /* 다른 요소에 과도하게 덮지 않도록 낮은 z-index */
-          padding: 12px 14px;
-          border-radius: 12px;
-        }
+  /* 모바일/좁은 화면은 원래 흐름 유지 */
+  @media (max-width:1099px){
+    #search-flyout{ position: static !important; max-height: none !important; overflow: visible !important; }
+    .block-container{ padding-right: 0 !important; }
+  }
+</style>
+""", unsafe_allow_html=True)
 
-        /* 2) 본문(답변영역) 오른쪽에 패널 폭+여백만큼 공간 확보 */
-        .main .block-container{
-          padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
-        }
-      }
-
-      /* 모바일/좁은 화면: 고정 해제하고 기본 흐름으로 */
-      @media (max-width: 1099px){
-        #search-flyout{
-          position: static !important;
-          width: 100% !important;
-          max-height: none !important;
-          overflow: visible !important;
-        }
-        .main .block-container{
-          padding-right: 0 !important;
-        }
-      }
-    </style>
-    """, unsafe_allow_html=True)
 
 # 호출 위치: 파일 맨 아래, 모든 컴포넌트를 그린 뒤
+inject_sticky_layout_css("wide")
 _pin_flyout_only()
 # ===== 끝 =====
 
-inject_sticky_layout_css("wide")
+
 
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
@@ -2199,9 +2188,11 @@ st.markdown("""
   :root{
   --chatbar-h: 56px;
   --chat-gap: 12px;
-  --rail: 420px;   /* 우측 패널(360) + 여유 60 */
   --hgap: 24px;
+  /* 우측 여백 = 패널폭 + 본문과의 간격 (기본값 제공) */
+  --rail: calc(var(--flyout-width, 360px) + var(--flyout-gap, 36px));
 }
+
 
 /* 본문이 가려지지 않도록 하단 패딩 확보 */
 .block-container{
