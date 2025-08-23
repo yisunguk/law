@@ -302,76 +302,62 @@ inject_sticky_layout_css("wide")
 
 # ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
 
+# ----- FINAL OVERRIDE (viewport-fixed, align-once to question box) -----
 st.markdown("""
 <style>
   :root{
-    /* 필요하면 이 두 값만 조절 */
     --flyout-width: 360px;   /* 우측 패널 폭 */
-    --flyout-gap:   80px;    /* 본문과 패널 사이 가로 간격 */
+    --flyout-gap:    80px;   /* 본문과의 가로 간격 */
   }
 
   @media (min-width:1100px){
-    /* 본문 컨테이너를 기준점으로 만들고 우측 여백 확보 */
+    /* 본문이 패널과 겹치지 않도록 우측 여백 확보 */
     .block-container{
-      position: relative !important;
       padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
     }
 
-    /* 패널: 컨테이너 기준 '절대배치' + 질문박스와 같은 Y에 정렬 */
+    /* 우측 패널: 뷰포트 우측에 고정 + 질문박스 Y에 정렬(초기 한 번) */
     #search-flyout{
-      position: absolute !important;          /* ← fixed 아님: 스크롤 따라 같이 올라감 */
-      top: var(--flyout-top, 120px) !important; /* JS가 계산해 넣어줌. 없으면 120px */
-      right: var(--flyout-gap) !important;
+      position: fixed !important;              /* ← viewport 기준 */
+      top: var(--flyout-top, 120px) !important;/* JS가 한 번 계산해 넣음 */
+      right: 24px !important;
       left: auto !important; bottom: auto !important;
 
       width: var(--flyout-width) !important;
       max-width: 38vw !important;
-
-      /* 화면 바닥과 부딪히지 않도록 내부 스크롤 */
-      max-height: calc(100vh - var(--flyout-top,120px) - 32px) !important;
+      max-height: calc(100vh - var(--flyout-top,120px) - 24px) !important;
       overflow: auto !important;
-
-      z-index: 5 !important;
+      z-index: 58 !important;                  /* 업로더(60), 입력창(70)보다 낮게 */
     }
   }
 
-  /* 모바일/좁은 화면은 자연스럽게 본문 흐름 */
+  /* 모바일/좁은 화면은 자연 흐름 */
   @media (max-width:1099px){
-    #search-flyout{ position: static !important; left:auto !important; right:auto !important;
-                    max-height:none !important; overflow:visible !important; }
+    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
     .block-container{ padding-right: 0 !important; }
   }
 </style>
 
 <script>
 (() => {
-  // 질문박스의 Y 위치를 읽어 --flyout-top 에 반영
-  function setFlyoutTop(){
-    const bc  = document.querySelector('.block-container');
+  function setOnce(){
     const fly = document.querySelector('#search-flyout');
-    if(!bc || !fly) return;
+    if(!fly) return;
 
-    // 1) 커스텀 입력(#chatbar-fixed) 우선, 없으면 첫 번째 textarea 사용
-    let target = document.querySelector('#chatbar-fixed')
-              || document.querySelector('.block-container textarea')
-              || document.querySelector('textarea');
-
+    // 우선순위: 고정 입력(#chatbar-fixed) > 기본 채팅 입력 > 폴백 textarea
+    let target =
+        document.querySelector('#chatbar-fixed') ||
+        document.querySelector('section[data-testid="stChatInput"]') ||
+        document.querySelector('.block-container textarea');
     if(!target) return;
 
-    const rectC = bc.getBoundingClientRect();
-    const rectT = target.getBoundingClientRect();
-    const top   = Math.max(0, Math.round(rectT.top - rectC.top)); // 컨테이너 기준 Y
-
-    bc.style.setProperty('--flyout-top', top + 'px');
+    const r = target.getBoundingClientRect();                 // viewport 기준
+    document.documentElement.style
+      .setProperty('--flyout-top', Math.max(12, Math.round(r.top)) + 'px');
   }
 
-  // 최초 설정
-  setFlyoutTop();
-
-  // 리사이즈/렌더 변경 시 재계산(가벼운 옵저버)
-  window.addEventListener('resize', setFlyoutTop, {passive:true});
-  const obs = new MutationObserver(() => setFlyoutTop());
-  obs.observe(document.body, {childList:true, subtree:true});
+  window.addEventListener('load', setOnce);
+  window.addEventListener('resize', setOnce);                 // 창 크기 바뀔 때만 재계산
 })();
 </script>
 """, unsafe_allow_html=True)
@@ -2149,7 +2135,12 @@ st.markdown("""
 body.chat-started #bu-anchor + div[data-testid="stFileUploader"] { 
     display: none !important; 
 }
-body.chat-started #chatbar-fixed { 
+/* 기존: display:none !important;  (X) */
+body.chat-started #chatbar-fixed{
+  visibility: hidden !important;   /* 안 보이지만 자리·좌표는 유지 */
+  pointer-events: none !important; /* 클릭 방지 */
+}
+{ 
     display: none !important; 
 }
 
