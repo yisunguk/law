@@ -2378,53 +2378,45 @@ if chat_started and not st.session_state.get("__answering__", False):
         st.rerun()
 
 
-# === RIGHT FLYOUT: final, single-source-of-truth (keep this at the bottom) ===
+# --- 우측 통합검색: 스크롤해도 '안 따라오게' (컨테이너 기준 배치) ---
 import streamlit as st
-
 st.markdown("""
 <style>
   :root{
-    /* You can tweak only these numbers later */
-    --flyout-width: 360px;   /* panel width */
-    --flyout-gap:   80px;    /* gap between content and panel */
-    --flyout-top:   120px;   /* distance from top of viewport */
-    --chatbar-h:    56px;    /* bottom chat input height */
-    --chat-gap:     12px;    /* small spacing above chat input */
+    --flyout-width: 360px;  /* 패널 폭 */
+    --flyout-gap:   80px;   /* 본문과 패널 사이 가로 간격 */
+    --flyout-top:   120px;  /* 컨테이너 기준 위에서부터 거리(값↑ = 더 아래) */
   }
 
-  /* Desktop layout */
   @media (min-width:1280px){
-    /* Ensure main content doesn't sit underneath the right panel */
+    /* 1) 본문 컨테이너를 기준점으로 만들고 우측 여백 확보 */
     .block-container{
+      position: relative !important;
       padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
     }
 
-    /* The right flyout: fixed to top, never overlaps the bottom chat input */
-    #search-flyout{
-      position: fixed !important;
+    /* 2) 패널을 컨테이너 기준 'absolute'로 배치 → 스크롤해도 함께 올라감 */
+    html body #search-flyout{
+      position: absolute !important;                 /* ← 핵심: fixed 아님 */
       top: var(--flyout-top) !important;
-      right: 24px !important;
-      left: auto !important;
-      bottom: auto !important;
+      right: var(--flyout-gap) !important;
+      left: auto !important; bottom: auto !important;
 
       width: var(--flyout-width) !important;
       max-width: 38vw !important;
 
-      /* Make flyout scroll internally so it stops above the bottom chat input */
-      max-height: calc(
-        100vh - var(--flyout-top) - var(--chatbar-h) - var(--chat-gap) - 16px
-      ) !important;
-      overflow: auto !important;
+      /* 내부 스크롤이 거슬리면 아래 두 줄을 그대로 두세요 */
+      max-height: none !important;
+      overflow: visible !important;
 
-      z-index: 58 !important;
+      z-index: 5 !important;                         /* 과하게 앞에 나오지 않게 */
     }
   }
 
-  /* Narrow screens: let it flow normally */
+  /* 모바일/좁은 화면은 자연 흐름 */
   @media (max-width:1279px){
     #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
     .block-container{ padding-right: 0 !important; }
   }
 </style>
 """, unsafe_allow_html=True)
-# === /RIGHT FLYOUT final ===
