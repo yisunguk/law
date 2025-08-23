@@ -1,3 +1,55 @@
+# === [CRITICAL PREFLIGHT ANSWERING] DO NOT REMOVE ===
+# This block must stay at the very top of the file.
+# It hides chat input and file uploader while an answer is streaming.
+try:
+    import streamlit as st
+    import streamlit as _st_pref  # internal alias, safe to import twice
+except Exception:
+    import streamlit as _st_pref
+    st = _st_pref
+
+def __has_user_msg_pref():
+    msgs = _st_pref.session_state.get("messages", [])
+    try:
+        return any((getattr(m, "get", lambda *_: None)("role")=="user") and ((getattr(m, "get", lambda *_: "")("content") or "").strip()) for m in msgs)                or any((m.get("role")=="user") and ((m.get("content") or "").strip()) for m in msgs if isinstance(m, dict))
+    except Exception:
+        return False
+
+# Heuristic: treat any of these flags as "streaming/answering"
+_answer_flags = ["_pending_user_q","__answering__","_streaming","is_streaming","answering","_answering"]
+ANSWERING = any(bool(_st_pref.session_state.get(k)) for k in _answer_flags)
+chat_started = bool(ANSWERING or __has_user_msg_pref())
+
+# Persist for downstream guards
+_st_pref.session_state["__answering__"] = ANSWERING
+
+# Attach classes to <body> ASAP
+_st_pref.markdown(f"""
+<script>
+document.body.classList.remove('answering','chat-started');
+document.body.classList.toggle('chat-started', {str(chat_started).lower()});
+document.body.classList.toggle('answering', {str(ANSWERING).lower()});
+</script>
+""", unsafe_allow_html=True)
+
+# Global CSS: hide all inputs/uploaders while answering
+_st_pref.markdown("""
+<style>
+body.answering .center-hero,
+body.answering #chatbar-fixed,
+body.answering section[data-testid="stChatInput"],
+body.answering [data-testid="stFileUploader"],
+body.answering [data-testid="stFileUploaderDropzone"],
+body.answering .stTextInput,
+body.answering form,
+body.answering button.stButton{
+  display: none !important;
+}
+body.answering .block-container{ padding-bottom: 24px !important; }
+</style>
+""", unsafe_allow_html=True)
+# === [END PREFLIGHT ANSWERING] ===
+
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
