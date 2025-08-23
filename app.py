@@ -2250,8 +2250,8 @@ if not chat_started:
     """, unsafe_allow_html=True)
 
 # 3) 화면 분기
-if not chat_started:
-    render_pre_chat_center()   # 중앙 히어로 + 중앙 업로더
+if (not chat_started) and (not ANSWERING):
+    render_pre_chat_center()
     st.stop()
 else:
     # 🔧 대화 시작 후에는 첨부파일 박스를 렌더링하지 않음 (완전히 제거)
@@ -2469,7 +2469,8 @@ body.answering #chatbar-fixed,
 body.answering section[data-testid="stChatInput"],
 body.answering #bu-anchor + div[data-testid="stFileUploader"],
 body.answering .center-hero,
-body.answering [data-testid="stFileUploader"]{
+body.answering [data-testid="stFileUploader"],
+body.answering [data-testid="stFileUploaderDropzone"]{
   display: none !important;
 }
 
