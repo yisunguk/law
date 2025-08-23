@@ -1,50 +1,44 @@
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
-# === [CRITICAL PREFLIGHT ANSWERING v4] DO NOT REMOVE ===
-# Ensure this block stays after __future__ imports.
-# Fixes: "always hidden" state by avoiding self-latching flags.
+# === [CRITICAL PREFLIGHT ANSWERING v5] DO NOT REMOVE ===
+# Minimal, non-intrusive preflight (after __future__ imports).
+# Purpose: during streaming, prevent chat/file inputs from rendering.
 import streamlit as st
 
-# Only treat as answering when a pending user question is set this run.
-ANSWERING = bool(st.session_state.get("_pending_user_q"))
-# Auto-unlatch: overwrite any previous value
-st.session_state["__answering__"] = ANSWERING
+# Determine answering strictly from a pending user question set by your app.
+# (No latching; resets to False on every rerun unless your app sets _pending_user_q)
+st.session_state["__answering__"] = bool(st.session_state.get("_pending_user_q", False))
 
-# Inject CSS only while answering (no JS)
-if ANSWERING:
-    st.markdown("""
-<style>
-.center-hero,
-#chatbar-fixed,
-section[data-testid="stChatInput"],
-[data-testid="stFileUploader"],
-[data-testid="stFileUploaderDropzone"],
-.stTextInput, .stTextArea, .stTextInputContainer,
-form, button.stButton {
-  display: none !important;
-}
-.block-container { padding-bottom: 24px !important; }
-</style>
-""", unsafe_allow_html=True)
-
-# Defensive guard: if dev code still calls these during streaming, return None
-if not getattr(st, "__answering_patch_v4__", False):
+# Monkeypatch core input widgets to no-op during answering.
+if not getattr(st, "__answering_patch_v5__", False):
     _orig_file_uploader = st.file_uploader
     _orig_chat_input    = getattr(st, "chat_input", None)
+    _orig_text_input    = st.text_input
+    _orig_text_area     = st.text_area
 
-    def _wrap_none(fn):
+    def _guard_none(fn):
         def _inner(*args, **kwargs):
             if st.session_state.get("__answering__", False):
                 return None
             return fn(*args, **kwargs)
         return _inner
 
-    st.file_uploader = _wrap_none(_orig_file_uploader)
+    def _guard_text(fn):
+        def _inner(*args, **kwargs):
+            if st.session_state.get("__answering__", False):
+                return ""
+            return fn(*args, **kwargs)
+        return _inner
+
+    st.file_uploader = _guard_none(_orig_file_uploader)
     if _orig_chat_input:
-        st.chat_input = _wrap_none(_orig_chat_input)
-    st.__answering_patch_v4__ = True
-# === [END PREFLIGHT ANSWERING v4] ===
+        st.chat_input = _guard_none(_orig_chat_input)
+    st.text_input = _guard_text(_orig_text_input)
+    st.text_area  = _guard_text(_orig_text_area)
+
+    st.__answering_patch_v5__ = True
+# === [END PREFLIGHT ANSWERING v5] ===
 
 import streamlit as st
 
@@ -2087,16 +2081,16 @@ st.session_state["__answering__"] = ANSWERING
 chat_started = bool(ANSWERING or _chat_started())
 
 # chat_started 계산 직후에 추가
-# [DISABLED by PREFLIGHT] st.markdown(f"""
-# [DISABLED by PREFLIGHT] <script>
-# [DISABLED by PREFLIGHT] document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-# [DISABLED by PREFLIGHT] document.body.classList.toggle('answering', {str(ANSWERING).lower()});
-# [DISABLED by PREFLIGHT] </script>
-# [DISABLED by PREFLIGHT] """, unsafe_allow_html=True)
+#  st.markdown(f"""
+#  <script>
+#  document.body.classList.toggle('chat-started', {str(chat_started).lower()});
+#  document.body.classList.toggle('answering', {str(ANSWERING).lower()});
+#  </script>
+#  """, unsafe_allow_html=True)
 
 # --- hide chat input & uploaders ONLY while answering ---
-# [DISABLED by PREFLIGHT] st.markdown("""
-# [DISABLED by PREFLIGHT] # [DISABLED by PREFLIGHT] """, unsafe_allow_html=True)
+#  st.markdown("""
+#  #  """, unsafe_allow_html=True)
 
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
@@ -2107,18 +2101,34 @@ if not chat_started:
 # 🎯 대화 전에는 우측 패널 숨기고, 여백을 0으로 만들어 완전 중앙 정렬
 if not chat_started:
     st.markdown("""
-    # [DISABLED by PREFLIGHT] """, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
+
+# 3) 화면 분기
+if (not chat_started) and (not ANSWERING):
+    render_pre_chat_center()
+    st.stop()
+else:
+    # 🔧 대화 시작 후에는 첨부파일 박스를 렌더링하지 않음 (완전히 제거)
+    # 스트리밍 중에는 업로더 숨김 (렌더 자체 생략)
+    # if not ANSWERING:
+    #     render_bottom_uploader()   # 하단 고정 업로더 - 주석 처리
+    pass
+
+# === 대화 시작 후: 우측 레일을 피해서 배치(침범 방지) ===
+# ----- RIGHT FLYOUT: align once to the question box, stable -----
+st.markdown("""
+#  """, unsafe_allow_html=True)
 
 
 
 # --- PATCH: body class toggles for chat-started / answering ---
 try:
     pass
-# [DISABLED by PREFLIGHT]     st.markdown(f"""
-# [DISABLED by PREFLIGHT]     <script>
-# [DISABLED by PREFLIGHT]     document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-# [DISABLED by PREFLIGHT]     document.body.classList.toggle('answering', {str(ANSWERING).lower()});
-# [DISABLED by PREFLIGHT]     </script>
-# [DISABLED by PREFLIGHT]     """, unsafe_allow_html=True)
+#      st.markdown(f"""
+#      <script>
+#      document.body.classList.toggle('chat-started', {str(chat_started).lower()});
+#      document.body.classList.toggle('answering', {str(ANSWERING).lower()});
+#      </script>
+#      """, unsafe_allow_html=True)
 except Exception:
     pass
