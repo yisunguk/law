@@ -305,47 +305,45 @@ inject_sticky_layout_css("wide")
 st.markdown("""
 <style>
   :root{
-    /* 필요하면 이 3개만 조절 */
-    --flyout-width: 360px;   /* 패널 폭 */
-    --flyout-gap:   64px;    /* 본문과 패널 사이 간격 */
-    --flyout-top:   50px;   /* 상단에서 떨어진 거리(커질수록 더 아래) */
+    /* 숫자만 바꾸면 됩니다 */
+    --flyout-width: 360px;     /* 우측 패널 폭 */
+    --flyout-gap:   64px;      /* 본문과 패널 사이 간격 */
+    --flyout-top:   24px;      /* 컨테이너 기준 상단 여백 (작을수록 위로 올라감) */
   }
 
-  @media (min-width: 1100px){
-    /* 1) 본문 컨테이너를 기준점으로 */
+  @media (min-width:1100px){
+    /* 컨테이너를 기준점으로 */
     .block-container{ position: relative !important; }
 
-    /* 2) 패널을 컨테이너 오른쪽 '밖'으로 배치 + 스크롤 시 함께 위로 사라짐 */
+    /* 패널: 컨테이너 오른쪽 ‘밖’ + 화면 바닥 여백 유지 */
     #search-flyout{
-      position: absolute !important;       /* fixed 아님 */
+      position: absolute !important;         /* fixed 아님 */
       top: var(--flyout-top) !important;
-      left: calc(100% + var(--flyout-gap)) !important;  /* ← 핵심: 컨테이너 오른쪽 밖 */
+      left: calc(100% + var(--flyout-gap)) !important;
       right: auto !important;
 
       width: var(--flyout-width) !important;
       max-width: 38vw !important;
 
-      /* 내부 스크롤 불필요하면 아래 두 줄 유지 */
-      max-height: none !important;
-      overflow: visible !important;
+      /* ▶ 화면 높이에서 상단 여백과 약간의 바닥 여백(32px)을 뺀 값으로 제한 */
+      max-height: calc(100vh - var(--flyout-top) - 32px) !important;
+      overflow: auto !important;             /* 패널 안에서만 스크롤 */
 
-      z-index: 5 !important;               /* 겹침 심하면 4~6 사이로 조정 */
+      z-index: 5 !important;
     }
 
-    /* 본문이 가려지지 않도록 우측 여백 확보(있으면 유지해도 무방) */
+    /* 본문이 가려지지 않도록 우측 여백 확보 */
     .block-container{
       padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
     }
   }
 
-  /* 모바일/좁은 화면에서는 자연스럽게 본문 흐름으로 */
-  @media (max-width: 1099px){
-    #search-flyout{ position: static !important; left:auto !important; right:auto !important; }
+  @media (max-width:1099px){
+    #search-flyout{ position: static !important; left:auto !important; right:auto !important; max-height:none !important; overflow:visible !important; }
     .block-container{ padding-right: 0 !important; }
   }
 </style>
 """, unsafe_allow_html=True)
-
 
 
 
