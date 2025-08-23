@@ -283,20 +283,74 @@ def inject_sticky_layout_css(mode: str = "wide"):
       }}
 
       /* 우측 플로팅 검색 패널 — 상단 고정 + 답변창과 간격 확보 */
-       #search-flyout {{
+      #search-flyout {{
         position: fixed !important;
-        top: var(--flyout-top) !important;           /* 상단에서 더 띄움 */
-        bottom: 12px !important;                     /* 하단 소폭 여백 */
-        right: var(--flyout-right);
-        width: var(--flyout-width); max-width: 38vw;
+        top: 12px !important;
+        bottom: 12px !important;
+        right: 24px;
+        width: 360px; max-width: 38vw;
         height: auto !important;
-        overflow: auto; z-index: 58;                 /* 업로더(60), 입력창(70)보다 낮게 */
+        overflow: auto; z-index: 58;   /* 업로더(60)와 입력창(70)보다 낮게 */
         padding: 12px 14px; border-radius: 12px;
       }}
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
 
+# ===== 우측 통합검색 패널 상단 고정 + 본문과 간격 확보 (최소 패치) =====
+def _pin_flyout_only():
+    st.markdown("""
+    <style>
+      /* 조정값: 필요시 이 숫자 3개만 바꾸면 됩니다. */
+      :root{
+        --flyout-width: 360px;   /* 우측 패널 폭 */
+        --flyout-gap:   36px;    /* 패널과 본문(답변영역) 사이 여백 */
+        --flyout-top:   72px;    /* 화면 상단에서 띄우는 거리 */
+      }
+
+      /* 데스크톱에서만 패널 고정 & 본문 우측 여백 확보 */
+      @media (min-width: 1100px){
+        /* 1) 우측 패널을 화면 상단에 고정 */
+        #search-flyout{
+          position: fixed !important;
+          top: var(--flyout-top) !important;
+          right: 24px !important;
+          width: var(--flyout-width) !important;
+          max-width: 38vw !important;
+
+          /* 화면 높이를 넘지 않도록 내부 스크롤만 생성 */
+          max-height: calc(100vh - var(--flyout-top) - 24px) !important;
+          overflow: auto !important;
+
+          z-index: 10;                 /* 다른 요소에 과도하게 덮지 않도록 낮은 z-index */
+          padding: 12px 14px;
+          border-radius: 12px;
+        }
+
+        /* 2) 본문(답변영역) 오른쪽에 패널 폭+여백만큼 공간 확보 */
+        .main .block-container{
+          padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
+        }
+      }
+
+      /* 모바일/좁은 화면: 고정 해제하고 기본 흐름으로 */
+      @media (max-width: 1099px){
+        #search-flyout{
+          position: static !important;
+          width: 100% !important;
+          max-height: none !important;
+          overflow: visible !important;
+        }
+        .main .block-container{
+          padding-right: 0 !important;
+        }
+      }
+    </style>
+    """, unsafe_allow_html=True)
+
+# 호출 위치: 파일 맨 아래, 모든 컴포넌트를 그린 뒤
+_pin_flyout_only()
+# ===== 끝 =====
 
 inject_sticky_layout_css("wide")
 
