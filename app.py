@@ -1,70 +1,42 @@
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
-# === [DROP-IN: HIDE INPUTS WHILE STREAMING — FINAL] ===
+# === [DROP-IN — STREAMING INPUT HIDER] ===
 import streamlit as st
 
-# Per-run flag (resets on each rerun)
-__DROPIN_ANSWERING_NOW = False
-
-def __answering_now() -> bool:
+def __is_answering_now() -> bool:
     ss = st.session_state
-    return bool(
-        __DROPIN_ANSWERING_NOW or
-        ss.get("_pending_user_q") or
-        ss.get("_streaming") or
-        ss.get("is_streaming") or
-        ss.get("__answering__")
-    )
+    # Read-only: rely on your app setting these flags during generation
+    return bool(ss.get("__answering__") or ss.get("_pending_user_q"))
 
-if not st.session_state.get("_hide_inputs_dropin_v8_", False):
+# Guard only the risky widgets (no side effects to other UI)
+if not st.session_state.get("_dropin_stream_guard_", False):
     _orig_file_uploader = st.file_uploader
     _orig_chat_input    = getattr(st, "chat_input", None)
-    _orig_text_input    = st.text_input
-    _orig_text_area     = st.text_area
 
     def _guard_none(fn):
         def _inner(*args, **kwargs):
-            if __answering_now():
+            if __is_answering_now():
                 return None
             return fn(*args, **kwargs)
         return _inner
-
-    def _guard_text(fn):
-        def _inner(*args, **kwargs):
-            if __answering_now():
-                return ""
-            return fn(*args, **kwargs)
-        return _inner
-
-    # Wrap chat_input specially: when user submits, mark this rerun as "answering now"
-    if _orig_chat_input:
-        def _chat_input_wrapped(*args, **kwargs):
-            global __DROPIN_ANSWERING_NOW
-            val = _orig_chat_input(*args, **kwargs)
-            if val is not None and str(val).strip() != "":
-                __DROPIN_ANSWERING_NOW = True
-            if __answering_now():
-                return None
-            return val
-        st.chat_input = _chat_input_wrapped
 
     st.file_uploader = _guard_none(_orig_file_uploader)
-    st.text_input    = _guard_text(_orig_text_input)
-    st.text_area     = _guard_text(_orig_text_area)
+    if _orig_chat_input:
+        st.chat_input = _guard_none(_orig_chat_input)
 
-    st.session_state["_hide_inputs_dropin_v8_"] = True
+    st.session_state["_dropin_stream_guard_"] = True
 
-# CSS fallback: applies only when answering now
-if __answering_now():
+# CSS fallback only while answering (no global overrides)
+if __is_answering_now():
     st.markdown("""
     <style>
-      [data-testid="stFileUploader"],
-      [data-testid="stFileUploaderDropzone"],
-      section[data-testid="stChatInput"],
+      /* hide hero & fixed chatbar and all uploaders while streaming */
+      .center-hero,
       #chatbar-fixed,
-      .center-hero .stFileUploader,
-      .center-hero .stTextInput {
+      section[data-testid="stChatInput"],
+      [data-testid="stFileUploader"],
+      [data-testid="stFileUploaderDropzone"] {
         display: none !important;
       }
     </style>
