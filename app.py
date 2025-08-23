@@ -2379,34 +2379,3 @@ if chat_started and not st.session_state.get("__answering__", False):
         st.session_state["_clear_input"] = True
         st.rerun()
 
-# ===== [PATCH] 통합검색 패널: 스크롤해도 내려오지 않게 =====
-import streamlit as st
-st.markdown("""
-<style>
-  @media (min-width:1280px){
-    /* 우측 레일 여백 유지: 본문이 패널과 겹치지 않도록 패딩 확보 */
-    .block-container{
-      padding-right: calc(var(--flyout-width, 360px) + var(--flyout-gap, 80px)) !important;
-    }
-
-    /* 핵심: 상단 sticky로 전환, 하단 앵커/고정 규칙 무력화 */
-    #search-flyout{
-      position: sticky !important;   /* ← 스크롤해도 아래로 따라오지 않음 */
-      top: var(--flyout-top, 96px) !important; /* 상단 여백(필요시 수치만 조정) */
-      right: 24px !important;
-      left: auto !important;
-      bottom: auto !important;       /* 하단 고정 해제 */
-      max-height: none !important;
-      overflow: visible !important;
-      z-index: 1 !important;         /* 입력창/업로더보다 낮은 우선순위 */
-    }
-  }
-
-  /* 좁은 화면(태블릿/모바일)에선 자연스러운 문서 흐름으로 */
-  @media (max-width:1279px){
-    #search-flyout{ position: static !important; top:auto !important; bottom:auto !important; right:auto !important; }
-    .block-container{ padding-right: 0 !important; }
-  }
-</style>
-""", unsafe_allow_html=True)
-
