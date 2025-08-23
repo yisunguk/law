@@ -290,55 +290,124 @@ def inject_sticky_layout_css(mode: str = "wide"):
 # 호출 위치: 파일 맨 아래, 모든 컴포넌트를 그린 뒤
 inject_sticky_layout_css("wide")
 
-# ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
 
-# --- Right flyout: 상단 고정 + 하단(채팅창)과 겹치지 않게 ---
-# --- Right flyout: 하단 답변창(입력창) 위에 맞춰 고정 ---
+# --- Dock search into the right chatbar (single fixed right rail) ---
 import streamlit as st
+
 st.markdown("""
 <style>
   :root{
-    /* 숫자만 바꾸면 미세조정 됩니다 */
-    --flyout-width: 360px;     /* 우측 패널 폭 */
-    --flyout-gap:   80px;      /* 본문과 패널 사이 가로 간격 */
-    --chatbar-h:    56px;      /* 하단 입력창 높이 */
-    --chat-gap:     12px;      /* 입력창 위 여백 */
-    /* 패널 하단이 멈출 위치(= 입력창 바로 위) */
-    --flyout-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 16px);
+    --right-rail: 360px;   /* 우측 레일 폭 (검색+챗바 공용) */
+    --right-gap:  80px;    /* 본문과 간격 */
+    --right-pad:  24px;    /* 화면 오른쪽 여백 */
+    --right-top:  96px;    /* 상단 시작 위치(헤더/버튼 피해서) */
+
+    /* 좌측 레일을 쓰고 있다면 실제 폭과 간격으로 값만 주면 됨(없으면 0으로 처리됨) */
+    --left-rail: 0px;
+    --left-gap:  0px;
   }
 
   @media (min-width:1280px){
-    /* 본문이 패널과 겹치지 않도록 우측 여백 확보 */
-    .block-container{
-      padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
+    /* 본문은 양쪽 레일만큼 공간을 비워 중앙에 배치 */
+    body.rightRailDocked .block-container{
+      padding-left:  calc(var(--left-rail)  + var(--left-gap))  !important;
+      padding-right: calc(var(--right-rail) + var(--right-gap)) !important;
     }
 
-    /* 패널: 화면 하단 기준으로 ‘입력창 위’에 딱 붙이기 */
-    #search-flyout{
+    /* ✅ 우측 '하나의' 레일 컨테이너 (상단=검색, 하단=챗바) */
+    body.rightRailDocked #right-rail{
       position: fixed !important;
-      bottom: var(--flyout-bottom) !important;  /* ⬅ 핵심: 답변창 위에 정렬 */
-      top: auto !important;                     /* 기존 top 규칙 무력화 */
-      right: 24px !important; left: auto !important;
+      top: var(--right-top) !important;
+      right: var(--right-pad) !important;
+      width: var(--right-rail) !important;
+      bottom: 12px !important;     /* 하단 여백 */
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 12px !important;
+      z-index: 70 !important;      /* 본문 위, 헤더/모달보다 낮게 필요시 조정 */
+    }
 
-      width: var(--flyout-width) !important;
-      max-width: 38vw !important;
-
-      /* 패널 내부만 스크롤되게 최대 높이 제한 */
-      max-height: calc(100vh - var(--flyout-bottom) - 24px) !important;
+    /* 상단 통합검색: 내부만 스크롤 */
+    body.rightRailDocked #right-rail .rail-content{
+      flex: 1 1 auto !important;
+      min-height: 0 !important;
       overflow: auto !important;
+    }
 
-      z-index: 58 !important; /* 입력창(보통 z=70)보다 낮게 */
+    /* 하단 챗바 래퍼 */
+    body.rightRailDocked #right-rail .rail-chat{
+      flex: 0 0 auto !important;
+    }
+
+    /* ⛔ 기존 고정 규칙 무력화: 검색 패널/챗바를 레일 안에서 '정적'으로 배치 */
+    body.rightRailDocked #search-flyout{
+      position: static !important;
+      top: auto !important; right: auto !important; left: auto !important; bottom: auto !important;
+      width: 100% !important; max-width: none !important; max-height: none !important;
+      overflow: visible !important;
+      z-index: auto !important;
+    }
+    body.rightRailDocked #chatbar-fixed,
+    body.rightRailDocked section[data-testid="stChatInput"]{
+      position: static !important;
+      left: auto !important; right: auto !important; bottom: auto !important; transform: none !important;
+      width: 100% !important; max-width: none !important;
+      z-index: auto !important;
     }
   }
 
-  /* 모바일/좁은 화면은 자연 흐름 */
+  /* 좁은 화면은 원래 흐름 유지(우측 레일 감춤) */
   @media (max-width:1279px){
-    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
-    .block-container{ padding-right: 0 !important; }
+    body.rightRailDocked #right-rail{ display: none !important; }
+    body.rightRailDocked .block-container{
+      padding-left: 0 !important; padding-right: 0 !important;
+    }
   }
 </style>
-""", unsafe_allow_html=True)
 
+<script>
+/* DOM을 안전하게 '도킹': #right-rail을 만들고 #search-flyout과 chat_input을 안으로 옮김
+   - Streamlit이 재렌더링해도 MutationObserver가 계속 붙잡아 줍니다. */
+(function(){
+  function ensureRail(){
+    document.body.classList.add('rightRailDocked');
+
+    // 1) 우측 레일 컨테이너(없으면 생성)
+    let rail = document.getElementById('right-rail');
+    if(!rail){
+      rail = document.createElement('div');
+      rail.id = 'right-rail';
+      const content = document.createElement('div'); content.className = 'rail-content';
+      const chat    = document.createElement('div'); chat.className    = 'rail-chat';
+      rail.appendChild(content); rail.appendChild(chat);
+      document.body.appendChild(rail);
+    }
+
+    // 2) 대상 노드 찾기 (#search-flyout 과 chat 입력창)
+    const search = document.querySelector('#search-flyout');
+    const chat   = document.querySelector('#chatbar-fixed') ||
+                   document.querySelector('section[data-testid="stChatInput"]');
+
+    const contentWrap = rail.querySelector('.rail-content');
+    const chatWrap    = rail.querySelector('.rail-chat');
+
+    // 3) 레일 안으로 이동(이미 안에 있으면 생략)
+    if (search && contentWrap && search.parentElement !== contentWrap){
+      contentWrap.appendChild(search);
+    }
+    if (chat && chatWrap && chat.parentElement !== chatWrap){
+      chatWrap.appendChild(chat);
+    }
+  }
+
+  // 초기/리사이즈/DOM 변경 시마다 보정
+  window.addEventListener('load', ensureRail);
+  window.addEventListener('resize', ensureRail);
+  const mo = new MutationObserver(ensureRail);
+  mo.observe(document.body, {childList:true, subtree:true});
+})();
+</script>
+""", unsafe_allow_html=True)
 
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
