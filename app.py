@@ -282,17 +282,7 @@ def inject_sticky_layout_css(mode: str = "wide"):
         padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
       }}
 
-      /* 우측 플로팅 검색 패널 — 상단 고정 + 답변창과 간격 확보 */
-      #search-flyout {{
-        position: fixed !important;
-        top: 12px !important;
-        bottom: 12px !important;
-        right: 24px;
-        width: 360px; max-width: 38vw;
-        height: auto !important;
-        overflow: auto; z-index: 58;   /* 업로더(60)와 입력창(70)보다 낮게 */
-        padding: 12px 14px; border-radius: 12px;
-      }}
+      
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
@@ -2139,9 +2129,6 @@ body.chat-started #bu-anchor + div[data-testid="stFileUploader"] {
 body.chat-started #chatbar-fixed{
   visibility: hidden !important;   /* 안 보이지만 자리·좌표는 유지 */
   pointer-events: none !important; /* 클릭 방지 */
-}
-{ 
-    display: none !important; 
 }
 
 /* 답변 중일 때만 하단 여백 축소 */
