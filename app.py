@@ -2053,7 +2053,7 @@ st.session_state["__answering__"] = ANSWERING
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
 
-# chat_started 계산 직후에 추가
+# chat_started 계산 직후에 추가 (바디에 상태 클래스 토글)
 st.markdown(f"""
 <script>
 document.body.classList.toggle('chat-started', {str(chat_started).lower()});
@@ -2061,66 +2061,45 @@ document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 </script>
 """, unsafe_allow_html=True)
 
+# ✅ UI 표시/숨김 규칙: 답변(스트리밍) 중에는 중앙/업로더/입력창 모두 숨김
+#   ※ 기존에 있던 `body.chat-started #chatbar-fixed { display:none }` 규칙은 삭제하세요.
 st.markdown("""
 <style>
-/* 🔧 대화 시작 후에는 모든 첨부파일 업로더를 완전히 숨김 */
-body.chat-started #bu-anchor + div[data-testid="stFileUploader"] { 
-    display: none !important; 
-}
-body.chat-started #chatbar-fixed { 
-    display: none !important; 
-}
+  /* 답변(스트리밍) 중에는 중앙 히어로, 파일 업로더, 입력창 전부 숨김 */
+  body.answering #chatbar-fixed,
+  body.answering .stChatInput,
+  body.answering [data-testid="stChatInputRoot"],
+  body.answering #bu-anchor + div[data-testid="stFileUploader"],
+  body.answering [data-testid="stFileUploader"],
+  body.answering [data-testid="stFileUploader"] *,
+  body.answering [data-testid="stFileUploadDropzone"],
+  body.answering input[type="file"],
+  body.answering .center-hero {
+      display: none !important;
+  }
 
-/* 답변 중일 때만 하단 여백 축소 */
-body.answering .block-container { 
-    padding-bottom: calc(var(--chat-gap) + 24px) !important; 
-}
+  /* 답변 중일 때만 하단 여백 축소 (입력창 높이를 빼줌) */
+  body.answering .block-container {
+      padding-bottom: calc(var(--chat-gap) + 24px) !important;
+  }
 </style>
 """, unsafe_allow_html=True)
-
-# ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
-if not chat_started:
-    st.markdown("""
-    <style>
-      /* 우측 패널 숨김 */
-      #search-flyout{ display:none !important; }
-
-      /* 우측/하단 여백 제거 */
-      @media (min-width:1280px){ .block-container{ padding-right:0 !important; } }
-      .block-container{ padding-bottom:0 !important; }
-
-      /* 히어로를 뷰포트 절대 중앙에 고정 */
-      .center-hero{
-        position: fixed !important;
-        left: 50% !important; top: 50% !important;
-        transform: translate(-50%, -50%) !important;
-        width: var(--center-col); max-width: 92vw;
-        margin: 0 !important; padding: 0 !important;
-        display: flex; flex-direction: column; align-items: center;
-        justify-content: center;
-      }
-
-      /* 히어로 내부 위젯 폭 */
-      .center-hero .stFileUploader, .center-hero .stTextInput{
-        width: 720px; max-width: 92vw;
-      }
-    </style>
-    """, unsafe_allow_html=True)
 
 # 🎯 대화 전에는 우측 패널 숨기고, 여백을 0으로 만들어 완전 중앙 정렬
 if not chat_started:
     st.markdown("""
     <style>
-      /* hide right rail before first message */
+      /* 첫 질문 전엔 우측 패널 숨김 */
       #search-flyout { display: none !important; }
-      /* remove right gutter so hero sits dead-center */
+      /* 우측 여백 제거해서 히어로를 정확히 중앙에 */
       @media (min-width:1280px) { .block-container { padding-right: 0 !important; } }
-      /* bottom padding 크게 줄여서 화면 정중앙에 오도록 */
+      /* 아래 여백 줄여서 수직 중심 정렬 보정 */
       .block-container { padding-bottom: 64px !important; }
-      /* hero 높이 살짝 줄여 위/아래 균형 */
+      /* 히어로 높이 살짝 보정 */
       .center-hero { min-height: calc(100vh - 160px) !important; }
     </style>
     """, unsafe_allow_html=True)
+
 
 # 3) 화면 분기
 if not chat_started:
