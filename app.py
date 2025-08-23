@@ -2207,38 +2207,91 @@ else:
     pass
 
 # === 대화 시작 후: 우측 레일을 피해서 배치(침범 방지) ===
+# ----- RIGHT FLYOUT: align once to the question box, stable -----
 st.markdown("""
 <style>
   :root{
-  --chatbar-h: 56px;
-  --chat-gap: 12px;
-  --hgap: 24px;
-  /* 우측 여백 = 패널폭 + 본문과의 간격 (기본값 제공) */
-  --rail: calc(var(--flyout-width, 360px) + var(--flyout-gap, 36px));
-}
-
-
-/* 본문이 가려지지 않도록 하단 패딩 확보 */
-.block-container{
-  padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
-}
-
-/* 데스크톱 + 대화 시작 상태에서만 우측 레일을 피해서 배치 */
-@media (min-width:1280px){
-  body.chat-started .block-container{
-    padding-right: var(--rail) !important;
+    --flyout-width: 360px;   /* 우측 패널 폭 */
+    --flyout-gap:   80px;    /* 본문(답변영역)과의 가로 간격 */
   }
-  body.chat-started #chatbar-fixed,
-  body.chat-started #bu-anchor + div[data-testid="stFileUploader"]{
-    left: calc(50% - var(--rail)/2) !important;
-    transform: translateX(-50%) !important;
-    width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap))) !important;
-    max-width: calc(100vw - var(--rail) - 2*var(--hgap)) !important;
-  }
-}
 
+  /* 본문이 우측 패널을 피해 배치되도록 여백 확보 */
+  @media (min-width:1280px){
+    .block-container{
+      padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
+    }
+  }
+
+  /* ====== 패널 배치 모드 ======
+     (A) 화면 고정(스크롤해도 항상 보임) → position: fixed (기본)
+     (B) 따라오지 않게(본문과 함께 위로 올라가도록) → position: sticky 로 교체
+     원하는 쪽 한 줄만 쓰세요.
+  */
+  @media (min-width:1280px){
+    #search-flyout{
+      position: fixed !important;                 /* ← A) 화면 고정 */
+      /* position: sticky !important;             /* ← B) 따라오지 않게: 이 줄로 교체 */
+      top: var(--flyout-top, 120px) !important;   /* JS가 한 번 계산해 넣음 */
+      right: 24px !important;
+      left: auto !important; bottom: auto !important;
+
+      width: var(--flyout-width) !important;
+      max-width: 38vw !important;
+      max-height: calc(100vh - var(--flyout-top,120px) - 24px) !important;
+      overflow: auto !important;
+      z-index: 58 !important;                     /* 업로더(60), 입력창(70)보다 낮게 */
+    }
+  }
+
+  /* 모바일/좁은 화면은 자연스럽게 문서 흐름 */
+  @media (max-width:1279px){
+    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
+    .block-container{ padding-right: 0 !important; }
+  }
 </style>
+
+<script>
+(() => {
+  // 질문 입력 위치를 "한 번만" 읽어서 --flyout-top 을 설정
+  const CANDIDATES = [
+    '#chatbar-fixed',
+    'section[data-testid="stChatInput"]',
+    '.block-container textarea'
+  ];
+  let done = false;
+
+  function alignOnce(){
+    if (done) return;
+    const fly = document.querySelector('#search-flyout');
+    if (!fly) return;
+
+    let target = null;
+    for (const sel of CANDIDATES){
+      target = document.querySelector(sel);
+      if (target) break;
+    }
+    if (!target) return;
+
+    const r = target.getBoundingClientRect();       // viewport 기준
+    const top = Math.max(12, Math.round(r.top));
+    document.documentElement.style.setProperty('--flyout-top', top + 'px');
+    done = true;  // 한 번만
+  }
+
+  // 1) 첫 렌더 직후
+  window.addEventListener('load', () => setTimeout(alignOnce, 0));
+
+  // 2) 대상이 늦게 생겨도 한 번만 정렬
+  const mo = new MutationObserver(() => alignOnce());
+  mo.observe(document.body, {childList: true, subtree: true});
+  (function stopWhenDone(){ if (done) mo.disconnect(); requestAnimationFrame(stopWhenDone); })();
+
+  // 3) 창 크기 변경 시 한 번 재정렬
+  window.addEventListener('resize', () => { done = false; alignOnce(); });
+})();
+</script>
 """, unsafe_allow_html=True)
+
 
 
 
