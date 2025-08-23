@@ -302,33 +302,80 @@ inject_sticky_layout_css("wide")
 
 # ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
 
-# --- 최종 미세 조정(위치/간격만) ---
-import streamlit as st
 st.markdown("""
 <style>
   :root{
-    /* 필요하면 이 두 값만 조절하세요 */
-    --flyout-top:  140px;  /* ↑ 커질수록 패널이 '더 아래'로 내려갑니다 (예: 120→140→160) */
-    --flyout-gap:   80px;  /* 본문과 패널 사이 가로 간격 (예: 64→80→96) */
+    /* 필요하면 이 두 값만 조절 */
+    --flyout-width: 360px;   /* 우측 패널 폭 */
+    --flyout-gap:   80px;    /* 본문과 패널 사이 가로 간격 */
   }
 
   @media (min-width:1100px){
-    /* 우측 패널 상단 위치만 재정의 */
-    #search-flyout{
-      top: var(--flyout-top) !important;
-    }
-    /* 본문이 패널과 겹치지 않도록 우측 여백도 같은 기준으로 보정 */
+    /* 본문 컨테이너를 기준점으로 만들고 우측 여백 확보 */
     .block-container{
-      padding-right: calc(var(--flyout-gap) + var(--flyout-width, 360px)) !important;
+      position: relative !important;
+      padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
     }
-    /* 패널이 너무 길어 바닥에 붙는 걸 방지(내부만 스크롤) */
+
+    /* 패널: 컨테이너 기준 '절대배치' + 질문박스와 같은 Y에 정렬 */
     #search-flyout{
-      max-height: calc(100vh - var(--flyout-top) - var(--chatbar-h,56px) - var(--chat-gap,12px) - 16px) !important;
+      position: absolute !important;          /* ← fixed 아님: 스크롤 따라 같이 올라감 */
+      top: var(--flyout-top, 120px) !important; /* JS가 계산해 넣어줌. 없으면 120px */
+      right: var(--flyout-gap) !important;
+      left: auto !important; bottom: auto !important;
+
+      width: var(--flyout-width) !important;
+      max-width: 38vw !important;
+
+      /* 화면 바닥과 부딪히지 않도록 내부 스크롤 */
+      max-height: calc(100vh - var(--flyout-top,120px) - 32px) !important;
       overflow: auto !important;
+
+      z-index: 5 !important;
     }
   }
+
+  /* 모바일/좁은 화면은 자연스럽게 본문 흐름 */
+  @media (max-width:1099px){
+    #search-flyout{ position: static !important; left:auto !important; right:auto !important;
+                    max-height:none !important; overflow:visible !important; }
+    .block-container{ padding-right: 0 !important; }
+  }
 </style>
+
+<script>
+(() => {
+  // 질문박스의 Y 위치를 읽어 --flyout-top 에 반영
+  function setFlyoutTop(){
+    const bc  = document.querySelector('.block-container');
+    const fly = document.querySelector('#search-flyout');
+    if(!bc || !fly) return;
+
+    // 1) 커스텀 입력(#chatbar-fixed) 우선, 없으면 첫 번째 textarea 사용
+    let target = document.querySelector('#chatbar-fixed')
+              || document.querySelector('.block-container textarea')
+              || document.querySelector('textarea');
+
+    if(!target) return;
+
+    const rectC = bc.getBoundingClientRect();
+    const rectT = target.getBoundingClientRect();
+    const top   = Math.max(0, Math.round(rectT.top - rectC.top)); // 컨테이너 기준 Y
+
+    bc.style.setProperty('--flyout-top', top + 'px');
+  }
+
+  // 최초 설정
+  setFlyoutTop();
+
+  // 리사이즈/렌더 변경 시 재계산(가벼운 옵저버)
+  window.addEventListener('resize', setFlyoutTop, {passive:true});
+  const obs = new MutationObserver(() => setFlyoutTop());
+  obs.observe(document.body, {childList:true, subtree:true});
+})();
+</script>
 """, unsafe_allow_html=True)
+
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
