@@ -338,7 +338,7 @@ st.markdown("""
 
 # 호출 위치: 파일 맨 아래, 모든 컴포넌트를 그린 뒤
 inject_sticky_layout_css("wide")
-_pin_flyout_only()
+
 # ===== 끝 =====
 
 
