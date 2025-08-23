@@ -315,7 +315,7 @@ st.markdown("""
   @media (min-width:1100px){
     /* inject_sticky_layout_css()가 넣은 top:12px/bottom:12px !important를 무력화 */
     #search-flyout{
-      position: fixed !important;
+      position: absolute !important;
       top: var(--flyout-top) !important;
       bottom: auto !important;              /* ← bottom:12px !important 덮어쓰기 */
       right: 24px !important;
