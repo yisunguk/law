@@ -1,49 +1,89 @@
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
-# === [DROP-IN — STREAMING INPUT HIDER] ===
+# === [DROP-IN: hide chat input & uploader ONLY while streaming] ===
 import streamlit as st
 
-def __is_answering_now() -> bool:
+def _answering_now() -> bool:
     ss = st.session_state
-    # Read-only: rely on your app setting these flags during generation
-    return bool(ss.get("__answering__") or ss.get("_pending_user_q"))
+    return bool(
+        ss.get("_pending_user_q") or    # when user message is staged
+        ss.get("__answering__") or      # normalized flag some apps set
+        ss.get("_streaming") or         # custom streaming flag
+        ss.get("is_streaming")          # another common name
+    )
 
-# Guard only the risky widgets (no side effects to other UI)
-if not st.session_state.get("_dropin_stream_guard_", False):
+# Guard: during streaming, these widgets won't render even if called
+if not st.session_state.get("_dropin_guarded_", False):
     _orig_file_uploader = st.file_uploader
     _orig_chat_input    = getattr(st, "chat_input", None)
 
     def _guard_none(fn):
         def _inner(*args, **kwargs):
-            if __is_answering_now():
-                return None
-            return fn(*args, **kwargs)
+            return None if _answering_now() else fn(*args, **kwargs)
         return _inner
 
     st.file_uploader = _guard_none(_orig_file_uploader)
     if _orig_chat_input:
         st.chat_input = _guard_none(_orig_chat_input)
 
-    st.session_state["_dropin_stream_guard_"] = True
+    st.session_state["_dropin_guarded_"] = True
 
-# CSS fallback only while answering (no global overrides)
-if __is_answering_now():
+# CSS fallback (applies only while streaming)
+if _answering_now():
     st.markdown("""
     <style>
-      /* hide hero & fixed chatbar and all uploaders while streaming */
-      .center-hero,
-      #chatbar-fixed,
       section[data-testid="stChatInput"],
       [data-testid="stFileUploader"],
-      [data-testid="stFileUploaderDropzone"] {
-        display: none !important;
-      }
+      [data-testid="stFileUploaderDropzone"],
+      #chatbar-fixed,
+      .center-hero .stFileUploader,
+      .center-hero .stTextInput { display: none !important; }
     </style>
     """, unsafe_allow_html=True)
 # === [END DROP-IN] ===
 
 import streamlit as st
+
+
+# === [CRITICAL PREFLIGHT] answering/chat-started — injected by ChatGPT on 2025-08-23 ===
+import streamlit as _st_pref  # safe re-import
+def __has_user_msg_pref():
+    msgs = _st_pref.session_state.get("messages", [])
+    try:
+        return any((m.get("role")=="user") and (m.get("content") or "").strip() for m in msgs)
+    except Exception:
+        return False
+
+_pending_pref = bool(_st_pref.session_state.get("_pending_user_q"))
+ANSWERING = bool(_pending_pref)
+chat_started = bool(_pending_pref or __has_user_msg_pref())
+_st_pref.session_state["__answering__"] = ANSWERING
+
+_st_pref.markdown(f"""
+<script>
+document.body.classList.toggle('chat-started', {str(chat_started).lower()});
+document.body.classList.toggle('answering', {str(ANSWERING).lower()});
+</script>
+""", unsafe_allow_html=True)
+
+_st_pref.markdown("""
+<style>
+/* 🔒 로딩(스트리밍) 중엔 어떤 경로로든 나타난 입력/업로더/폼 모두 숨김 */
+body.answering .center-hero,
+body.answering #chatbar-fixed,
+body.answering section[data-testid="stChatInput"],
+body.answering [data-testid="stFileUploader"],
+body.answering [data-testid="stFileUploaderDropzone"],
+body.answering .stTextInput,
+body.answering form,
+body.answering button.stButton{
+  display: none !important;
+}
+body.answering .block-container{ padding-bottom: 24px !important; }
+</style>
+""", unsafe_allow_html=True)
+# === END PREFLIGHT ===
 
 
 st.set_page_config(
