@@ -292,65 +292,51 @@ inject_sticky_layout_css("wide")
 
 # ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
 
-# ----- FINAL OVERRIDE (viewport-fixed, align-once to question box) -----
+# --- 우측 통합검색: 스크롤해도 '절대' 따라오지 않게(컨테이너 기준 배치) ---
+import streamlit as st
 st.markdown("""
 <style>
   :root{
-    --flyout-width: 360px;   /* 우측 패널 폭 */
-    --flyout-gap:    80px;   /* 본문과의 가로 간격 */
+    --flyout-width: 360px;   /* 패널 폭 */
+    --flyout-gap:   80px;    /* 본문과 패널 사이 가로 간격 */
+    --flyout-top:  120px;    /* 컨테이너 기준 위에서부터 거리 (크면 더 아래) */
   }
 
-  @media (min-width:1100px){
-    /* 본문이 패널과 겹치지 않도록 우측 여백 확보 */
+  @media (min-width:1280px){
+    /* 본문이 패널과 겹치지 않도록 오른쪽 여백 확보 + 기준점 설정 */
     .block-container{
+      position: relative !important;
       padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
     }
 
-    /* 우측 패널: 뷰포트 우측에 고정 + 질문박스 Y에 정렬(초기 한 번) */
+    /* 패널: 컨테이너 기준 'absolute' → 스크롤해도 화면에 따라오지 않음 */
     #search-flyout{
-      position: fixed !important;              /* ← viewport 기준 */
-      top: var(--flyout-top, 120px) !important;/* JS가 한 번 계산해 넣음 */
-      right: 24px !important;
+      position: absolute !important;     /* ← 핵심 */
+      top: var(--flyout-top) !important;
+      right: var(--flyout-gap) !important;
       left: auto !important; bottom: auto !important;
 
       width: var(--flyout-width) !important;
       max-width: 38vw !important;
-      max-height: calc(100vh - var(--flyout-top,120px) - 24px) !important;
+
+      /* 너무 길면 패널 내부에서만 스크롤 */
+      max-height: calc(100vh - var(--flyout-top) - 32px) !important;
       overflow: auto !important;
-      z-index: 58 !important;                  /* 업로더(60), 입력창(70)보다 낮게 */
+      z-index: 5 !important;
     }
   }
 
   /* 모바일/좁은 화면은 자연 흐름 */
-  @media (max-width:1099px){
-    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
+  @media (max-width:1279px){
+    #search-flyout{
+      position: static !important; left:auto !important; right:auto !important;
+      max-height:none !important; overflow:visible !important;
+    }
     .block-container{ padding-right: 0 !important; }
   }
 </style>
-
-<script>
-(() => {
-  function setOnce(){
-    const fly = document.querySelector('#search-flyout');
-    if(!fly) return;
-
-    // 우선순위: 고정 입력(#chatbar-fixed) > 기본 채팅 입력 > 폴백 textarea
-    let target =
-        document.querySelector('#chatbar-fixed') ||
-        document.querySelector('section[data-testid="stChatInput"]') ||
-        document.querySelector('.block-container textarea');
-    if(!target) return;
-
-    const r = target.getBoundingClientRect();                 // viewport 기준
-    document.documentElement.style
-      .setProperty('--flyout-top', Math.max(12, Math.round(r.top)) + 'px');
-  }
-
-  window.addEventListener('load', setOnce);
-  window.addEventListener('resize', setOnce);                 // 창 크기 바뀔 때만 재계산
-})();
-</script>
 """, unsafe_allow_html=True)
+
 
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
