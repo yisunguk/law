@@ -2176,24 +2176,32 @@ document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 </script>
 """, unsafe_allow_html=True)
 
+# --- hide chat input & uploaders ONLY while answering ---
 st.markdown("""
 <style>
-/* 🔧 대화 시작 후에는 모든 첨부파일 업로더를 완전히 숨김 */
-body.chat-started #bu-anchor + div[data-testid="stFileUploader"] { 
-    display: none !important; 
-}
-/* 기존: display:none !important;  (X) */
-body.chat-started #chatbar-fixed{
-  visibility: hidden !important;   /* 안 보이지만 자리·좌표는 유지 */
-  pointer-events: none !important; /* 클릭 방지 */
+/* ▶ 스트리밍 중(=answering)일 때만 숨김 */
+body.answering #chatbar-fixed,
+body.answering section[data-testid="stChatInput"],
+body.answering #bu-anchor + div[data-testid="stFileUploader"],
+body.answering .center-hero{
+  display: none !important;
 }
 
-/* 답변 중일 때만 하단 여백 축소 */
-body.answering .block-container { 
-    padding-bottom: calc(var(--chat-gap) + 24px) !important; 
+/* ▶ 스트리밍이 아닐 때는 정상 노출 */
+body.chat-started:not(.answering) #chatbar-fixed{
+  display: block !important;
+}
+body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"]{
+  display: block !important;
+}
+
+/* ▶ 숨긴 동안 본문 여백 과도하게 남지 않게 보정 */
+body.answering .block-container{
+  padding-bottom: 24px !important;
 }
 </style>
 """, unsafe_allow_html=True)
+
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
 if not chat_started:
