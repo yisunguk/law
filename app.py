@@ -9,7 +9,9 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
+# PATCH safety: default flags (will be updated later)
+ANSWERING = bool(st.session_state.get("__answering__", False))
+chat_started = bool(globals().get("chat_started", False))
 # === [BOOTSTRAP] session keys (must be first) ===
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -2166,7 +2168,7 @@ ANSWERING = bool(user_q)
 st.session_state["__answering__"] = ANSWERING
 
 # 2) 대화 시작 여부 계산 (교체된 함수)
-chat_started = _chat_started()
+chat_started = bool(ANSWERING or _chat_started())
 
 # chat_started 계산 직후에 추가
 st.markdown(f"""
@@ -2456,3 +2458,45 @@ if chat_started and not st.session_state.get("__answering__", False):
         st.session_state["_clear_input"] = True
         st.rerun()
 
+
+
+
+# --- PATCH: hide chat input & uploaders ONLY while answering ---
+st.markdown("""
+<style>
+/* ▶ 스트리밍 중(=answering)일 때만 숨김 */
+body.answering #chatbar-fixed,
+body.answering section[data-testid="stChatInput"],
+body.answering #bu-anchor + div[data-testid="stFileUploader"],
+body.answering .center-hero,
+body.answering [data-testid="stFileUploader"]{
+  display: none !important;
+}
+
+/* ▶ 스트리밍이 아닐 때는 정상 노출 */
+body.chat-started:not(.answering) #chatbar-fixed{
+  display: block !important;
+}
+body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"]{
+  display: block !important;
+}
+
+/* ▶ 숨긴 동안 본문 여백 과도하게 남지 않게 보정 */
+body.answering .block-container{
+  padding-bottom: 24px !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+
+# --- PATCH: body class toggles for chat-started / answering ---
+try:
+    st.markdown(f"""
+    <script>
+    document.body.classList.toggle('chat-started', {str(chat_started).lower()});
+    document.body.classList.toggle('answering', {str(ANSWERING).lower()});
+    </script>
+    """, unsafe_allow_html=True)
+except Exception:
+    pass
