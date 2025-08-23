@@ -218,9 +218,9 @@ def inject_sticky_layout_css(mode: str = "wide"):
         " --bubble-max: 760px;"
         " --chatbar-h: 56px;"
         " --chat-gap: 12px;"
-        " --rail: 420px;"
+        " --rail: 460px;"
         " --hgap: 24px;"
-        " }"
+        "}"
     )
 
     css = f"""
@@ -257,22 +257,24 @@ def inject_sticky_layout_css(mode: str = "wide"):
       #bu-anchor + div[data-testid='stFileUploader'] {{
         position: fixed;
         left: 50%; transform: translateX(-50%);
-        bottom: calc(12px + var(--chatbar-h) + var(--chat-gap));
+        bottom: calc(var(--chatbar-h) + var(--chat-gap) + 12px);
+        width: clamp(340px, calc(var(--center-col) - 2*var(--hgap)), calc(100vw - var(--rail) - 2*var(--hgap)));
+        max-width: calc(100vw - var(--rail) - 2*var(--hgap));
         z-index: 60;
-        width: var(--center-col);
-        max-width: 92vw;
-        padding: 8px 0;
+        background: rgba(0,0,0,0.35);
+        padding: 10px 12px; border-radius: 12px;
+        backdrop-filter: blur(6px);
+      }}
+      #bu-anchor + div [data-testid='stFileUploader'] {{
+        background: transparent !important; border: none !important;
       }}
 
-      /* 데스크톱에서는 우측 레일을 피해 정렬 */
-      @media (min-width:1280px){{
-        body.chat-started #bu-anchor + div[data-testid='stFileUploader'],
-        body.chat-started #chatbar-fixed {{
-          left: calc(50% - var(--rail)/2);
-          transform: translateX(-50%);
-          width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap)));
-          max-width: calc(100vw - var(--rail) - 2*var(--hgap));
-        }}
+      /* 입력창 하단 고정 */
+      section[data-testid="stChatInput"] {{
+        position: fixed; left: 50%; transform: translateX(-50%);
+        bottom: 0; z-index: 70;
+        width: clamp(340px, calc(var(--center-col) - 2*var(--hgap)), calc(100vw - var(--rail) - 2*var(--hgap)));
+        max-width: calc(100vw - var(--rail) - 2*var(--hgap));
       }}
 
       /* 본문이 하단 고정 UI와 겹치지 않게 */
@@ -280,16 +282,16 @@ def inject_sticky_layout_css(mode: str = "wide"):
         padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
       }}
 
-      /* 우측 플로팅 검색 패널 */
+      /* 우측 플로팅 검색 패널 — 상단 고정 + 답변창과 간격 확보 */
       #search-flyout {{
         position: fixed !important;
-        top: 12px !important;      /* 상단에 붙이기 */
-        bottom: 12px !important;   /* 하단 여백 지정 → height 자동 */
-        height: auto !important;   /* 기존 고정 높이 무시 */
-    /* 2) 답변영역과 패널 사이 간격(여백) 더 벌리기 (데스크톱 기준) */
-        /*   패널 너비 360px + 여유 100px = 460px */
-        @media (min-width:1280px)
-         :root { --rail: 460px; }   /* 기존 420px → 460px 로 살짝 확대 */
+        top: 12px !important;
+        bottom: 12px !important;
+        right: 24px;
+        width: 360px; max-width: 38vw;
+        height: auto !important;
+        overflow: auto; z-index: 58;   /* 업로더(60)와 입력창(70)보다 낮게 */
+        padding: 12px 14px; border-radius: 12px;
       }}
     </style>
     """
@@ -297,6 +299,7 @@ def inject_sticky_layout_css(mode: str = "wide"):
 
 
 inject_sticky_layout_css("wide")
+
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
