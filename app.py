@@ -302,75 +302,33 @@ inject_sticky_layout_css("wide")
 
 # ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
 
-# === PATCH: 바닥 고정 입력창 + 오른쪽 패널 높이/간격 정리 ===
+# --- 최종 미세 조정(위치/간격만) ---
+import streamlit as st
 st.markdown("""
 <style>
   :root{
-    /* 필요 시 이 3개만 조절 */
-    --flyout-width: 360px;   /* 우측 패널 폭 */
-    --flyout-gap:   64px;    /* 본문과 패널 사이 간격 */
-    --flyout-top:   120px;   /* 화면 상단에서 패널까지 거리 (↑크면 더 아래) */
-    --center-col:   1160px;
-    --hgap:         24px;
-    --chatbar-h:    56px;
-    --chat-gap:     12px;
-    /* 우측 여백 = 패널 폭 + 간격 */
-    --rail: calc(var(--flyout-width) + var(--flyout-gap));
+    /* 필요하면 이 두 값만 조절하세요 */
+    --flyout-top:  140px;  /* ↑ 커질수록 패널이 '더 아래'로 내려갑니다 (예: 120→140→160) */
+    --flyout-gap:   80px;  /* 본문과 패널 사이 가로 간격 (예: 64→80→96) */
   }
 
-  /* 1) 커스텀 입력창(#chatbar-fixed)을 바닥에 '진짜' 고정 */
-  #chatbar-fixed{
-    position: fixed !important;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
-    bottom: 0 !important;
-    z-index: 70 !important;
-    width: clamp(340px, calc(var(--center-col) - 2*var(--hgap)),
-                 calc(100vw - var(--rail) - 2*var(--hgap))) !important;
-    max-width: calc(100vw - var(--rail) - 2*var(--hgap)) !important;
-  }
-
-  /* 답변 영역이 입력창/우측 패널과 겹치지 않게 하단/우측 여백 확보 */
-  .block-container{
-    padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
-  }
-  @media (min-width:1280px){
-    body.chat-started .block-container{ padding-right: var(--rail) !important; }
-    body.chat-started #chatbar-fixed{
-      left: calc(50% - var(--rail)/2) !important; /* 우측 패널만큼 왼쪽으로 보정 */
-    }
-  }
-
-  /* 2) 우측 패널: 컨테이너 기준 절대배치(스크롤 따라 같이 위로 사라짐) */
   @media (min-width:1100px){
-    .block-container{ position: relative !important; }
+    /* 우측 패널 상단 위치만 재정의 */
     #search-flyout{
-      position: absolute !important;       /* fixed 아님 */
       top: var(--flyout-top) !important;
-      right: var(--flyout-gap) !important; /* 패딩 안쪽에 정확히 배치 */
-      left: auto !important; bottom: auto !important;
-
-      width: var(--flyout-width) !important;
-      max-width: 38vw !important;
-
-      /* 화면 바닥과 안 부딪히게 내부 스크롤 */
-      max-height: calc(100vh - var(--flyout-top) - var(--chatbar-h) - var(--chat-gap) - 16px) !important;
-      overflow: auto !important;
-      z-index: 5 !important;
     }
-  }
-
-  /* 3) 모바일/좁은 화면은 원래 흐름 */
-  @media (max-width:1099px){
-    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
-    .block-container{ padding-right: 0 !important; }
+    /* 본문이 패널과 겹치지 않도록 우측 여백도 같은 기준으로 보정 */
+    .block-container{
+      padding-right: calc(var(--flyout-gap) + var(--flyout-width, 360px)) !important;
+    }
+    /* 패널이 너무 길어 바닥에 붙는 걸 방지(내부만 스크롤) */
+    #search-flyout{
+      max-height: calc(100vh - var(--flyout-top) - var(--chatbar-h,56px) - var(--chat-gap,12px) - 16px) !important;
+      overflow: auto !important;
+    }
   }
 </style>
 """, unsafe_allow_html=True)
-
-
-
-
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
