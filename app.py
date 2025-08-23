@@ -308,7 +308,7 @@ st.markdown("""
     /* 필요하면 이 3개만 조절 */
     --flyout-width: 360px;   /* 패널 폭 */
     --flyout-gap:   64px;    /* 본문과 패널 사이 간격 */
-    --flyout-top:   140px;   /* 상단에서 떨어진 거리(커질수록 더 아래) */
+    --flyout-top:   50px;   /* 상단에서 떨어진 거리(커질수록 더 아래) */
   }
 
   @media (min-width: 1100px){
