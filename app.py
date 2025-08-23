@@ -1,6 +1,57 @@
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
+# === [DROP-IN: HIDE INPUTS WHILE STREAMING] ===
+import streamlit as st
+
+def __answering_now() -> bool:
+    ss = st.session_state
+    return bool(
+        ss.get("_pending_user_q") or
+        ss.get("_streaming") or
+        ss.get("is_streaming") or
+        ss.get("__answering__")
+    )
+
+if not st.session_state.get("_hide_inputs_pat_", False):
+    _orig_file_uploader = st.file_uploader
+    _orig_chat_input    = getattr(st, "chat_input", None)
+    _orig_text_input    = st.text_input
+    _orig_text_area     = st.text_area
+
+    def _guard_none(fn):
+        def _inner(*args, **kwargs):
+            return None if __answering_now() else fn(*args, **kwargs)
+        return _inner
+
+    def _guard_text(fn):
+        def _inner(*args, **kwargs):
+            return "" if __answering_now() else fn(*args, **kwargs)
+        return _inner
+
+    st.file_uploader = _guard_none(_orig_file_uploader)
+    if _orig_chat_input:
+        st.chat_input = _guard_none(_orig_chat_input)
+    st.text_input = _guard_text(_orig_text_input)
+    st.text_area  = _guard_text(_orig_text_area)
+
+    st.session_state["_hide_inputs_pat_"] = True  # <-- fixed missing quote
+
+if __answering_now():
+    st.markdown("""
+    <style>
+      [data-testid="stFileUploader"],
+      [data-testid="stFileUploaderDropzone"],
+      section[data-testid="stChatInput"],
+      #chatbar-fixed,
+      .center-hero .stFileUploader,
+      .center-hero .stTextInput {
+        display: none !important;
+      }
+    </style>
+    """, unsafe_allow_html=True)
+# === [END DROP-IN] ===
+
 import streamlit as st
 
 
@@ -2172,38 +2223,38 @@ st.session_state["__answering__"] = ANSWERING
 chat_started = bool(ANSWERING or _chat_started())
 
 # chat_started 계산 직후에 추가
-# [DISABLED by PREFLIGHT] st.markdown(f"""
-# [DISABLED by PREFLIGHT] <script>
-# [DISABLED by PREFLIGHT] document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-# [DISABLED by PREFLIGHT] document.body.classList.toggle('answering', {str(ANSWERING).lower()});
-# [DISABLED by PREFLIGHT] </script>
-# [DISABLED by PREFLIGHT] """, unsafe_allow_html=True)
+#  st.markdown(f"""
+#  <script>
+#  document.body.classList.toggle('chat-started', {str(chat_started).lower()});
+#  document.body.classList.toggle('answering', {str(ANSWERING).lower()});
+#  </script>
+#  """, unsafe_allow_html=True)
 
 # --- hide chat input & uploaders ONLY while answering ---
-# [DISABLED by PREFLIGHT] st.markdown("""
-# [DISABLED by PREFLIGHT] <style>
-# [DISABLED by PREFLIGHT] /* ▶ 스트리밍 중(=answering)일 때만 숨김 */
-# [DISABLED by PREFLIGHT] body.answering #chatbar-fixed,
-# [DISABLED by PREFLIGHT] body.answering section[data-testid="stChatInput"],
-# [DISABLED by PREFLIGHT] body.answering #bu-anchor + div[data-testid="stFileUploader"],
-# [DISABLED by PREFLIGHT] body.answering .center-hero{
-# [DISABLED by PREFLIGHT]   display: none !important;
-# [DISABLED by PREFLIGHT] }
-# [DISABLED by PREFLIGHT] 
-# [DISABLED by PREFLIGHT] /* ▶ 스트리밍이 아닐 때는 정상 노출 */
-# [DISABLED by PREFLIGHT] body.chat-started:not(.answering) #chatbar-fixed{
-# [DISABLED by PREFLIGHT]   display: block !important;
-# [DISABLED by PREFLIGHT] }
-# [DISABLED by PREFLIGHT] body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"]{
-# [DISABLED by PREFLIGHT]   display: block !important;
-# [DISABLED by PREFLIGHT] }
-# [DISABLED by PREFLIGHT] 
-# [DISABLED by PREFLIGHT] /* ▶ 숨긴 동안 본문 여백 과도하게 남지 않게 보정 */
-# [DISABLED by PREFLIGHT] body.answering .block-container{
-# [DISABLED by PREFLIGHT]   padding-bottom: 24px !important;
-# [DISABLED by PREFLIGHT] }
-# [DISABLED by PREFLIGHT] </style>
-# [DISABLED by PREFLIGHT] """, unsafe_allow_html=True)
+#  st.markdown("""
+#  <style>
+#  /* ▶ 스트리밍 중(=answering)일 때만 숨김 */
+#  body.answering #chatbar-fixed,
+#  body.answering section[data-testid="stChatInput"],
+#  body.answering #bu-anchor + div[data-testid="stFileUploader"],
+#  body.answering .center-hero{
+#    display: none !important;
+#  }
+#  
+#  /* ▶ 스트리밍이 아닐 때는 정상 노출 */
+#  body.chat-started:not(.answering) #chatbar-fixed{
+#    display: block !important;
+#  }
+#  body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"]{
+#    display: block !important;
+#  }
+#  
+#  /* ▶ 숨긴 동안 본문 여백 과도하게 남지 않게 보정 */
+#  body.answering .block-container{
+#    padding-bottom: 24px !important;
+#  }
+#  </style>
+#  """, unsafe_allow_html=True)
 
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
@@ -2463,43 +2514,43 @@ if chat_started and not st.session_state.get("__answering__", False):
 
 
 # --- PATCH: hide chat input & uploaders ONLY while answering ---
-# [DISABLED by PREFLIGHT] st.markdown("""
-# [DISABLED by PREFLIGHT] <style>
-# [DISABLED by PREFLIGHT] /* ▶ 스트리밍 중(=answering)일 때만 숨김 */
-# [DISABLED by PREFLIGHT] body.answering #chatbar-fixed,
-# [DISABLED by PREFLIGHT] body.answering section[data-testid="stChatInput"],
-# [DISABLED by PREFLIGHT] body.answering #bu-anchor + div[data-testid="stFileUploader"],
-# [DISABLED by PREFLIGHT] body.answering .center-hero,
-# [DISABLED by PREFLIGHT] body.answering [data-testid="stFileUploader"],
-# [DISABLED by PREFLIGHT] body.answering [data-testid="stFileUploaderDropzone"]{
-# [DISABLED by PREFLIGHT]   display: none !important;
-# [DISABLED by PREFLIGHT] }
-# [DISABLED by PREFLIGHT] 
-# [DISABLED by PREFLIGHT] /* ▶ 스트리밍이 아닐 때는 정상 노출 */
-# [DISABLED by PREFLIGHT] body.chat-started:not(.answering) #chatbar-fixed{
-# [DISABLED by PREFLIGHT]   display: block !important;
-# [DISABLED by PREFLIGHT] }
-# [DISABLED by PREFLIGHT] body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"]{
-# [DISABLED by PREFLIGHT]   display: block !important;
-# [DISABLED by PREFLIGHT] }
-# [DISABLED by PREFLIGHT] 
-# [DISABLED by PREFLIGHT] /* ▶ 숨긴 동안 본문 여백 과도하게 남지 않게 보정 */
-# [DISABLED by PREFLIGHT] body.answering .block-container{
-# [DISABLED by PREFLIGHT]   padding-bottom: 24px !important;
-# [DISABLED by PREFLIGHT] }
-# [DISABLED by PREFLIGHT] </style>
-# [DISABLED by PREFLIGHT] """, unsafe_allow_html=True)
+#  st.markdown("""
+#  <style>
+#  /* ▶ 스트리밍 중(=answering)일 때만 숨김 */
+#  body.answering #chatbar-fixed,
+#  body.answering section[data-testid="stChatInput"],
+#  body.answering #bu-anchor + div[data-testid="stFileUploader"],
+#  body.answering .center-hero,
+#  body.answering [data-testid="stFileUploader"],
+#  body.answering [data-testid="stFileUploaderDropzone"]{
+#    display: none !important;
+#  }
+#  
+#  /* ▶ 스트리밍이 아닐 때는 정상 노출 */
+#  body.chat-started:not(.answering) #chatbar-fixed{
+#    display: block !important;
+#  }
+#  body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"]{
+#    display: block !important;
+#  }
+#  
+#  /* ▶ 숨긴 동안 본문 여백 과도하게 남지 않게 보정 */
+#  body.answering .block-container{
+#    padding-bottom: 24px !important;
+#  }
+#  </style>
+#  """, unsafe_allow_html=True)
 
 
 
 # --- PATCH: body class toggles for chat-started / answering ---
 try:
     pass
-# [DISABLED by PREFLIGHT]     st.markdown(f"""
-# [DISABLED by PREFLIGHT]     <script>
-# [DISABLED by PREFLIGHT]     document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-# [DISABLED by PREFLIGHT]     document.body.classList.toggle('answering', {str(ANSWERING).lower()});
-# [DISABLED by PREFLIGHT]     </script>
-# [DISABLED by PREFLIGHT]     """, unsafe_allow_html=True)
+#      st.markdown(f"""
+#      <script>
+#      document.body.classList.toggle('chat-started', {str(chat_started).lower()});
+#      document.body.classList.toggle('answering', {str(ANSWERING).lower()});
+#      </script>
+#      """, unsafe_allow_html=True)
 except Exception:
     pass
