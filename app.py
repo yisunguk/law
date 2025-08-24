@@ -1893,7 +1893,7 @@ with st.sidebar:
 
     # ───────────────────────── 법령
     
-st.markdown("""
+    st.markdown("""
 <script>
 (function(){
   function ensureSidebarLawInput(){
@@ -1920,7 +1920,7 @@ st.markdown("""
 })();
 </script>
 """, unsafe_allow_html=True)
-with tabs[0]:
+    with tabs[0]:
         st.markdown('<div id="lawname-anchor"></div>', unsafe_allow_html=True)
         law_name = st.text_input("법령명", value="민법", key="sb_law_name", label_visibility="visible")
         # 법령명 기반 추천
