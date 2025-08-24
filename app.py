@@ -1892,35 +1892,7 @@ with st.sidebar:
     term_suggest   = ["정의", "용어", "별표", "서식"]
 
     # ───────────────────────── 법령
-    
-    st.markdown("""
-<script>
-(function(){
-  function ensureSidebarLawInput(){
-    const el = document.querySelector('section[data-testid="stSidebar"] #lawname-anchor + div[data-testid="stTextInput"]');
-    if(el){
-      el.style.display='block';
-      el.style.visibility='visible';
-      el.style.opacity='1';
-      el.style.height='auto';
-      el.style.maxHeight='none';
-      el.style.overflow='visible';
-      // also ensure its parent blocks are expanded
-      let p = el.parentElement;
-      while(p && p !== document.body){
-        if(getComputedStyle(p).display==='none'){ p.style.display='block'; }
-        if(getComputedStyle(p).visibility==='hidden'){ p.style.visibility='visible'; }
-        p = p.parentElement;
-      }
-    }
-  }
-  ensureSidebarLawInput();
-  const mo = new MutationObserver(ensureSidebarLawInput);
-  mo.observe(document.body, {subtree:true, childList:true, attributes:true});
-})();
-</script>
-""", unsafe_allow_html=True)
-    with tabs[0]:
+with tabs[0]:
         st.markdown('<div id="lawname-anchor"></div>', unsafe_allow_html=True)
         law_name = st.text_input("법령명", value="민법", key="sb_law_name", label_visibility="visible")
         # 법령명 기반 추천
@@ -2529,6 +2501,31 @@ body.answering section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"
 /* Ensure the '법령명' field block never collapses */
 #lawname-anchor + div[data-testid="stTextInput"]{
   display: block !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+
+st.markdown("""
+<style>
+/* FINAL: keep sidebar unchanged in all states */
+body.answering section[data-testid="stSidebar"],
+body.answering section[data-testid="stSidebar"] *{
+  display: revert !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+/* Limit all answering-hide rules strictly to MAIN content area */
+body.answering div[data-testid="stAppViewContainer"] main .center-hero,
+body.answering div[data-testid="stAppViewContainer"] main #chatbar-fixed,
+body.answering div[data-testid="stAppViewContainer"] main [data-testid="stFileUploader"]{
+  display: none !important;
 }
 </style>
 """, unsafe_allow_html=True)
