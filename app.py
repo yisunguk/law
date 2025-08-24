@@ -27,9 +27,9 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# --- 제목 앵커/헤더 액션 숨김 (재렌더링 내성) ---
 st.markdown("""
 <style>
-/* 1) 제목 내부/형제 위치의 앵커 모두 숨김 */
 .block-container h1 a[href^="#"],
 .block-container h2 a[href^="#"],
 .block-container h3 a[href^="#"],
@@ -43,32 +43,22 @@ st.markdown("""
 .block-container h5 + a[href^="#"],
 .block-container h6 + a[href^="#"],
 .block-container a[aria-label*="link to this"],
-.block-container a[aria-label*="링크"],
-.block-container [data-testid="stHeaderAction"] {
-  display: none !important;
+.block-container [data-testid="stHeaderAction"]{
+  display:none !important;
 }
 </style>
-
 <script>
 (function(){
-  // 2) 리렌더링 대비: 생성 즉시 다시 숨김
-  const hide = () => {
-    const sel = [
-      'h1 a[href^="#"]','h2 a[href^="#"]','h3 a[href^="#"]',
-      'h4 a[href^="#"]','h5 a[href^="#"]','h6 a[href^="#"]',
-      'h1 + a[href^="#"]','h2 + a[href^="#"]','h3 + a[href^="#"]',
-      'h4 + a[href^="#"]','h5 + a[href^="#"]','h6 + a[href^="#"]',
-      'a[aria-label*="link to this"]','a[aria-label*="링크"]',
-      '[data-testid="stHeaderAction"]'
-    ].join(',');
-    document.querySelectorAll(sel).forEach(el => { el.style.display = 'none'; });
-  };
+  const hide=()=>{document.querySelectorAll(
+    'h1 a[href^="#"],h2 a[href^="#"],h3 a[href^="#"],h4 a[href^="#"],h5 a[href^="#"],h6 a[href^="#"],' +
+    'h1 + a[href^="#"],h2 + a[href^="#"],h3 + a[href^="#"],h4 + a[href^="#"],h5 + a[href^="#"],h6 + a[href^="#"],' +
+    'a[aria-label*="link to this"],[data-testid="stHeaderAction"]'
+  ).forEach(el=>el.style.display="none");};
   hide();
-  new MutationObserver(hide).observe(document.body, {subtree:true, childList:true});
+  new MutationObserver(hide).observe(document.body,{subtree:true,childList:true,attributes:true});
 })();
 </script>
 """, unsafe_allow_html=True)
-
 
 st.markdown("""
 <style>
@@ -287,91 +277,66 @@ SUGGESTED_TAB_KEYWORDS = {
 def cached_suggest_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
-def inject_sticky_layout_css(mode: str = "wide"):
-    PRESETS = {
-        "wide":   {"center": "1160px", "bubble_max": "760px"},
-        "narrow": {"center": "880px",  "bubble_max": "640px"},
-    }
-    p = PRESETS.get(mode, PRESETS["wide"])
-
-    # 전역 CSS 변수(한 군데에서만 선언)
-    root_vars = (
-        ":root {"
-        " --center-col: 1160px;"
-        " --bubble-max: 760px;"
-        " --chatbar-h: 56px;"
-        " --chat-gap: 12px;"
-        " --rail: 460px;"
-        " --hgap: 24px;"
-        "}"
-    )
-
-    css = f"""
+def inject_unified_layout_css(center="1160px", bubble="760px"):
+    st.markdown(f"""
     <style>
-      {root_vars}
+      :root {{
+        --center-col: {center};
+        --bubble-max: {bubble};
+        --chatbar-h: 56px;
+        --chat-gap: 12px;
+        --flyout-width: 360px;
+        --flyout-gap: 80px;
+      }}
 
-      /* 본문/입력창 공통 중앙 정렬 & 동일 폭 */
+      /* 본문과 입력창 공통 중앙 정렬 */
       .block-container, .stChatInput {{
         max-width: var(--center-col) !important;
         margin-left: auto !important;
         margin-right: auto !important;
       }}
 
-      /* 채팅 말풍선 최대 폭 */
+      /* 말풍선 최대 폭 */
       [data-testid="stChatMessage"] {{
         max-width: var(--bubble-max) !important;
         width: 100% !important;
       }}
       [data-testid="stChatMessage"] .stMarkdown,
-      [data-testid="stChatMessage"] .stMarkdown > div {{
-        width: 100% !important;
-      }}
+      [data-testid="stChatMessage"] .stMarkdown > div {{ width: 100% !important; }}
 
-      /* 대화 전 중앙 히어로 */
-      .center-hero {{
-        min-height: calc(100vh - 220px);
-        display: flex; flex-direction: column; align-items: center; justify-content: center;
-      }}
-      .center-hero .stFileUploader, .center-hero .stTextInput {{
-        width: 720px; max-width: 92vw;
-      }}
-
-      /* 업로더 고정: 앵커 다음 형제 업로더 */
-      #bu-anchor + div[data-testid='stFileUploader'] {{
-        position: fixed;
-        left: 50%; transform: translateX(-50%);
-        bottom: calc(var(--chatbar-h) + var(--chat-gap) + 12px);
-        width: clamp(340px, calc(var(--center-col) - 2*var(--hgap)), calc(100vw - var(--rail) - 2*var(--hgap)));
-        max-width: calc(100vw - var(--rail) - 2*var(--hgap));
-        z-index: 60;
-        background: rgba(0,0,0,0.35);
-        padding: 10px 12px; border-radius: 12px;
-        backdrop-filter: blur(6px);
-      }}
-      #bu-anchor + div [data-testid='stFileUploader'] {{
-        background: transparent !important; border: none !important;
-      }}
-
-      /* 입력창 하단 고정 */
+      /* 하단 입력창 고정(가운데 폭 축소) */
       section[data-testid="stChatInput"] {{
         position: fixed; left: 50%; transform: translateX(-50%);
         bottom: 0; z-index: 70;
-        width: clamp(340px, calc(var(--center-col) - 2*var(--hgap)), calc(100vw - var(--rail) - 2*var(--hgap)));
-        max-width: calc(100vw - var(--rail) - 2*var(--hgap));
+        width: clamp(340px, calc(var(--center-col) - 48px), calc(100vw - var(--flyout-width) - var(--flyout-gap) - 48px));
       }}
 
-      /* 본문이 하단 고정 UI와 겹치지 않게 */
-      .block-container {{
-        padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
+      /* 우측 플라이아웃: 입력창 바로 위에서 멈추게 */
+      @media (min-width:1280px){{
+        .block-container{{ padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important; }}
+        #search-flyout{{
+          position: fixed !important;
+          right: 24px !important; left: auto !important;
+          bottom: calc(var(--chatbar-h) + var(--chat-gap) + 16px) !important;
+          top: auto !important;
+          width: var(--flyout-width) !important;
+          max-width: 38vw !important;
+          max-height: calc(100vh - (var(--chatbar-h) + var(--chat-gap) + 16px) - 24px) !important;
+          overflow: auto !important;
+        }}
       }}
 
-      
+      /* 본문이 하단 입력창과 겹치지 않게 */
+      .block-container{{ padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important; }}
+
+      /* 작은 화면에서는 우측 패널 숨김 */
+      @media (max-width:1279px){{ #search-flyout{{ display:none !important; }} }}
     </style>
-    """
-    st.markdown(css, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
-# 호출 위치: 파일 맨 아래, 모든 컴포넌트를 그린 뒤
-inject_sticky_layout_css("wide")
+# 호출: 페이지 요소 그린 뒤 아무 곳에서나 한 번
+inject_unified_layout_css()
+
 
 # ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
 
