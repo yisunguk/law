@@ -1,11 +1,13 @@
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
-# === Left sidebar locker (safe, after __future__) ============================
+import streamlit as st
+
+# === Left sidebar locker (imports-safe) ======================================
 def _left_sidebar_lock(width_px: int = 480, gap_px: int = 28, top_px: int = 0):
     """
-    좌측 사이드바를 화면 높이에 맞춰 고정(100vh)하고, 폭을 넓히며, 탭을 한 줄로 유지합니다.
-    전역 상태(answering/chat-started)에도 가시성만 보장하고 레이아웃은 건드리지 않습니다.
+    좌측 사이드바를 100vh로 고정하고(채팅 전/중/후 동일), 폭을 넓히며, 탭을 한 줄 유지합니다.
+    Streamlit 전역 상태(answering/chat-started)에도 가시성만 보장하고 레이아웃은 건드리지 않습니다.
     """
     st.markdown(f"""
 <style>
@@ -30,7 +32,7 @@ def _left_sidebar_lock(width_px: int = 480, gap_px: int = 28, top_px: int = 0):
     visibility: visible !important; opacity: 1 !important; pointer-events: auto !important;
   }}
 
-  /* Tabs: keep one line; allow horizontal scroll if overflowing */
+  /* Tabs in one line; horizontal scroll if overflow */
   section[data-testid="stSidebar"] [role="tablist"]{{
     display: flex !important; flex-wrap: nowrap !important; gap: 10px !important;
     overflow-x: auto !important; white-space: nowrap !important; scrollbar-width: thin;
@@ -43,9 +45,6 @@ def _left_sidebar_lock(width_px: int = 480, gap_px: int = 28, top_px: int = 0):
 # ============================================================================
 
 _left_sidebar_lock(480, 28, 0)
-
-
-import streamlit as st
 
 st.set_page_config(
     page_title="법제처 법무 상담사",
