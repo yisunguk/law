@@ -1854,53 +1854,7 @@ except NameError:
     # 이 패치를 해당 정의 '아래'로 옮겨 붙이세요.
     pass
 
-# =============================
-# 키워드 기본값/위젯 헬퍼 (with st.sidebar: 위에 배치)
-# =============================
-
-# 탭별 기본 키워드 1개(없으면 첫 항목 사용)
-DEFAULT_KEYWORD = {
-    "법령": "개정",
-    "행정규칙": "개정",
-    "자치법규": "개정",
-    "조약": "비준",
-    "판례": "대법원",
-    "헌재": "위헌",
-    "해석례": "유권해석",
-    "용어/별표": "정의",   # ← '용어' 대신 '정의'를 기본으로 권장
-}
-
-def one_default(options, prefer=None):
-    """옵션 목록에서 기본으로 1개만 선택해 반환"""
-    if not options:
-        return []
-    if prefer and prefer in options:
-        return [prefer]
-    return [options[0]]
-
-# st_tags가 있으면 태그 위젯, 없으면 multiselect로 동작
-try:
-    from streamlit_tags import st_tags
-    def kw_input(label, options, key, tab_name=None):
-        prefer = DEFAULT_KEYWORD.get(tab_name)
-        return st_tags(
-            label=label,
-            text="쉼표(,) 또는 Enter로 추가/삭제",
-            value=one_default(options, prefer),   # ✅ 기본 1개만
-            suggestions=options,
-            maxtags=len(options),
-            key=key,
-        )
-except Exception:
-    def kw_input(label, options, key, tab_name=None):
-        prefer = DEFAULT_KEYWORD.get(tab_name)
-        return st.multiselect(
-            label=label,
-            options=options,
-            default=one_default(options, prefer), # ✅ 기본 1개만
-            key=key,
-            help="필요한 키워드만 추가로 선택하세요.",
-        )
+# [PATCH] Early kw_input block removed to avoid overriding render-time.
 
 # =============================
 # Sidebar: 링크 생성기 (무인증)
@@ -1927,6 +1881,7 @@ with st.sidebar:
 
     # ───────────────────────── 법령
     with tabs[0]:
+        st.markdown('<div id="lawname-anchor"></div>', unsafe_allow_html=True)
         law_name = st.text_input("법령명", value="민법", key="sb_law_name", label_visibility="visible")
         # 법령명 기반 추천
         law_keys = kw_input("키워드(자동 추천)",
@@ -2475,6 +2430,27 @@ section[data-testid="stSidebar"] [data-testid="stTextInput"]{
   overflow: visible !important;
   margin-top: 8px !important;
   margin-bottom: 8px !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+
+st.markdown("""
+<style>
+/* 🔒 Super-strong: ensure the specific law-name input is always visible */
+#lawname-anchor + div[data-testid="stTextInput"]{
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+  pointer-events: auto !important;
+}
+section[data-testid="stSidebar"] [data-testid="stTextInput"] *{
+  visibility: inherit !important;
+  opacity: 1 !important;
 }
 </style>
 """, unsafe_allow_html=True)
