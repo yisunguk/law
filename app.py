@@ -1914,16 +1914,18 @@ except Exception:
 # =============================
 # Sidebar: 링크 생성기 (무인증)
 # =============================
-# === [FREEZE] sidebar defaults (pre-chat) =====================================
-if "__SIDEBAR_PRESET__" not in st.session_state:
-    st.session_state["__SIDEBAR_PRESET__"] = {
+
+# === [FREEZE] left-rail defaults (pre-chat) ===============================
+if "__LEFT_RAIL_PRESET__" not in st.session_state:
+    st.session_state["__LEFT_RAIL_PRESET__"] = {
         "law_name_default": "",
         "law_kw_default": ["정의", "목적", "벌칙"],
     }
-PRESET = st.session_state["__SIDEBAR_PRESET__"]
-# ============================================================================
+LR_PRESET = st.session_state["__LEFT_RAIL_PRESET__"]
+# ===========================================================================
 
-with st.sidebar:
+# ==== Left Rail renderer (no native sidebar) ===========================
+def render_left_rail():
     # --- 사이드바: 새 대화 버튼(링크 생성기 위) ---
     if st.button("🆕 새 대화", type="primary", use_container_width=True, key="__btn_new_chat__"):
         for k in ("messages", "_last_user_nonce", "_pending_user_q", "_pending_user_nonce", "_last_ans_hash"):
@@ -1945,10 +1947,12 @@ with st.sidebar:
 
     # ───────────────────────── 법령
     with tabs[0]:
-        law_name = st.text_input("법령명", value=st.session_state.get("__sb_law_name__", PRESET["law_name_default"]), key="sb_law_name", label_visibility="visible")
-        st.session_state["__sb_law_name__"] = law_name
+        law_name = st.text_input("법령명", value="민법", key="sb_law_name", label_visibility="visible")
         # 법령명 기반 추천
-        law_keys = kw_input("키워드(자동 추천)", PRESET["law_kw_default"], key="sb_law_keys", tab_name="법령")
+        law_keys = kw_input("키워드(자동 추천)",
+                            suggest_keywords_for_law(law_name),
+                            key="sb_law_keys",
+                            tab_name="법령")
 
         if st.button("법령 상세 링크 만들기", key="sb_btn_law"):
             url = hangul_law_with_keys(law_name, law_keys) if law_keys else hangul_by_name("법령", law_name)
@@ -2120,7 +2124,31 @@ with st.sidebar:
         if "gen_file" in st.session_state:
             d = st.session_state["gen_file"]
             present_url_with_fallback(d["url"], d["kind"], d["q"])
+# =========================================================================
 
+# ==== Mount CSS-fixed left rail (no JS/iframe) ============================
+st.markdown(
+    """
+    <style>
+      :root{ --left-rail: 360px; --gap: 24px; }
+      section[data-testid='stSidebar']{ display:none !important; } /* hide native */
+      /* Anchor + next block becomes the left rail */
+      #rail-anchor + div[data-testid='stVerticalBlock']{
+        position: fixed !important; left: 0; top: 0; bottom: 0;
+        width: var(--left-rail); overflow: auto; z-index: 60; padding: 12px 12px 80px;
+      }
+      /* Push main body to the right */
+      .block-container{ margin-left: calc(var(--left-rail) + var(--gap)) !important; }
+      /* Never hide the left rail while answering */
+      body.answering #rail-anchor + div[data-testid='stVerticalBlock']{ visibility: visible !important; opacity: 1 !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+st.markdown('<div id="rail-anchor"></div>', unsafe_allow_html=True)
+with st.container():
+    render_left_rail()
+# =========================================================================
 # 1) pending → messages 먼저 옮김
 user_q = _push_user_from_pending()
 
@@ -2419,14 +2447,14 @@ section[data-testid="stSidebar"]{
   opacity: 1 !important; visibility: visible !important;
 }
 
-/* 사이드바는 상태와 무관하게 보이도록만 보증(레이아웃은 건드리지 않음) */
-body.answering section[data-testid="stSidebar"],
-body.chat-started section[data-testid="stSidebar"]{
+/* 답변중/대화시작 후에라도, 사이드바 위젯은 절대 숨기지 않음 */
+body.answering  section[data-testid="stSidebar"] *,
+body.chat-started section[data-testid="stSidebar"] *{
+  display: revert !important;
   visibility: visible !important;
-  opacity: 1 !important;
   pointer-events: auto !important;
+  opacity: 1 !important;
 }
-
 
 /* 혹시 전역 규칙이 .stTextInput / 업로더 등을 건드려도 사이드바는 복구 */
 body.answering  section[data-testid="stSidebar"] .stTextInput,
