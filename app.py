@@ -1,11 +1,14 @@
-# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
-from __future__ import annotations
-
+# -*- coding: utf-8 -*-
 import streamlit as st
 
 st.set_page_config(
+    page_title="법제처 법무 상담사",
+    page_icon="⚖️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# ---- bottom-only visibility rules (injected) ----
+# ---- bottom-only visibility rules ----
 st.markdown("""
 <style id="bottom-only-hide">
 /* Only hide the BOTTOM chatbar/uploader WHILE ANSWERING */
@@ -21,13 +24,6 @@ section[data-testid="stSidebar"] *{ visibility:visible !important; opacity:1 !im
 section[data-testid="stChatInput"]{ z-index:60 !important; }
 </style>
 """, unsafe_allow_html=True)
-
-
-    page_title="법제처 법무 상담사",
-    page_icon="⚖️",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
 
 # === [BOOTSTRAP] session keys (must be first) ===
 if "messages" not in st.session_state:
@@ -2118,7 +2114,7 @@ st.session_state["__answering__"] = ANSWERING
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
 
-st.session_state[\"__chat_started__\"] = chat_started
+st.session_state["__chat_started__"] = chat_started
 # chat_started 계산 직후에 추가
 st.markdown(f"""
 <script>
