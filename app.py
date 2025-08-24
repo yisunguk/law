@@ -2096,8 +2096,12 @@ user_q = _push_user_from_pending()
 ANSWERING = bool(user_q)
 st.session_state["__answering__"] = ANSWERING
 
-# 2) 대화 시작 여부 계산 (교체된 함수)
+# 2) 대화 시작 여부 계산
 chat_started = _chat_started()
+
+# ✅ 누락된 한 줄: body.chat-started CSS가 동작하도록 세션에 저장
+st.session_state["__chat_started__"] = chat_started
+
 
 # (1) 상태 플래그 준비 — 이미 계산했다면 그대로 쓰세요.
 ANSWERING = st.session_state.get("__answering__", False)   # 이번 턴 답변 중?
