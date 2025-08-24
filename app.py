@@ -3,16 +3,13 @@ from __future__ import annotations
 
 import streamlit as st
 
-
 st.set_page_config(
     page_title="법제처 법무 상담사",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
-# PATCH safety: default flags (will be updated later)
-ANSWERING = bool(st.session_state.get("__answering__", False))
-chat_started = bool(globals().get("chat_started", False))
+
 # === [BOOTSTRAP] session keys (must be first) ===
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -293,124 +290,55 @@ def inject_sticky_layout_css(mode: str = "wide"):
 # 호출 위치: 파일 맨 아래, 모든 컴포넌트를 그린 뒤
 inject_sticky_layout_css("wide")
 
+# ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
 
-# --- Dock search into the right chatbar (single fixed right rail) ---
+# --- Right flyout: 상단 고정 + 하단(채팅창)과 겹치지 않게 ---
+# --- Right flyout: 하단 답변창(입력창) 위에 맞춰 고정 ---
 import streamlit as st
-
 st.markdown("""
 <style>
   :root{
-    --right-rail: 360px;   /* 우측 레일 폭 (검색+챗바 공용) */
-    --right-gap:  80px;    /* 본문과 간격 */
-    --right-pad:  24px;    /* 화면 오른쪽 여백 */
-    --right-top:  96px;    /* 상단 시작 위치(헤더/버튼 피해서) */
-
-    /* 좌측 레일을 쓰고 있다면 실제 폭과 간격으로 값만 주면 됨(없으면 0으로 처리됨) */
-    --left-rail: 0px;
-    --left-gap:  0px;
+    /* 숫자만 바꾸면 미세조정 됩니다 */
+    --flyout-width: 360px;     /* 우측 패널 폭 */
+    --flyout-gap:   80px;      /* 본문과 패널 사이 가로 간격 */
+    --chatbar-h:    56px;      /* 하단 입력창 높이 */
+    --chat-gap:     12px;      /* 입력창 위 여백 */
+    /* 패널 하단이 멈출 위치(= 입력창 바로 위) */
+    --flyout-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 16px);
   }
 
   @media (min-width:1280px){
-    /* 본문은 양쪽 레일만큼 공간을 비워 중앙에 배치 */
-    body.rightRailDocked .block-container{
-      padding-left:  calc(var(--left-rail)  + var(--left-gap))  !important;
-      padding-right: calc(var(--right-rail) + var(--right-gap)) !important;
+    /* 본문이 패널과 겹치지 않도록 우측 여백 확보 */
+    .block-container{
+      padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
     }
 
-    /* ✅ 우측 '하나의' 레일 컨테이너 (상단=검색, 하단=챗바) */
-    body.rightRailDocked #right-rail{
+    /* 패널: 화면 하단 기준으로 ‘입력창 위’에 딱 붙이기 */
+    #search-flyout{
       position: fixed !important;
-      top: var(--right-top) !important;
-      right: var(--right-pad) !important;
-      width: var(--right-rail) !important;
-      bottom: 12px !important;     /* 하단 여백 */
-      display: flex !important;
-      flex-direction: column !important;
-      gap: 12px !important;
-      z-index: 70 !important;      /* 본문 위, 헤더/모달보다 낮게 필요시 조정 */
-    }
+      bottom: var(--flyout-bottom) !important;  /* ⬅ 핵심: 답변창 위에 정렬 */
+      top: auto !important;                     /* 기존 top 규칙 무력화 */
+      right: 24px !important; left: auto !important;
 
-    /* 상단 통합검색: 내부만 스크롤 */
-    body.rightRailDocked #right-rail .rail-content{
-      flex: 1 1 auto !important;
-      min-height: 0 !important;
+      width: var(--flyout-width) !important;
+      max-width: 38vw !important;
+
+      /* 패널 내부만 스크롤되게 최대 높이 제한 */
+      max-height: calc(100vh - var(--flyout-bottom) - 24px) !important;
       overflow: auto !important;
-    }
 
-    /* 하단 챗바 래퍼 */
-    body.rightRailDocked #right-rail .rail-chat{
-      flex: 0 0 auto !important;
-    }
-
-    /* ⛔ 기존 고정 규칙 무력화: 검색 패널/챗바를 레일 안에서 '정적'으로 배치 */
-    body.rightRailDocked #search-flyout{
-      position: static !important;
-      top: auto !important; right: auto !important; left: auto !important; bottom: auto !important;
-      width: 100% !important; max-width: none !important; max-height: none !important;
-      overflow: visible !important;
-      z-index: auto !important;
-    }
-    body.rightRailDocked #chatbar-fixed,
-    body.rightRailDocked section[data-testid="stChatInput"]{
-      position: static !important;
-      left: auto !important; right: auto !important; bottom: auto !important; transform: none !important;
-      width: 100% !important; max-width: none !important;
-      z-index: auto !important;
+      z-index: 58 !important; /* 입력창(보통 z=70)보다 낮게 */
     }
   }
 
-  /* 좁은 화면은 원래 흐름 유지(우측 레일 감춤) */
+  /* 모바일/좁은 화면은 자연 흐름 */
   @media (max-width:1279px){
-    body.rightRailDocked #right-rail{ display: none !important; }
-    body.rightRailDocked .block-container{
-      padding-left: 0 !important; padding-right: 0 !important;
-    }
+    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
+    .block-container{ padding-right: 0 !important; }
   }
 </style>
-
-<script>
-/* DOM을 안전하게 '도킹': #right-rail을 만들고 #search-flyout과 chat_input을 안으로 옮김
-   - Streamlit이 재렌더링해도 MutationObserver가 계속 붙잡아 줍니다. */
-(function(){
-  function ensureRail(){
-    document.body.classList.add('rightRailDocked');
-
-    // 1) 우측 레일 컨테이너(없으면 생성)
-    let rail = document.getElementById('right-rail');
-    if(!rail){
-      rail = document.createElement('div');
-      rail.id = 'right-rail';
-      const content = document.createElement('div'); content.className = 'rail-content';
-      const chat    = document.createElement('div'); chat.className    = 'rail-chat';
-      rail.appendChild(content); rail.appendChild(chat);
-      document.body.appendChild(rail);
-    }
-
-    // 2) 대상 노드 찾기 (#search-flyout 과 chat 입력창)
-    const search = document.querySelector('#search-flyout');
-    const chat   = document.querySelector('#chatbar-fixed') ||
-                   document.querySelector('section[data-testid="stChatInput"]');
-
-    const contentWrap = rail.querySelector('.rail-content');
-    const chatWrap    = rail.querySelector('.rail-chat');
-
-    // 3) 레일 안으로 이동(이미 안에 있으면 생략)
-    if (search && contentWrap && search.parentElement !== contentWrap){
-      contentWrap.appendChild(search);
-    }
-    if (chat && chatWrap && chat.parentElement !== chatWrap){
-      chatWrap.appendChild(chat);
-    }
-  }
-
-  // 초기/리사이즈/DOM 변경 시마다 보정
-  window.addEventListener('load', ensureRail);
-  window.addEventListener('resize', ensureRail);
-  const mo = new MutationObserver(ensureRail);
-  mo.observe(document.body, {childList:true, subtree:true});
-})();
-</script>
 """, unsafe_allow_html=True)
+
 
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
@@ -2169,42 +2097,34 @@ ANSWERING = bool(user_q)
 st.session_state["__answering__"] = ANSWERING
 
 # 2) 대화 시작 여부 계산 (교체된 함수)
-chat_started = bool(ANSWERING or _chat_started())
+chat_started = _chat_started()
 
 # chat_started 계산 직후에 추가
-#  st.markdown(f"""
-#  <script>
-#  document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-#  document.body.classList.toggle('answering', {str(ANSWERING).lower()});
-#  </script>
-#  """, unsafe_allow_html=True)
+st.markdown(f"""
+<script>
+document.body.classList.toggle('chat-started', {str(chat_started).lower()});
+document.body.classList.toggle('answering', {str(ANSWERING).lower()});
+</script>
+""", unsafe_allow_html=True)
 
-# --- hide chat input & uploaders ONLY while answering ---
-#  st.markdown("""
-#  <style>
-#  /* ▶ 스트리밍 중(=answering)일 때만 숨김 */
-#  body.answering #chatbar-fixed,
-#  body.answering section[data-testid="stChatInput"],
-#  body.answering #bu-anchor + div[data-testid="stFileUploader"],
-#  body.answering .center-hero{
-#    display: none !important;
-#  }
-#  
-#  /* ▶ 스트리밍이 아닐 때는 정상 노출 */
-#  body.chat-started:not(.answering) #chatbar-fixed{
-#    display: block !important;
-#  }
-#  body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"]{
-#    display: block !important;
-#  }
-#  
-#  /* ▶ 숨긴 동안 본문 여백 과도하게 남지 않게 보정 */
-#  body.answering .block-container{
-#    padding-bottom: 24px !important;
-#  }
-#  </style>
-#  """, unsafe_allow_html=True)
+st.markdown("""
+<style>
+/* 🔧 대화 시작 후에는 모든 첨부파일 업로더를 완전히 숨김 */
+body.chat-started #bu-anchor + div[data-testid="stFileUploader"] { 
+    display: none !important; 
+}
+/* 기존: display:none !important;  (X) */
+body.chat-started #chatbar-fixed{
+  visibility: hidden !important;   /* 안 보이지만 자리·좌표는 유지 */
+  pointer-events: none !important; /* 클릭 방지 */
+}
 
+/* 답변 중일 때만 하단 여백 축소 */
+body.answering .block-container { 
+    padding-bottom: calc(var(--chat-gap) + 24px) !important; 
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
 if not chat_started:
@@ -2251,14 +2171,16 @@ if not chat_started:
     """, unsafe_allow_html=True)
 
 # 3) 화면 분기
-if (not chat_started) and (not ANSWERING):
-    render_pre_chat_center()
+if not chat_started:
+    render_pre_chat_center()   # 중앙 히어로 + 중앙 업로더
     st.stop()
 else:
     # 🔧 대화 시작 후에는 첨부파일 박스를 렌더링하지 않음 (완전히 제거)
     # 스트리밍 중에는 업로더 숨김 (렌더 자체 생략)
-    if not ANSWERING:
-        render_bottom_uploader()
+    # if not ANSWERING:
+    #     render_bottom_uploader()   # 하단 고정 업로더 - 주석 처리
+    pass
+
 # === 대화 시작 후: 우측 레일을 피해서 배치(침범 방지) ===
 # ----- RIGHT FLYOUT: align once to the question box, stable -----
 st.markdown("""
@@ -2457,47 +2379,3 @@ if chat_started and not st.session_state.get("__answering__", False):
         st.session_state["_clear_input"] = True
         st.rerun()
 
-
-
-
-# --- PATCH: hide chat input & uploaders ONLY while answering ---
-#  st.markdown("""
-#  <style>
-#  /* ▶ 스트리밍 중(=answering)일 때만 숨김 */
-#  body.answering #chatbar-fixed,
-#  body.answering section[data-testid="stChatInput"],
-#  body.answering #bu-anchor + div[data-testid="stFileUploader"],
-#  body.answering .center-hero,
-#  body.answering [data-testid="stFileUploader"],
-#  body.answering [data-testid="stFileUploaderDropzone"]{
-#    display: none !important;
-#  }
-#  
-#  /* ▶ 스트리밍이 아닐 때는 정상 노출 */
-#  body.chat-started:not(.answering) #chatbar-fixed{
-#    display: block !important;
-#  }
-#  body.chat-started:not(.answering) #bu-anchor + div[data-testid="stFileUploader"]{
-#    display: block !important;
-#  }
-#  
-#  /* ▶ 숨긴 동안 본문 여백 과도하게 남지 않게 보정 */
-#  body.answering .block-container{
-#    padding-bottom: 24px !important;
-#  }
-#  </style>
-#  """, unsafe_allow_html=True)
-
-
-
-# --- PATCH: body class toggles for chat-started / answering ---
-try:
-    pass
-#      st.markdown(f"""
-#      <script>
-#      document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-#      document.body.classList.toggle('answering', {str(ANSWERING).lower()});
-#      </script>
-#      """, unsafe_allow_html=True)
-except Exception:
-    pass
