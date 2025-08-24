@@ -147,3 +147,22 @@ div[data-testid="stFileUploaderDropzone"] button{{ display:none !important; visi
     st.markdown('</div>', unsafe_allow_html=True)
 
     return submitted, (text_val or '').strip(), files
+
+
+# --- injected: keep bottom chatbar clear of left/right rails without touching existing code ---
+try:
+    import streamlit as _st
+    _st.markdown("""
+<style>
+/* Ensure the bottom chatbar doesn't overlap the left sidebar or right flyout */
+.cb2-wrap{
+  left: var(--left-rail, 0) !important;
+  right: var(--right-rail, 0) !important;
+}
+@media (max-width: 1279px){
+  .cb2-wrap{ left: 0 !important; right: 0 !important; }
+}
+</style>
+""", unsafe_allow_html=True)
+except Exception:
+    pass
