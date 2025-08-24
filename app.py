@@ -3,12 +3,52 @@ from __future__ import annotations
 
 import streamlit as st
 
+# --- cache helpers: suggestions shouldn't jitter on reruns ---
+def cached_suggest_for_tab(tab_key: str):
+    import streamlit as st
+    store = st.session_state.setdefault("__tab_suggest__", {})
+    if tab_key not in store:
+        from modules import suggest_keywords_for_tab
+        store[tab_key] = cached_suggest_for_tab(tab_key)
+    return store[tab_key]
+
+def cached_suggest_for_law(law_name: str):
+    import streamlit as st
+    store = st.session_state.setdefault("__law_suggest__", {})
+    if law_name not in store:
+        from modules import suggest_keywords_for_law
+        store[law_name] = cached_suggest_for_law(law_name)
+    return store[law_name]
+
 st.set_page_config(
     page_title="법제처 법무 상담사",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+st.markdown("""
+<style>
+:root{
+  --left-rail: 300px;
+  --right-rail: calc(var(--flyout-width, 0px) + var(--flyout-gap, 0px));
+}
+</style>
+<script>
+(function(){
+  function setLeftRail(){
+    const sb = window.parent.document.querySelector('[data-testid="stSidebar"]');
+    if(!sb) return;
+    const w = Math.round(sb.getBoundingClientRect().width || 300);
+    document.documentElement.style.setProperty('--left-rail', w + 'px');
+  }
+  setLeftRail();
+  window.addEventListener('resize', setLeftRail);
+  new MutationObserver(setLeftRail).observe(window.parent.document.body, {subtree:true, childList:true, attributes:true});
+})();
+</script>
+""", unsafe_allow_html=True)
+
 
 # === [BOOTSTRAP] session keys (must be first) ===
 if "messages" not in st.session_state:
@@ -181,7 +221,7 @@ SUGGESTED_LAW_KEYWORDS = {
 }
 FALLBACK_LAW_KEYWORDS = ["정의", "목적", "벌칙"]
 
-def suggest_keywords_for_law(law_name: str) -> list[str]:
+def cached_suggest_for_law(law_name: str) -> list[str]:
     if not law_name:
         return FALLBACK_LAW_KEYWORDS
     if law_name in SUGGESTED_LAW_KEYWORDS:
@@ -201,7 +241,7 @@ SUGGESTED_TAB_KEYWORDS = {
     "cc":     ["위헌", "합헌", "각하", "침해", "기각"],
     "expc":   ["유권해석", "질의회신", "법령해석", "적용범위"],
 }
-def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
+def cached_suggest_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
 def inject_sticky_layout_css(mode: str = "wide"):
@@ -508,7 +548,8 @@ def _push_user_from_pending() -> str | None:
 
 def render_pre_chat_center():
     """대화 전: 중앙 히어로 + 중앙 업로더(키: first_files) + 전송 폼"""
-    st.markdown('<section class="center-hero">', unsafe_allow_html=True)
+    st.markdown('<section class="center-hero">'
+        , unsafe_allow_html=True)
     st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
 
     # 중앙 업로더 (대화 전 전용)
@@ -1900,43 +1941,49 @@ with st.sidebar:
     st.header("🔗 링크 생성기 (무인증)")
     tabs = st.tabs(["법령", "행정규칙", "자치법규", "조약", "판례", "헌재", "해석례", "용어/별표"])
 
-    # --- keep sidebar tabs stable across reruns (independent of answering) ---
+    # persist/restore active sidebar tab across reruns
     st.markdown("""
-    <script>
-    (function(){
-      const KEY = "sb_active_tab_v1";
-      function sbRoot(){
-        return window.parent.document.querySelector('section[data-testid="stSidebar"]');
-      }
-      function restore(){
-        const root = sbRoot();
-        if(!root) return;
-        const saved = sessionStorage.getItem(KEY);
-        if(!saved) return;
-        const tabs = root.querySelectorAll('button[role="tab"]');
-        if(!tabs || !tabs.length) return;
-        const target = Array.from(tabs).find(b => (b.innerText||"").trim() === saved);
-        if(target && target.getAttribute("aria-selected") !== "true"){ target.click(); }
-      }
-      restore();
-      const root = sbRoot();
-      if(root){
-        root.addEventListener("click", (e)=>{
-          const b = e.target.closest('button[role="tab"]');
-          if(b){ sessionStorage.setItem(KEY, (b.innerText||"").trim()); }
-        }, true);
-      }
-    })();
-    </script>
-    """, unsafe_allow_html=True)
+<script>
+(function(){
+  const KEY = "left_sidebar_active_tab";
+  function labelOf(btn){ return (btn?.innerText || btn?.textContent || "").trim(); }
+  function restore(){
+    const want = sessionStorage.getItem(KEY);
+    if(!want) return false;
+    const btns = Array.from(window.parent.document.querySelectorAll('[data-testid="stSidebar"] [role="tablist"] button[role="tab"]'));
+    if(btns.length === 0) return false;
+    const match = btns.find(b => labelOf(b) === want);
+    if(!match) return false;
+    if(match.getAttribute('aria-selected') !== 'true'){ match.click(); }
+    return true;
+  }
+  function bind(){
+    const root = window.parent.document.querySelector('[data-testid="stSidebar"]');
+    if(!root) return;
+    // Save when user clicks a tab
+    root.addEventListener('click', (e)=>{
+      const b = e.target.closest('button[role="tab"]');
+      if(b){ sessionStorage.setItem(KEY, labelOf(b)); }
+    }, true);
+    // Keep trying to restore selection until ready
+    const tid = setInterval(()=>{ if(restore()) clearInterval(tid); }, 100);
+    setTimeout(()=>clearInterval(tid), 4000);
+    // Also restore when DOM changes (e.g., reruns)
+    new MutationObserver(()=>restore()).observe(root, {subtree:true, childList:true, attributes:true});
+  }
+  window.addEventListener('load', bind, {once:true});
+  setTimeout(bind, 0);
+})();
+</script>
+""", unsafe_allow_html=True)
 
     # 공통 추천 프리셋(모두 1개만 기본 선택되도록 kw_input + DEFAULT_KEYWORD 활용)
-    adm_suggest    = suggest_keywords_for_tab("admrul")
-    ordin_suggest  = suggest_keywords_for_tab("ordin")
-    trty_suggest   = suggest_keywords_for_tab("trty")
-    case_suggest   = suggest_keywords_for_tab("prec")
-    cc_suggest     = suggest_keywords_for_tab("cc")
-    interp_suggest = suggest_keywords_for_tab("expc")
+    adm_suggest    = cached_suggest_for_tab("admrul")
+    ordin_suggest  = cached_suggest_for_tab("ordin")
+    trty_suggest   = cached_suggest_for_tab("trty")
+    case_suggest   = cached_suggest_for_tab("prec")
+    cc_suggest     = cached_suggest_for_tab("cc")
+    interp_suggest = cached_suggest_for_tab("expc")
     term_suggest   = ["정의", "용어", "별표", "서식"]
 
     # ───────────────────────── 법령
@@ -1944,7 +1991,7 @@ with st.sidebar:
         law_name = st.text_input("법령명", value="민법", key="sb_law_name")
         # 법령명 기반 추천
         law_keys = kw_input("키워드(자동 추천)",
-                            suggest_keywords_for_law(law_name),
+                            cached_suggest_for_law(law_name),
                             key="sb_law_keys",
                             tab_name="법령")
 
@@ -2163,6 +2210,9 @@ if not chat_started:
       /* 우측 패널 숨김 */
       #search-flyout{ display:none !important; }
 
+      /* 중앙 히어로 제목의 앵커(체인) 아이콘 숨기기 */
+      .center-hero h1 a, .center-hero h1 svg { display:none !important; }
+                
       /* 우측/하단 여백 제거 */
       @media (min-width:1280px){ .block-container{ padding-right:0 !important; } }
       .block-container{ padding-bottom:0 !important; }
