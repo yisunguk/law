@@ -1911,7 +1911,9 @@ with st.sidebar:
 
     # ───────────────────────── 법령
     with tabs[0]:
+        st.markdown('<div id="sb-law-name-row">', unsafe_allow_html=True)
         law_name = st.text_input("법령명", value="민법", key="sb_law_name")
+        st.markdown('</div>', unsafe_allow_html=True)
         # 법령명 기반 추천
         law_keys = kw_input("키워드(자동 추천)",
                             suggest_keywords_for_law(law_name),
@@ -2109,28 +2111,22 @@ document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 
 st.markdown("""
 <style>
-/* 사이드바는 챗봇 상태(답변중/대화시작)에 상관없이 항상 활성 */
-body.chat-started [data-testid="stSidebar"],
-body.answering  [data-testid="stSidebar"] { 
-  opacity: 1 !important;
+/* 🔧 대화 시작 후에는 모든 첨부파일 업로더를 완전히 숨김 */
+body.chat-started #bu-anchor + div[data-testid="stFileUploader"] { 
+    display: none !important; 
+}
+/* 기존: display:none !important;  (X) */
+body.answering #chatbar-fixed{
+  visibility: hidden !important;   /* 안 보이지만 자리·좌표는 유지 */
+  pointer-events: none !important; /* 클릭 방지 */
 }
 
-/* 사이드바 내부 모든 컨트롤 강제 표시/활성화 */
-body.chat-started [data-testid="stSidebar"] * ,
-body.answering  [data-testid="stSidebar"] *  {
-  visibility: visible !important;
-  pointer-events: auto !important;
-  filter: none !important;
-}
-
-/* 혹시 다른 곳에서 display:none을 때렸더라도 무력화 */
-body.chat-started [data-testid="stSidebar"] .stTextInput,
-body.answering  [data-testid="stSidebar"] .stTextInput {
-  display: block !important;
+/* 답변 중일 때만 하단 여백 축소 */
+body.answering .block-container { 
+    padding-bottom: calc(var(--chat-gap) + 24px) !important; 
 }
 </style>
 """, unsafe_allow_html=True)
-
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
 if not chat_started:
@@ -2176,11 +2172,7 @@ if not chat_started:
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 화면 분기
-if not chat_started:
-    render_pre_chat_center()   # 중앙 히어로 + 중앙 업로더
-    st.stop()
-else:
+# 3) 화면 분기 — 통일 레이아웃로 변경: pre-chat center 제거
     # 🔧 대화 시작 후에는 첨부파일 박스를 렌더링하지 않음 (완전히 제거)
     # 스트리밍 중에는 업로더 숨김 (렌더 자체 생략)
     # if not ANSWERING:
@@ -2370,21 +2362,17 @@ if user_q:
         stream_box.empty()
     
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
-if chat_started:
-    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)
-    submitted, typed_text, files = chatbar(
-        placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
-        accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # 답변 중에는 입력 무시(이중 전송 방지)
-    if submitted and not st.session_state.get("__answering__", False):
-        text = (typed_text or "").strip()
-        if text:
-            st.session_state["_pending_user_q"] = text
-            st.session_state["_pending_user_nonce"] = time.time_ns()
-        st.session_state["_clear_input"] = True
-        st.rerun()
-
+st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)
+submitted, typed_text, files = chatbar(
+    placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
+    accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
+)
+st.markdown('</div>', unsafe_allow_html=True)
+if submitted and not st.session_state.get("__answering__", False):
+    text = (typed_text or "").strip()
+    if text:
+        st.session_state["_pending_user_q"] = text
+        st.session_state["_pending_user_nonce"] = time.time_ns()
+    st.session_state["_clear_input"] = True
+    st.rerun()
 
