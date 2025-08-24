@@ -1,38 +1,54 @@
-# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
-from __future__ import annotations
 
-import streamlit as st
-
-# === Left sidebar lock (self-contained, tabs-safe) ===========================
-def _lock_left_sidebar(width_px: int = 360, gap_px: int = 24):
-    """좌측 사이드바를 항상 보이도록 위치만 고정하고, 본문을 우측으로 밀어냅니다.
-
-    - 레이아웃(display)을 건드리지 않아 탭/위젯이 깨지지 않습니다.
-
-    - answering/chat-started 중에도 가시성만 보장합니다.
-
+# === Left sidebar: uniform height + wider rail (tabs one-line) ===============
+def _lock_left_sidebar(width_px: int = 480, gap_px: int = 28, top_px: int = 0):
+    """
+    좌측 사이드바를 화면 높이에 맞춰 '항상 같은 높이'로 고정합니다.
+    - 채팅 전/로딩/후 동일 높이(100vh), 스크롤은 사이드바 내부에서.
+    - 가로 폭을 넓힙니다(width_px).
+    - 탭은 한 줄(no-wrap)로 유지되며, 넘치면 가로 스크롤.
     """
     st.markdown(f"""
 <style>
-  :root{{ --left-rail:{width_px}px; --rail-gap:{gap_px}px; }}
+  :root{{ --left-rail:{width_px}px; --rail-gap:{gap_px}px; --rail-top:{top_px}px; }}
+
+  /* 1) 네이티브 사이드바를 고정: 항상 동일 높이(100vh) */
   section[data-testid="stSidebar"]{{
-    position: fixed !important; left: 0; top: 0; bottom: 0;
-    width: var(--left-rail) !important;
-    overflow: auto !important; z-index: 60 !important;
+    position: fixed !important;
+    left: 0; top: var(--rail-top); height: calc(100vh - var(--rail-top)) !important;
+    width: var(--left-rail) !important; max-width: var(--left-rail) !important;
+    bottom: auto !important;
+    overflow: auto !important;
+    z-index: 60 !important;
     visibility: visible !important; opacity: 1 !important;
+    box-sizing: border-box !important;
+    padding-bottom: 80px; /* 버튼/토글 여유 */
   }}
+
+  /* 2) 본문은 좌측 레일 폭만큼 오른쪽으로 밀기 */
   .block-container{{ margin-left: calc(var(--left-rail) + var(--rail-gap)) !important; }}
+
+  /* 3) 상태 토글(answering/chat-started) 중에도 가시성만 보장(레이아웃은 불간섭) */
   body.answering section[data-testid="stSidebar"],
   body.chat-started section[data-testid="stSidebar"]{{
     visibility: visible !important; opacity: 1 !important; pointer-events: auto !important;
   }}
-  /* 탭 안전 보강 */
-  section[data-testid="stSidebar"] [role="tablist"]{{ display:flex !important; flex-wrap:wrap !important; }}
-  section[data-testid="stSidebar"] [role="tab"]{{ display:inline-flex !important; }}
+
+  /* 4) 탭은 한 줄(줄바꿈 없음), 넘치면 가로 스크롤 */
+  section[data-testid="stSidebar"] [role="tablist"]{{
+    display: flex !important; flex-wrap: nowrap !important; gap: 10px !important;
+    overflow-x: auto !important; white-space: nowrap !important; scrollbar-width: thin;
+  }}
+  section[data-testid="stSidebar"] [role="tab"]{{
+    display: inline-flex !important; white-space: nowrap !important; flex: 0 0 auto !important;
+  }}
 </style>
 """, unsafe_allow_html=True)
 # ============================================================================
-_lock_left_sidebar(360, 24)
+_lock_left_sidebar(480, 28, 0)
+# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
+from __future__ import annotations
+
+import streamlit as st
 
 st.set_page_config(
     page_title="법제처 법무 상담사",
@@ -1976,10 +1992,12 @@ with st.sidebar:
 
     # ───────────────────────── 법령
     with tabs[0]:
-        law_name = st.text_input("법령명", value=st.session_state.get("__sb_law_name__", PRESET["law_name_default"]), key="sb_law_name")
-        st.session_state["__sb_law_name__"] = law_name
+        law_name = st.text_input("법령명", value="민법", key="sb_law_name", label_visibility="visible")
         # 법령명 기반 추천
-        law_keys = kw_input("키워드(자동 추천)", PRESET["law_kw_default"], key="sb_law_keys", tab_name="법령")
+        law_keys = kw_input("키워드(자동 추천)",
+                            suggest_keywords_for_law(law_name),
+                            key="sb_law_keys",
+                            tab_name="법령")
 
         if st.button("법령 상세 링크 만들기", key="sb_btn_law"):
             url = hangul_law_with_keys(law_name, law_keys) if law_keys else hangul_by_name("법령", law_name)
