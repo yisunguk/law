@@ -139,7 +139,6 @@ class TLS12HttpAdapter(HTTPAdapter):
         return super().init_poolmanager(*args, **kwargs)
 
 from chatbar import chatbar
-from chatbar import lock_left_sidebar
 # (첨부 파싱은 나중 확장용으로 import 유지)
 from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_txt, sanitize
 from external_content import is_url, make_url_context
