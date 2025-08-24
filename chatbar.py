@@ -24,15 +24,22 @@ def chatbar(
 <style>
 .block-container{{ padding-bottom:120px !important; }}
 .cb2-wrap{{
-  position:fixed; left:0; right:0; bottom:0;
+  position:fixed; bottom:0;
+  left: var(--left-rail); 
+  right: var(--right-rail, 0);
   border-top:1px solid rgba(255,255,255,.12);
   background:rgba(20,20,20,.95);
   backdrop-filter:blur(6px);
   z-index:1000;
 }}
 [data-theme="light"] .cb2-wrap{{
-  background:rgba(255,255,255,.95);
-  border-top:1px solid #e5e5e5;
+  position:fixed; bottom:0;
+  left: var(--left-rail); 
+  right: var(--right-rail, 0);
+  border-top:1px solid rgba(255,255,255,.12);
+  background:rgba(20,20,20,.95);
+  backdrop-filter:blur(6px);
+  z-index:1000;
 }}
 .cb2-wrap .stForm, .cb2-wrap .stForm>div{{ max-width:1020px; margin:0 auto; width:100%; }}
 .cb2-row{{ display:grid; grid-template-columns:0.22fr 1fr 0.18fr; gap:8px; padding:8px 12px; }}
@@ -147,22 +154,3 @@ div[data-testid="stFileUploaderDropzone"] button{{ display:none !important; visi
     st.markdown('</div>', unsafe_allow_html=True)
 
     return submitted, (text_val or '').strip(), files
-
-
-# --- injected: keep bottom chatbar clear of left/right rails without touching existing code ---
-try:
-    import streamlit as _st
-    _st.markdown("""
-<style>
-/* Ensure the bottom chatbar doesn't overlap the left sidebar or right flyout */
-.cb2-wrap{
-  left: var(--left-rail, 0) !important;
-  right: var(--right-rail, 0) !important;
-}
-@media (max-width: 1279px){
-  .cb2-wrap{ left: 0 !important; right: 0 !important; }
-}
-</style>
-""", unsafe_allow_html=True)
-except Exception:
-    pass
