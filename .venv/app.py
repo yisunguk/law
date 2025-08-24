@@ -139,7 +139,6 @@ class TLS12HttpAdapter(HTTPAdapter):
         return super().init_poolmanager(*args, **kwargs)
 
 from chatbar import chatbar
-from chatbar import lock_left_sidebar
 # (첨부 파싱은 나중 확장용으로 import 유지)
 from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_txt, sanitize
 from external_content import is_url, make_url_context
@@ -1855,11 +1854,11 @@ except NameError:
     # 이 패치를 해당 정의 '아래'로 옮겨 붙이세요.
     pass
 
-
 # =============================
-# 키워드 기본값/위젯 헬퍼 (unified & stable)
+# 키워드 기본값/위젯 헬퍼 (with st.sidebar: 위에 배치)
 # =============================
 
+# 탭별 기본 키워드 1개(없으면 첫 항목 사용)
 DEFAULT_KEYWORD = {
     "법령": "개정",
     "행정규칙": "개정",
@@ -1868,43 +1867,37 @@ DEFAULT_KEYWORD = {
     "판례": "대법원",
     "헌재": "위헌",
     "해석례": "유권해석",
-    "용어/별표": "정의",
+    "용어/별표": "정의",   # ← '용어' 대신 '정의'를 기본으로 권장
 }
 
-def choose_default(options, prefer=None):
+def one_default(options, prefer=None):
+    """옵션 목록에서 기본으로 1개만 선택해 반환"""
     if not options:
         return []
     if prefer and prefer in options:
         return [prefer]
     return [options[0]]
 
+# st_tags가 있으면 태그 위젯, 없으면 multiselect로 동작
 try:
     from streamlit_tags import st_tags
     def kw_input(label, options, key, tab_name=None):
-        if tab_name == "법령":
-            default_value = list(options)
-        else:
-            prefer = DEFAULT_KEYWORD.get(tab_name)
-            default_value = choose_default(options, prefer)
+        prefer = DEFAULT_KEYWORD.get(tab_name)
         return st_tags(
             label=label,
             text="쉼표(,) 또는 Enter로 추가/삭제",
-            value=default_value,
+            value=one_default(options, prefer),   # ✅ 기본 1개만
             suggestions=options,
             maxtags=len(options),
             key=key,
         )
 except Exception:
     def kw_input(label, options, key, tab_name=None):
-        if tab_name == "법령":
-            default_value = list(options)
-        else:
-            prefer = DEFAULT_KEYWORD.get(tab_name)
-            default_value = choose_default(options, prefer)
+        prefer = DEFAULT_KEYWORD.get(tab_name)
         return st.multiselect(
             label=label,
             options=options,
-            default=default_value,
+            default=one_default(options, prefer), # ✅ 기본 1개만
             key=key,
             help="필요한 키워드만 추가로 선택하세요.",
         )
@@ -1912,18 +1905,6 @@ except Exception:
 # =============================
 # Sidebar: 링크 생성기 (무인증)
 # =============================
-# =============================
-# Sidebar: 링크 생성기 (무인증)
-# =============================
-# === [FREEZE] sidebar pre-chat defaults =======================================
-if "__SIDEBAR_PRESET__" not in st.session_state:
-    st.session_state["__SIDEBAR_PRESET__"] = {
-        "law_name_default": "",
-        "law_kw_default": ["정의", "목적", "벌칙"],
-    }
-PRESET = st.session_state["__SIDEBAR_PRESET__"]
-# =============================================================================
-
 with st.sidebar:
     # --- 사이드바: 새 대화 버튼(링크 생성기 위) ---
     if st.button("🆕 새 대화", type="primary", use_container_width=True, key="__btn_new_chat__"):
@@ -1946,10 +1927,12 @@ with st.sidebar:
 
     # ───────────────────────── 법령
     with tabs[0]:
-        law_name = st.text_input("법령명", value=st.session_state.get("__sb_law_name__", PRESET["law_name_default"]), key="sb_law_name")
-        st.session_state["__sb_law_name__"] = law_name
+        law_name = st.text_input("법령명", value="민법", key="sb_law_name")
         # 법령명 기반 추천
-        law_keys = kw_input("키워드(자동 추천)", PRESET["law_kw_default"], key="sb_law_keys", tab_name="법령")
+        law_keys = kw_input("키워드(자동 추천)",
+                            suggest_keywords_for_law(law_name),
+                            key="sb_law_keys",
+                            tab_name="법령")
 
         if st.button("법령 상세 링크 만들기", key="sb_btn_law"):
             url = hangul_law_with_keys(law_name, law_keys) if law_keys else hangul_by_name("법령", law_name)
@@ -2445,75 +2428,27 @@ body.chat-started section[data-testid="stSidebar"] .stButton{
 
 
 
-# st_tags가 있으면 태그 위젯, 없으면 multiselect로 동작
-try:
-    from streamlit_tags import st_tags
-    def kw_input(label, options, key, tab_name=None):
-        # ✅ 법령 탭은 '질문전'처럼 추천 전부를 기본으로
-        if tab_name == "법령":
-            default_value = options
-        else:
-            prefer = DEFAULT_KEYWORD.get(tab_name) if 'DEFAULT_KEYWORD' in globals() else None
-            default_value = [prefer] if (prefer and prefer in options) else (options[:1] if options else [])
-        return st_tags(
-            label=label,
-            text="쉼표(,) 또는 Enter로 추가/삭제",
-            value=default_value,
-            suggestions=options,
-            maxtags=len(options),
-            key=key,
-        )
-except Exception:
-    def kw_input(label, options, key, tab_name=None):
-        if tab_name == "법령":
-            default_value = options
-        else:
-            prefer = DEFAULT_KEYWORD.get(tab_name) if 'DEFAULT_KEYWORD' in globals() else None
-            default_value = [prefer] if (prefer and prefer in options) else (options[:1] if options else [])
-        return st.multiselect(
-            label=label,
-            options=options,
-            default=default_value,
-            key=key,
-            help="필요한 키워드만 추가로 선택하세요.",
-        )
-
-
-
 st.markdown("""
 <style>
-/* --- 강제 복구: 사이드바 텍스트 입력이 숨김/축소되어도 보이게 --- */
+/* 🔒 SUPER-LAST OVERRIDE — sidebar inputs must always be visible */
+section[data-testid="stSidebar"] input,
+section[data-testid="stSidebar"] textarea,
+section[data-testid="stSidebar"] [contenteditable="true"],
+section[data-testid="stSidebar"] [data-baseweb],
+section[data-testid="stSidebar"] [data-testid="stTextInput"],
 section[data-testid="stSidebar"] .stTextInput,
-section[data-testid="stSidebar"] [data-testid="stTextInput"]{
+#lawname-anchor + div{
   display: block !important;
   visibility: visible !important;
-  height: auto !important;
-  max-height: none !important;
-  overflow: visible !important;
-  margin-top: 8px !important;
-  margin-bottom: 8px !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
-
-st.markdown("""
-<style>
-body.answering section[data-testid="stSidebar"],
-body.answering section[data-testid="stSidebar"] *{
-  display: revert !important;
-  visibility: visible !important;
   opacity: 1 !important;
-  pointer-events: auto !important;
   height: auto !important;
   max-height: none !important;
   overflow: visible !important;
+  pointer-events: auto !important;
+  position: relative !important;
+  z-index: 2 !important;
 }
-body.answering div[data-testid="stAppViewContainer"] main .center-hero,
-body.answering div[data-testid="stAppViewContainer"] main #chatbar-fixed,
-body.answering div[data-testid="stAppViewContainer"] main [data-testid="stFileUploader"]{
-  display: none !important;
-}
+/* Make sure there is spacing so it cannot collapse into tabs */
+#lawname-anchor + div{ margin-top: 4px !important; margin-bottom: 6px !important; }
 </style>
 """, unsafe_allow_html=True)
