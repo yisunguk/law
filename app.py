@@ -3,6 +3,66 @@ from __future__ import annotations
 
 import streamlit as st
 
+# === LEFT DOCK MICRO-APP (self-embed) =========================================
+try:
+    _q = st.query_params if hasattr(st, "query_params") else st.experimental_get_query_params()
+except Exception:
+    _q = {}
+_left_mode = (_q.get("dock") or [""])[0] == "left"
+
+if _left_mode:
+    # Show ONLY sidebar, expand to full width, and neutralize any global "hide while answering" CSS
+    st.markdown("""
+    <style>
+      /* Hide everything except sidebar */
+      .block-container{ display:none !important; }
+      header, footer, [data-testid="stToolbar"]{ display:none !important; }
+
+      /* Sidebar takes the full viewport */
+      section[data-testid="stSidebar"]{
+        display:block !important;
+        position:relative !important;
+        width:100vw !important; max-width:100vw !important;
+        height:100vh !important; overflow:auto !important;
+        visibility:visible !important; opacity:1 !important;
+        z-index: 100 !important;
+      }
+      section[data-testid="stSidebar"] *{
+        visibility:visible !important; opacity:1 !important;
+        pointer-events:auto !important;
+      }
+
+      /* When app toggles body classes, keep sidebar visible */
+      body.answering section[data-testid="stSidebar"],
+      body.chat-started section[data-testid="stSidebar"]{
+        display:block !important; visibility:visible !important; opacity:1 !important;
+      }
+
+      /* Tabs layout guard */
+      section[data-testid="stSidebar"] [role="tablist"]{ display:flex !important; flex-wrap:wrap !important; }
+      section[data-testid="stSidebar"] [role="tab"]{ display:inline-flex !important; }
+    </style>
+    """, unsafe_allow_html=True)
+    # Important: do NOT st.stop(); let the original sidebar code render as usual into the sidebar area.
+# ==============================================================================
+
+# === Mount isolated left dock (iframe) in MAIN view ===========================
+if not _left_mode:
+    st.markdown("""
+    <style>
+      :root{ --leftdock: 360px; --gap: 24px; }
+      /* Hide native sidebar in main view to avoid duplication */
+      section[data-testid="stSidebar"]{ display:none !important; }
+      /* Fixed left dock container */
+      #leftdock-wrap{ position:fixed; left:0; top:0; bottom:0; width:var(--leftdock); z-index:50; background:transparent; }
+      #leftdock-wrap iframe{ width:100%; height:100%; border:0; }
+      /* Push main content to the right so it doesn't go under the dock */
+      .block-container{ margin-left: calc(var(--leftdock) + var(--gap)) !important; }
+    </style>
+    <div id="leftdock-wrap"><iframe src="?dock=left"></iframe></div>
+    """, unsafe_allow_html=True)
+# ==============================================================================
+
 st.set_page_config(
     page_title="법제처 법무 상담사",
     page_icon="⚖️",
@@ -1914,14 +1974,6 @@ except Exception:
 # =============================
 # Sidebar: 링크 생성기 (무인증)
 # =============================
-# === [FREEZE] Sidebar pre-chat defaults (final) ===
-if "__SIDEBAR_PRESET__" not in st.session_state:
-    st.session_state["__SIDEBAR_PRESET__"] = {
-        "law_name_default": "",
-        "law_kw_default": ["정의", "목적", "벌칙"],
-    }
-PRESET = st.session_state["__SIDEBAR_PRESET__"]
-
 with st.sidebar:
     # --- 사이드바: 새 대화 버튼(링크 생성기 위) ---
     if st.button("🆕 새 대화", type="primary", use_container_width=True, key="__btn_new_chat__"):
@@ -1944,10 +1996,12 @@ with st.sidebar:
 
     # ───────────────────────── 법령
     with tabs[0]:
-        law_name = st.text_input("법령명", value=st.session_state.get("__sb_law_name__", PRESET["law_name_default"]), key="sb_law_name", label_visibility="visible")
-        st.session_state["__sb_law_name__"] = law_name
+        law_name = st.text_input("법령명", value="민법", key="sb_law_name", label_visibility="visible")
         # 법령명 기반 추천
-        law_keys = kw_input("키워드(자동 추천)", PRESET["law_kw_default"], key="sb_law_keys", tab_name="법령")
+        law_keys = kw_input("키워드(자동 추천)",
+                            suggest_keywords_for_law(law_name),
+                            key="sb_law_keys",
+                            tab_name="법령")
 
         if st.button("법령 상세 링크 만들기", key="sb_btn_law"):
             url = hangul_law_with_keys(law_name, law_keys) if law_keys else hangul_by_name("법령", law_name)
@@ -2419,15 +2473,13 @@ section[data-testid="stSidebar"]{
 }
 
 /* 답변중/대화시작 후에라도, 사이드바 위젯은 절대 숨기지 않음 */
-
-/* Keep sidebar visible but do NOT override layout/display globally */
-body.answering section[data-testid="stSidebar"],
-body.chat-started section[data-testid="stSidebar"]{
+body.answering  section[data-testid="stSidebar"] *,
+body.chat-started section[data-testid="stSidebar"] *{
+  display: revert !important;
   visibility: visible !important;
-  opacity: 1 !important;
   pointer-events: auto !important;
+  opacity: 1 !important;
 }
-
 
 /* 혹시 전역 규칙이 .stTextInput / 업로더 등을 건드려도 사이드바는 복구 */
 body.answering  section[data-testid="stSidebar"] .stTextInput,
@@ -2517,13 +2569,3 @@ body.answering div[data-testid="stAppViewContainer"] main [data-testid="stFileUp
 }
 </style>
 """, unsafe_allow_html=True)
-
-
-
-st.markdown("""
-<style>
-section[data-testid="stSidebar"] [role="tablist"]{ display:flex !important; align-items:center !important; flex-wrap:wrap !important; }
-section[data-testid="stSidebar"] [role="tab"]{ display:inline-flex !important; }
-</style>
-""", unsafe_allow_html=True)
-
