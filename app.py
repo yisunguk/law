@@ -290,6 +290,57 @@ def inject_sticky_layout_css(mode: str = "wide"):
 # 호출 위치: 파일 맨 아래, 모든 컴포넌트를 그린 뒤
 inject_sticky_layout_css("wide")
 
+# ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
+
+# --- Right flyout: 상단 고정 + 하단(채팅창)과 겹치지 않게 ---
+# --- Right flyout: 하단 답변창(입력창) 위에 맞춰 고정 ---
+import streamlit as st
+st.markdown("""
+<style>
+  :root{
+    /* 숫자만 바꾸면 미세조정 됩니다 */
+    --flyout-width: 360px;     /* 우측 패널 폭 */
+    --flyout-gap:   80px;      /* 본문과 패널 사이 가로 간격 */
+    --chatbar-h:    56px;      /* 하단 입력창 높이 */
+    --chat-gap:     12px;      /* 입력창 위 여백 */
+    /* 패널 하단이 멈출 위치(= 입력창 바로 위) */
+    --flyout-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 16px);
+  }
+
+  @media (min-width:1280px){
+    /* 본문이 패널과 겹치지 않도록 우측 여백 확보 */
+    .block-container{
+      padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
+    }
+
+    /* 패널: 화면 하단 기준으로 ‘입력창 위’에 딱 붙이기 */
+    #search-flyout{
+      position: fixed !important;
+      bottom: var(--flyout-bottom) !important;  /* ⬅ 핵심: 답변창 위에 정렬 */
+      top: auto !important;                     /* 기존 top 규칙 무력화 */
+      right: 24px !important; left: auto !important;
+
+      width: var(--flyout-width) !important;
+      max-width: 38vw !important;
+
+      /* 패널 내부만 스크롤되게 최대 높이 제한 */
+      max-height: calc(100vh - var(--flyout-bottom) - 24px) !important;
+      overflow: auto !important;
+
+      z-index: 58 !important; /* 입력창(보통 z=70)보다 낮게 */
+    }
+  }
+
+  /* 모바일/좁은 화면은 자연 흐름 */
+  @media (max-width:1279px){
+    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
+    .block-container{ padding-right: 0 !important; }
+  }
+</style>
+""", unsafe_allow_html=True)
+
+
+
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
 import re
@@ -2045,12 +2096,8 @@ user_q = _push_user_from_pending()
 ANSWERING = bool(user_q)
 st.session_state["__answering__"] = ANSWERING
 
-# 2) 대화 시작 여부 계산
+# 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
-
-# ✅ 누락된 한 줄: body.chat-started CSS가 동작하도록 세션에 저장
-st.session_state["__chat_started__"] = chat_started
-
 
 # (1) 상태 플래그 준비 — 이미 계산했다면 그대로 쓰세요.
 ANSWERING = st.session_state.get("__answering__", False)   # 이번 턴 답변 중?
@@ -2063,26 +2110,6 @@ const b = document.body;
 b.classList.toggle('answering', {str(ANSWERING).lower()});
 b.classList.toggle('chat-started', {str(CHAT_STARTED).lower()});
 </script>
-""", unsafe_allow_html=True)
-
-# (3a) CSS GUARD — 사이드바 입력 위젯이 가려지지 않도록 강제 표시
-st.markdown("""
-<style>
-/* Sidebar guard: 텍스트/셀렉트/멀티/태그 위젯이 항상 보이도록 */
-section[data-testid="stSidebar"] .stTextInput,
-section[data-testid="stSidebar"] .stSelectbox,
-section[data-testid="stSidebar"] .stMultiSelect,
-section[data-testid="stSidebar"] div[data-baseweb],
-section[data-testid="stSidebar"] input,
-section[data-testid="stSidebar"] select,
-section[data-testid="stSidebar"] textarea {
-  display: block !important;
-  visibility: visible !important;
-  opacity: 1 !important;
-  height: auto !important;
-  pointer-events: auto !important;
-}
-</style>
 """, unsafe_allow_html=True)
 
 # (3) CSS — 사이드바는 항상 표시, 메인 업로더/채팅창은 숨김
