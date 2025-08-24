@@ -290,57 +290,6 @@ def inject_sticky_layout_css(mode: str = "wide"):
 # 호출 위치: 파일 맨 아래, 모든 컴포넌트를 그린 뒤
 inject_sticky_layout_css("wide")
 
-# ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
-
-# --- Right flyout: 상단 고정 + 하단(채팅창)과 겹치지 않게 ---
-# --- Right flyout: 하단 답변창(입력창) 위에 맞춰 고정 ---
-import streamlit as st
-st.markdown("""
-<style>
-  :root{
-    /* 숫자만 바꾸면 미세조정 됩니다 */
-    --flyout-width: 360px;     /* 우측 패널 폭 */
-    --flyout-gap:   80px;      /* 본문과 패널 사이 가로 간격 */
-    --chatbar-h:    56px;      /* 하단 입력창 높이 */
-    --chat-gap:     12px;      /* 입력창 위 여백 */
-    /* 패널 하단이 멈출 위치(= 입력창 바로 위) */
-    --flyout-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 16px);
-  }
-
-  @media (min-width:1280px){
-    /* 본문이 패널과 겹치지 않도록 우측 여백 확보 */
-    .block-container{
-      padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
-    }
-
-    /* 패널: 화면 하단 기준으로 ‘입력창 위’에 딱 붙이기 */
-    #search-flyout{
-      position: fixed !important;
-      bottom: var(--flyout-bottom) !important;  /* ⬅ 핵심: 답변창 위에 정렬 */
-      top: auto !important;                     /* 기존 top 규칙 무력화 */
-      right: 24px !important; left: auto !important;
-
-      width: var(--flyout-width) !important;
-      max-width: 38vw !important;
-
-      /* 패널 내부만 스크롤되게 최대 높이 제한 */
-      max-height: calc(100vh - var(--flyout-bottom) - 24px) !important;
-      overflow: auto !important;
-
-      z-index: 58 !important; /* 입력창(보통 z=70)보다 낮게 */
-    }
-  }
-
-  /* 모바일/좁은 화면은 자연 흐름 */
-  @media (max-width:1279px){
-    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
-    .block-container{ padding-right: 0 !important; }
-  }
-</style>
-""", unsafe_allow_html=True)
-
-
-
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
 import re
@@ -2111,6 +2060,26 @@ b.classList.toggle('answering', {str(ANSWERING).lower()});
 b.classList.toggle('chat-started', {str(CHAT_STARTED).lower()});
 </script>
 """, unsafe_allow_html=True)
+
+# ---- MINIMAL VISIBILITY & HIDE RULES (safe) ----
+st.markdown("""
+<style>
+/* Sidebar always visible and above sticky elements */
+section[data-testid="stSidebar"]{ position: relative !important; z-index: 200 !important; }
+section[data-testid="stSidebar"] *{ visibility: visible !important; opacity: 1 !important; }
+
+/* Hide ONLY in main area after chat started (loading + after) */
+body.chat-started .block-container div[data-testid="stFileUploader"]{ display:none !important; }
+body.chat-started section[data-testid="stChatInput"]{ display:none !important; }
+body.chat-started .center-hero{ display:none !important; }
+
+/* Ensure fixed uploader/input never overlay sidebar */
+#bu-anchor + div[data-testid="stFileUploader"], section[data-testid="stChatInput"]{
+  z-index:60 !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 
 # (3) CSS — 사이드바는 항상 표시, 메인 업로더/채팅창은 숨김
 st.markdown("""
