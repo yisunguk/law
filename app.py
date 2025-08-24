@@ -348,7 +348,7 @@ st.markdown("""
     #search-flyout{
       position: fixed !important;
       bottom: var(--flyout-bottom) !important;  /* ⬅ 핵심: 답변창 위에 정렬 */
-      top: auto !important;                     /* 기존 top 규칙 무력화 */
+      top: 0 !important;                     /* 기존 top 규칙 무력화 */
       right: 24px !important; left: auto !important;
 
       width: var(--flyout-width) !important;
