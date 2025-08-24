@@ -2466,3 +2466,41 @@ section[data-testid="stSidebar"] [data-testid="stTextInput"] *{
 }
 </style>
 """, unsafe_allow_html=True)
+
+
+
+st.markdown("""
+<style>
+/* === FINAL OVERRIDE: keep sidebar identical even while answering === */
+body.answering section[data-testid="stSidebar"],
+body.answering section[data-testid="stSidebar"] *{
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+body.answering section[data-testid="stSidebar"] .stTextInput,
+body.answering section[data-testid="stSidebar"] [data-testid="stTextInput"],
+body.answering section[data-testid="stSidebar"] .stSelectbox,
+body.answering section[data-testid="stSidebar"] [data-testid="stSelectbox"],
+body.answering section[data-testid="stSidebar"] .stMultiSelect,
+body.answering section[data-testid="stSidebar"] [data-testid="stMultiSelect"],
+body.answering section[data-testid="stSidebar"] .stButton,
+body.answering section[data-testid="stSidebar"] [data-testid="stButton"],
+body.answering section[data-testid="stSidebar"] [data-testid="stFileUploader"],
+body.answering section[data-testid="stSidebar"] .stTabs,
+body.answering section[data-testid="stSidebar"] [data-testid="stTabs"],
+body.answering section[data-testid="stSidebar"] [data-testid="stVerticalBlock"],
+body.answering section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"]{
+  display: block !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+/* Ensure the '법령명' field block never collapses */
+#lawname-anchor + div[data-testid="stTextInput"]{
+  display: block !important;
+}
+</style>
+""", unsafe_allow_html=True)
