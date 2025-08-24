@@ -1914,7 +1914,7 @@ except Exception:
 # =============================
 # Sidebar: 링크 생성기 (무인증)
 # =============================
-# === [FREEZE] Sidebar preset (pre-chat defaults) ===
+# === [FREEZE] Sidebar pre-chat defaults (final) ===
 if "__SIDEBAR_PRESET__" not in st.session_state:
     st.session_state["__SIDEBAR_PRESET__"] = {
         "law_name_default": "",
@@ -2419,11 +2419,15 @@ section[data-testid="stSidebar"]{
 }
 
 /* 답변중/대화시작 후에라도, 사이드바 위젯은 절대 숨기지 않음 */
-body.answering  section[data-testid="stSidebar"] [data-testid="stTextInput"],
-section[data-testid="stSidebar"] .stTextInput,
-section[data-testid="stSidebar"] [data-testid="stFileUploader"],
-section[data-testid="stSidebar"] .stSelectbox,
-section[data-testid="stSidebar"] .stButton { visibility: visible !important; opacity: 1 !important; }
+
+/* Keep sidebar visible but do NOT override layout/display globally */
+body.answering section[data-testid="stSidebar"],
+body.chat-started section[data-testid="stSidebar"]{
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
 
 /* 혹시 전역 규칙이 .stTextInput / 업로더 등을 건드려도 사이드바는 복구 */
 body.answering  section[data-testid="stSidebar"] .stTextInput,
@@ -2497,11 +2501,15 @@ section[data-testid="stSidebar"] [data-testid="stTextInput"]{
 st.markdown("""
 <style>
 body.answering section[data-testid="stSidebar"],
-body.answering section[data-testid="stSidebar"] [data-testid="stTextInput"],
-section[data-testid="stSidebar"] .stTextInput,
-section[data-testid="stSidebar"] [data-testid="stFileUploader"],
-section[data-testid="stSidebar"] .stSelectbox,
-section[data-testid="stSidebar"] .stButton { visibility: visible !important; opacity: 1 !important; }
+body.answering section[data-testid="stSidebar"] *{
+  display: revert !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
 body.answering div[data-testid="stAppViewContainer"] main .center-hero,
 body.answering div[data-testid="stAppViewContainer"] main #chatbar-fixed,
 body.answering div[data-testid="stAppViewContainer"] main [data-testid="stFileUploader"]{
@@ -2514,7 +2522,7 @@ body.answering div[data-testid="stAppViewContainer"] main [data-testid="stFileUp
 
 st.markdown("""
 <style>
-section[data-testid="stSidebar"] [role="tablist"]{ display:flex !important; }
+section[data-testid="stSidebar"] [role="tablist"]{ display:flex !important; align-items:center !important; flex-wrap:wrap !important; }
 section[data-testid="stSidebar"] [role="tab"]{ display:inline-flex !important; }
 </style>
 """, unsafe_allow_html=True)
