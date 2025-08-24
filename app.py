@@ -1914,16 +1914,6 @@ except Exception:
 # =============================
 # Sidebar: 링크 생성기 (무인증)
 # =============================
-
-
-# === [FREEZE] Sidebar preset: keep "pre-chat" menu forever ===
-if "__SIDEBAR_PRESET__" not in st.session_state:
-    st.session_state["__SIDEBAR_PRESET__"] = {
-        "law_name_default": "",
-        "law_kw_default": ["정의", "목적", "벌칙"],
-    }
-PRESET = st.session_state["__SIDEBAR_PRESET__"]
-
 with st.sidebar:
     # --- 사이드바: 새 대화 버튼(링크 생성기 위) ---
     if st.button("🆕 새 대화", type="primary", use_container_width=True, key="__btn_new_chat__"):
@@ -1946,10 +1936,10 @@ with st.sidebar:
 
     # ───────────────────────── 법령
     with tabs[0]:
-        law_name = st.text_input("법령명", value=st.session_state.get("__sb_law_name__", PRESET["law_name_default"]), key="sb_law_name", label_visibility="visible")
+        law_name = st.text_input("법령명", value="민법", key="sb_law_name", label_visibility="visible")
         # 법령명 기반 추천
         law_keys = kw_input("키워드(자동 추천)",
-                            PRESET["law_kw_default"],
+                            suggest_keywords_for_law(law_name),
                             key="sb_law_keys",
                             tab_name="법령")
 
@@ -2138,48 +2128,8 @@ chat_started = _chat_started()
 st.markdown(f"""
 <script>
 document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-document.body.clas
-</style>
-""", unsafe_allow_html=True)
-
-# === [GUARD] Sidebar shield: unaffected by answering/chat-started ===
-st.markdown("""
-<style>
-section[data-testid="stSidebar"]{
-  position: sticky !important; top: 0 !important;
-  visibility: visible !important; opacity: 1 !important;
-}
-section[data-testid="stSidebar"] *{
-  display: revert !important;
-  visibility: visible !important; opacity: 1 !important;
-  height: auto !important; max-height: none !important;
-  overflow: visible !important; pointer-events: auto !important;
-}
-section[data-testid="stSidebar"] .stTextInput,
-section[data-testid="stSidebar"] [data-testid="stTextInput"],
-section[data-testid="stSidebar"] [data-testid="stFileUploader"],
-section[data-testid="stSidebar"] .stSelectbox,
-section[data-testid="stSidebar"] .stButton{ display:block !important; }
-</style>
-<script>
-(() => {
-  const sbSel = 'section[data-testid="stSidebar"]';
-  const fix = () => {
-    const sb = document.querySelector(sbSel);
-    if (!sb) return;
-    sb.style.display = 'block';
-    sb.style.visibility = 'visible';
-    sb.style.opacity = '1';
-  };
-  const mo = new MutationObserver(fix);
-  mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
-  window.addEventListener('load', fix);
-})();
+document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 </script>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
@@ -2559,3 +2509,48 @@ body.answering div[data-testid="stAppViewContainer"] main [data-testid="stFileUp
 }
 </style>
 """, unsafe_allow_html=True)
+
+
+# === Sidebar protection patch v2 (tabs-safe) ===
+st.markdown("""
+<style>
+/* Keep sidebar visible regardless of answering/chat-started classes */
+section[data-testid="stSidebar"]{
+  position: sticky !important; top: 0 !important;
+  visibility: visible !important; opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+/* DO NOT override generic display in the sidebar (tabs need flex).
+   Only ensure visibility for common widgets that were hidden by global CSS. */
+section[data-testid="stSidebar"] [data-testid="stTextInput"],
+section[data-testid="stSidebar"] .stTextInput,
+section[data-testid="stSidebar"] .stSelectbox,
+section[data-testid="stSidebar"] .stButton,
+section[data-testid="stSidebar"] [data-testid="stFileUploader"]{
+  display: block !important;
+  visibility: visible !important; opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+/* Ensure Streamlit Tabs keep their layout */
+section[data-testid="stSidebar"] [role="tablist"]{ display: flex !important; }
+section[data-testid="stSidebar"] [role="tab"]{ display: inline-flex !important; }
+section[data-testid="stSidebar"] .stTabs{ display: block !important; } /* container */
+</style>
+
+<script>
+(() => {
+  const sbSel = 'section[data-testid="stSidebar"]';
+  const keep = () => {
+    const sb = document.querySelector(sbSel);
+    if (!sb) return;
+    sb.style.visibility = 'visible';
+    sb.style.opacity = '1';
+  };
+  new MutationObserver(keep).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  window.addEventListener('load', keep);
+})();
+</script>
+""", unsafe_allow_html=True)
+
