@@ -2047,10 +2047,14 @@ st.session_state["__answering__"] = ANSWERING
 
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
+# 1) pending → messages 먼저 옮김
+user_q = _push_user_from_pending()
 
-# ✅ 이 한 줄 추가 — CSS가 먹도록 세션 플래그 설정
+# 2) 대화 시작 여부 계산
+chat_started = _chat_started()
+
+# ✅ 누락된 한 줄: CSS 토글이 먹도록 세션에 저장
 st.session_state["__chat_started__"] = chat_started
-
 
 # (1) 상태 플래그 준비 — 이미 계산했다면 그대로 쓰세요.
 ANSWERING = st.session_state.get("__answering__", False)   # 이번 턴 답변 중?
@@ -2366,19 +2370,5 @@ if user_q:
     if stream_box is not None:
         stream_box.empty()
     
-# ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
-if chat_started and not st.session_state.get("__answering__", False):
-    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
-    submitted, typed_text, files = chatbar(
-        placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
-        accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
-    )
-    st.markdown('</div>', unsafe_allow_html=True)                     # ← 래퍼 닫기
-    if submitted:
-        text = (typed_text or "").strip()
-        if text:
-            st.session_state["_pending_user_q"] = text
-            st.session_state["_pending_user_nonce"] = time.time_ns()
-        st.session_state["_clear_input"] = True
-        st.rerun()
+
 
