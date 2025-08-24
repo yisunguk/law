@@ -2113,11 +2113,6 @@ st.markdown("""
 body.chat-started #bu-anchor + div[data-testid="stFileUploader"] { 
     display: none !important; 
 }
-/* 기존: display:none !important;  (X) */
-body.chat-started #chatbar-fixed{
-  visibility: hidden !important;   /* 안 보이지만 자리·좌표는 유지 */
-  pointer-events: none !important; /* 클릭 방지 */
-}
 
 /* 답변 중일 때만 하단 여백 축소 */
 body.answering .block-container { 
@@ -2363,19 +2358,5 @@ if user_q:
     if stream_box is not None:
         stream_box.empty()
     
-# ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
-if chat_started and not st.session_state.get("__answering__", False):
-    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
-    submitted, typed_text, files = chatbar(
-        placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
-        accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
-    )
-    st.markdown('</div>', unsafe_allow_html=True)                     # ← 래퍼 닫기
-    if submitted:
-        text = (typed_text or "").strip()
-        if text:
-            st.session_state["_pending_user_q"] = text
-            st.session_state["_pending_user_nonce"] = time.time_ns()
-        st.session_state["_clear_input"] = True
-        st.rerun()
+
 
