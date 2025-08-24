@@ -24,22 +24,15 @@ def chatbar(
 <style>
 .block-container{{ padding-bottom:120px !important; }}
 .cb2-wrap{{
-  position:fixed; bottom:0;
-  left: var(--left-rail); 
-  right: var(--right-rail, 0);
+  position:fixed; left:0; right:0; bottom:0;
   border-top:1px solid rgba(255,255,255,.12);
   background:rgba(20,20,20,.95);
   backdrop-filter:blur(6px);
   z-index:1000;
 }}
 [data-theme="light"] .cb2-wrap{{
-  position:fixed; bottom:0;
-  left: var(--left-rail); 
-  right: var(--right-rail, 0);
-  border-top:1px solid rgba(255,255,255,.12);
-  background:rgba(20,20,20,.95);
-  backdrop-filter:blur(6px);
-  z-index:1000;
+  background:rgba(255,255,255,.95);
+  border-top:1px solid #e5e5e5;
 }}
 .cb2-wrap .stForm, .cb2-wrap .stForm>div{{ max-width:1020px; margin:0 auto; width:100%; }}
 .cb2-row{{ display:grid; grid-template-columns:0.22fr 1fr 0.18fr; gap:8px; padding:8px 12px; }}
@@ -71,7 +64,13 @@ div[data-testid="stFileUploaderDropzone"] button{{ display:none !important; visi
   }}
   function getTextarea(form){{
     // aria-label은 st.text_area의 label 텍스트가 들어갑니다("메시지")
-    return form ? form.querySelector('textarea[aria-label="메시지"]') : null;
+    if(!form) return null;
+    let ta = form.querySelector('textarea');
+    if(!ta){{
+      const cands = Array.from(form.querySelectorAll('textarea'));
+      ta = cands.find(el => el.offsetParent !== null) || cands[0] || null;
+    }}
+    return ta;
   }}
   function getSubmitBtn(form){{
     if(!form) return null;
