@@ -2425,3 +2425,38 @@ body.chat-started section[data-testid="stSidebar"] .stButton{
 }
 </style>
 """, unsafe_allow_html=True)
+
+
+
+# st_tags가 있으면 태그 위젯, 없으면 multiselect로 동작
+try:
+    from streamlit_tags import st_tags
+    def kw_input(label, options, key, tab_name=None):
+        # ✅ 법령 탭은 '질문전'처럼 추천 전부를 기본으로
+        if tab_name == "법령":
+            default_value = options
+        else:
+            prefer = DEFAULT_KEYWORD.get(tab_name) if 'DEFAULT_KEYWORD' in globals() else None
+            default_value = [prefer] if (prefer and prefer in options) else (options[:1] if options else [])
+        return st_tags(
+            label=label,
+            text="쉼표(,) 또는 Enter로 추가/삭제",
+            value=default_value,
+            suggestions=options,
+            maxtags=len(options),
+            key=key,
+        )
+except Exception:
+    def kw_input(label, options, key, tab_name=None):
+        if tab_name == "법령":
+            default_value = options
+        else:
+            prefer = DEFAULT_KEYWORD.get(tab_name) if 'DEFAULT_KEYWORD' in globals() else None
+            default_value = [prefer] if (prefer and prefer in options) else (options[:1] if options else [])
+        return st.multiselect(
+            label=label,
+            options=options,
+            default=default_value,
+            key=key,
+            help="필요한 키워드만 추가로 선택하세요.",
+        )
