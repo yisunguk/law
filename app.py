@@ -2099,32 +2099,62 @@ st.session_state["__answering__"] = ANSWERING
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
 
-# chat_started 계산 직후에 추가
+# (1) 상태 플래그 준비 — 이미 계산했다면 그대로 쓰세요.
+ANSWERING = st.session_state.get("__answering__", False)   # 이번 턴 답변 중?
+CHAT_STARTED = st.session_state.get("__chat_started__", False)  # 대화 시작했는가?
+
+# (2) body 클래스 토글 (중복으로 또 넣지 마세요)
 st.markdown(f"""
 <script>
-document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-document.body.classList.toggle('answering', {str(ANSWERING).lower()});
+const b = document.body;
+b.classList.toggle('answering', {str(ANSWERING).lower()});
+b.classList.toggle('chat-started', {str(CHAT_STARTED).lower()});
 </script>
 """, unsafe_allow_html=True)
 
+# (3) CSS — 사이드바는 항상 표시, 메인 업로더/채팅창은 숨김
 st.markdown("""
 <style>
-/* 🔧 대화 시작 후에는 모든 첨부파일 업로더를 완전히 숨김 */
-body.chat-started #bu-anchor + div[data-testid="stFileUploader"] { 
-    display: none !important; 
+/* 사이드바는 항상 위로(겹침 방지) */
+section[data-testid="stSidebar"]{
+  position: relative !important;
+  z-index: 200 !important;
 }
-/* 기존: display:none !important;  (X) */
-body.chat-started #chatbar-fixed{
-  visibility: hidden !important;   /* 안 보이지만 자리·좌표는 유지 */
-  pointer-events: none !important; /* 클릭 방지 */
+section[data-testid="stSidebar"] *{
+  visibility: visible !important;
+  opacity: 1 !important;
 }
 
-/* 답변 중일 때만 하단 여백 축소 */
-body.answering .block-container { 
-    padding-bottom: calc(var(--chat-gap) + 24px) !important; 
+/* 대화 시작 후(로딩+완료 포함) 메인 영역 업로더/채팅창 숨김 */
+body.chat-started #chatbar-fixed,
+body.chat-started section[data-testid="stChatInput"],
+body.chat-started #bu-anchor + div[data-testid="stFileUploader"],
+body.chat-started .center-hero{
+  display: none !important;
+}
+
+/* 로딩 중엔(옵션) 입력 막기 — 이미 숨겨지지만 안전망 */
+body.answering #chatbar-fixed{
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* 고정 레이어가 사이드바를 덮지 않게 */
+#bu-anchor + div[data-testid="stFileUploader"],
+section[data-testid="stChatInput"]{
+  left: 50% !important; transform: translateX(-50%) !important;
+  z-index: 60 !important; /* 사이드바 200보다 낮게 */
+}
+
+/* 혹시 남아 있는 전역 visibility 규칙 무력화(사이드바만) */
+body.answering section[data-testid="stSidebar"] *,
+body.chat-started section[data-testid="stSidebar"] *{
+  visibility: visible !important;
+  opacity: 1 !important;
 }
 </style>
 """, unsafe_allow_html=True)
+
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
 if not chat_started:
