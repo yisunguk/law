@@ -1,4 +1,6 @@
-# -*- coding: utf-8 -*-
+# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
+from __future__ import annotations
+
 import streamlit as st
 
 st.set_page_config(
@@ -8,23 +10,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ---- bottom-only visibility rules ----
-st.markdown("""
-<style id="bottom-only-hide">
-/* Only hide the BOTTOM chatbar/uploader WHILE ANSWERING */
-body.answering #chatbar-fixed{ display:none !important; }
-body.answering #bu-anchor + div[data-testid="stFileUploader"]{ display:none !important; }
-
-/* Keep sidebar always visible */
-section[data-testid="stSidebar"]{ position:relative !important; z-index:200 !important; }
-section[data-testid="stSidebar"] *{ visibility:visible !important; opacity:1 !important; }
-
-/* Prevent overlays from covering the sidebar */
-#bu-anchor + div[data-testid="stFileUploader"],
-section[data-testid="stChatInput"]{ z-index:60 !important; }
-</style>
-""", unsafe_allow_html=True)
-
 # === [BOOTSTRAP] session keys (must be first) ===
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -32,7 +17,7 @@ if "_last_user_nonce" not in st.session_state:
     st.session_state["_last_user_nonce"] = None
 
 
-KEY_PREFIX = "bottom"
+KEY_PREFIX = "main"
 
 from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
 
@@ -2114,7 +2099,6 @@ st.session_state["__answering__"] = ANSWERING
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
 
-st.session_state["__chat_started__"] = chat_started
 # chat_started 계산 직후에 추가
 st.markdown(f"""
 <script>
@@ -2126,9 +2110,11 @@ document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 st.markdown("""
 <style>
 /* 🔧 대화 시작 후에는 모든 첨부파일 업로더를 완전히 숨김 */
-body.answering #bu-anchor + div[data-testid="stFileUploader"] { display: none !important; }
+body.chat-started #bu-anchor + div[data-testid="stFileUploader"] { 
+    display: none !important; 
+}
 /* 기존: display:none !important;  (X) */
-body.chat_started_disabled #chatbar-fixed{
+body.chat-started #chatbar-fixed{
   visibility: hidden !important;   /* 안 보이지만 자리·좌표는 유지 */
   pointer-events: none !important; /* 클릭 방지 */
 }
