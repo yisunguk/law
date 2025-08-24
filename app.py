@@ -1892,7 +1892,35 @@ with st.sidebar:
     term_suggest   = ["정의", "용어", "별표", "서식"]
 
     # ───────────────────────── 법령
-    with tabs[0]:
+    
+st.markdown("""
+<script>
+(function(){
+  function ensureSidebarLawInput(){
+    const el = document.querySelector('section[data-testid="stSidebar"] #lawname-anchor + div[data-testid="stTextInput"]');
+    if(el){
+      el.style.display='block';
+      el.style.visibility='visible';
+      el.style.opacity='1';
+      el.style.height='auto';
+      el.style.maxHeight='none';
+      el.style.overflow='visible';
+      // also ensure its parent blocks are expanded
+      let p = el.parentElement;
+      while(p && p !== document.body){
+        if(getComputedStyle(p).display==='none'){ p.style.display='block'; }
+        if(getComputedStyle(p).visibility==='hidden'){ p.style.visibility='visible'; }
+        p = p.parentElement;
+      }
+    }
+  }
+  ensureSidebarLawInput();
+  const mo = new MutationObserver(ensureSidebarLawInput);
+  mo.observe(document.body, {subtree:true, childList:true, attributes:true});
+})();
+</script>
+""", unsafe_allow_html=True)
+with tabs[0]:
         st.markdown('<div id="lawname-anchor"></div>', unsafe_allow_html=True)
         law_name = st.text_input("법령명", value="민법", key="sb_law_name", label_visibility="visible")
         # 법령명 기반 추천
