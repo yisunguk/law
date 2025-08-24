@@ -1927,7 +1927,7 @@ with st.sidebar:
 
     # ───────────────────────── 법령
     with tabs[0]:
-        law_name = st.text_input("법령명", value="민법", key="sb_law_name")
+        law_name = st.text_input("법령명", value="민법", key="sb_law_name", label_visibility="visible")
         # 법령명 기반 추천
         law_keys = kw_input("키워드(자동 추천)",
                             suggest_keywords_for_law(law_name),
@@ -2460,3 +2460,21 @@ except Exception:
             key=key,
             help="필요한 키워드만 추가로 선택하세요.",
         )
+
+
+
+st.markdown("""
+<style>
+/* --- 강제 복구: 사이드바 텍스트 입력이 숨김/축소되어도 보이게 --- */
+section[data-testid="stSidebar"] .stTextInput,
+section[data-testid="stSidebar"] [data-testid="stTextInput"]{
+  display: block !important;
+  visibility: visible !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+  margin-top: 8px !important;
+  margin-bottom: 8px !important;
+}
+</style>
+""", unsafe_allow_html=True)
