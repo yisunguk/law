@@ -3,50 +3,6 @@ from __future__ import annotations
 
 import streamlit as st
 
-# === Left sidebar locker (tuned) =============================================
-def _left_sidebar_lock(width_px: int = 520, gap_px: int = 32, top_px: int = 0):
-    """
-    좌측 사이드바를 100vh 고정 + 폭 520px + 탭 한 줄(가로 스크롤)로 설정.
-    본문은 레일 폭만큼 오른쪽으로 밀어 겹침 방지. 패널 경계선 추가.
-    """
-    st.markdown(f"""
-<style>
-  :root{{ --left-rail:{width_px}px; --rail-gap:{gap_px}px; --rail-top:{top_px}px; }}
-
-  section[data-testid="stSidebar"]{{
-    position: fixed !important;
-    left: 0; top: var(--rail-top);
-    height: calc(100vh - var(--rail-top)) !important;
-    width: var(--left-rail) !important; max-width: var(--left-rail) !important;
-    overflow: auto !important;
-    z-index: 60 !important;
-    visibility: visible !important; opacity: 1 !important;
-    box-sizing: border-box !important;
-    padding: 8px 12px 88px 12px;
-    box-shadow: inset -1px 0 0 rgba(255,255,255,0.06);
-  }}
-
-  .block-container{{ margin-left: calc(var(--left-rail) + var(--rail-gap)) !important; }}
-
-  body.answering section[data-testid="stSidebar"],
-  body.chat-started section[data-testid="stSidebar"]{{
-    visibility: visible !important; opacity: 1 !important; pointer-events: auto !important;
-  }}
-
-  /* Tabs on one line; allow horizontal scroll */
-  section[data-testid="stSidebar"] [role="tablist"]{{
-    display: flex !important; flex-wrap: nowrap !important; gap: 12px !important;
-    overflow-x: auto !important; white-space: nowrap !important; scrollbar-width: thin;
-  }}
-  section[data-testid="stSidebar"] [role="tab"]{{
-    display: inline-flex !important; white-space: nowrap !important; flex: 0 0 auto !important;
-  }}
-</style>
-""", unsafe_allow_html=True)
-# ============================================================================
-
-_left_sidebar_lock(560, 36, 8)
-
 st.set_page_config(
     page_title="법제처 법무 상담사",
     page_icon="⚖️",
@@ -183,6 +139,7 @@ class TLS12HttpAdapter(HTTPAdapter):
         return super().init_poolmanager(*args, **kwargs)
 
 from chatbar import chatbar
+from chatbar import lock_left_sidebar
 # (첨부 파싱은 나중 확장용으로 import 유지)
 from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_txt, sanitize
 from external_content import is_url, make_url_context
@@ -1958,6 +1915,15 @@ except Exception:
 # =============================
 # Sidebar: 링크 생성기 (무인증)
 # =============================
+# === [FREEZE] sidebar pre-chat defaults =======================================
+if "__SIDEBAR_PRESET__" not in st.session_state:
+    st.session_state["__SIDEBAR_PRESET__"] = {
+        "law_name_default": "",
+        "law_kw_default": ["정의", "목적", "벌칙"],
+    }
+PRESET = st.session_state["__SIDEBAR_PRESET__"]
+# =============================================================================
+
 with st.sidebar:
     # --- 사이드바: 새 대화 버튼(링크 생성기 위) ---
     if st.button("🆕 새 대화", type="primary", use_container_width=True, key="__btn_new_chat__"):
@@ -1980,12 +1946,10 @@ with st.sidebar:
 
     # ───────────────────────── 법령
     with tabs[0]:
-        law_name = st.text_input("법령명", value="민법", key="sb_law_name", label_visibility="visible")
+        law_name = st.text_input("법령명", value=st.session_state.get("__sb_law_name__", PRESET["law_name_default"]), key="sb_law_name")
+        st.session_state["__sb_law_name__"] = law_name
         # 법령명 기반 추천
-        law_keys = kw_input("키워드(자동 추천)",
-                            suggest_keywords_for_law(law_name),
-                            key="sb_law_keys",
-                            tab_name="법령")
+        law_keys = kw_input("키워드(자동 추천)", PRESET["law_kw_default"], key="sb_law_keys", tab_name="법령")
 
         if st.button("법령 상세 링크 만들기", key="sb_btn_law"):
             url = hangul_law_with_keys(law_name, law_keys) if law_keys else hangul_by_name("법령", law_name)
