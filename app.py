@@ -1900,6 +1900,36 @@ with st.sidebar:
     st.header("🔗 링크 생성기 (무인증)")
     tabs = st.tabs(["법령", "행정규칙", "자치법규", "조약", "판례", "헌재", "해석례", "용어/별표"])
 
+    # --- keep sidebar tabs stable across reruns (independent of answering) ---
+    st.markdown("""
+    <script>
+    (function(){
+      const KEY = "sb_active_tab_v1";
+      function sbRoot(){
+        return window.parent.document.querySelector('section[data-testid="stSidebar"]');
+      }
+      function restore(){
+        const root = sbRoot();
+        if(!root) return;
+        const saved = sessionStorage.getItem(KEY);
+        if(!saved) return;
+        const tabs = root.querySelectorAll('button[role="tab"]');
+        if(!tabs || !tabs.length) return;
+        const target = Array.from(tabs).find(b => (b.innerText||"").trim() === saved);
+        if(target && target.getAttribute("aria-selected") !== "true"){ target.click(); }
+      }
+      restore();
+      const root = sbRoot();
+      if(root){
+        root.addEventListener("click", (e)=>{
+          const b = e.target.closest('button[role="tab"]');
+          if(b){ sessionStorage.setItem(KEY, (b.innerText||"").trim()); }
+        }, true);
+      }
+    })();
+    </script>
+    """, unsafe_allow_html=True)
+
     # 공통 추천 프리셋(모두 1개만 기본 선택되도록 kw_input + DEFAULT_KEYWORD 활용)
     adm_suggest    = suggest_keywords_for_tab("admrul")
     ordin_suggest  = suggest_keywords_for_tab("ordin")
@@ -2379,59 +2409,3 @@ if chat_started and not st.session_state.get("__answering__", False):
         st.session_state["_clear_input"] = True
         st.rerun()
 
-
-# --- FIX: independent left sidebar sticky ---
-try:
-    import streamlit as st
-    def _inject_independent_sidebar_css():
-        st.markdown("""
-<style>
-:root{
-  /* 좌측/우측 레일 폭(기본값). JS가 실제 폭으로 덮어씁니다. */
-  --left-rail: 300px;
-  --right-rail: calc(var(--flyout-width, 0px) + var(--flyout-gap, 0px));
-}
-
-/* ✅ 좌측 사이드바: 페이지와 독립된 스크롤/높이로 고정 */
-[data-testid="stSidebar"] > div:first-child{
-  position: sticky !important;   /* 필요하면 fixed로 변경 가능 */
-  top: 0 !important;
-  height: 100vh !important;
-  overflow-y: auto !important;
-  overscroll-behavior: contain;
-  box-sizing: border-box;
-  z-index: 1001;
-}
-
-/* ✅ 하단 고정 챗바가 좌측/우측 레일을 침범하지 않도록 */
-.cb2-wrap{
-  left: var(--left-rail) !important;
-  right: var(--right-rail) !important;
-}
-
-/* 좁은 화면에서는 자연스럽게 전체 폭 사용 */
-@media (max-width: 1279px){
-  .cb2-wrap{ left: 0 !important; right: 0 !important; }
-}
-</style>
-
-<script>
-(() => {
-  /* 실제 사이드바 폭을 읽어 --left-rail 에 반영 (접힘/확장/resize 대응) */
-  function setLeftRail(){
-    const sb = document.querySelector('[data-testid="stSidebar"]');
-    if(!sb) return;
-    const w = Math.round(sb.getBoundingClientRect().width || 300);
-    document.documentElement.style.setProperty('--left-rail', w + 'px');
-  }
-  setLeftRail();
-  window.addEventListener('resize', setLeftRail);
-  new MutationObserver(setLeftRail).observe(document.body, {subtree:true, childList:true, attributes:true});
-})();
-</script>
-        """, unsafe_allow_html=True)
-
-    _inject_independent_sidebar_css()
-except Exception as _e:
-    # 주입 실패시 앱이 죽지 않게 무시
-    pass
