@@ -1,39 +1,36 @@
+# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
+from __future__ import annotations
 
-# === Left sidebar: uniform height + wider rail (tabs one-line) ===============
-def _lock_left_sidebar(width_px: int = 480, gap_px: int = 28, top_px: int = 0):
+# === Left sidebar locker (safe, after __future__) ============================
+def _left_sidebar_lock(width_px: int = 480, gap_px: int = 28, top_px: int = 0):
     """
-    좌측 사이드바를 화면 높이에 맞춰 '항상 같은 높이'로 고정합니다.
-    - 채팅 전/로딩/후 동일 높이(100vh), 스크롤은 사이드바 내부에서.
-    - 가로 폭을 넓힙니다(width_px).
-    - 탭은 한 줄(no-wrap)로 유지되며, 넘치면 가로 스크롤.
+    좌측 사이드바를 화면 높이에 맞춰 고정(100vh)하고, 폭을 넓히며, 탭을 한 줄로 유지합니다.
+    전역 상태(answering/chat-started)에도 가시성만 보장하고 레이아웃은 건드리지 않습니다.
     """
     st.markdown(f"""
 <style>
   :root{{ --left-rail:{width_px}px; --rail-gap:{gap_px}px; --rail-top:{top_px}px; }}
 
-  /* 1) 네이티브 사이드바를 고정: 항상 동일 높이(100vh) */
   section[data-testid="stSidebar"]{{
     position: fixed !important;
-    left: 0; top: var(--rail-top); height: calc(100vh - var(--rail-top)) !important;
+    left: 0; top: var(--rail-top);
+    height: calc(100vh - var(--rail-top)) !important;
     width: var(--left-rail) !important; max-width: var(--left-rail) !important;
-    bottom: auto !important;
     overflow: auto !important;
     z-index: 60 !important;
     visibility: visible !important; opacity: 1 !important;
     box-sizing: border-box !important;
-    padding-bottom: 80px; /* 버튼/토글 여유 */
+    padding-bottom: 80px;
   }}
 
-  /* 2) 본문은 좌측 레일 폭만큼 오른쪽으로 밀기 */
   .block-container{{ margin-left: calc(var(--left-rail) + var(--rail-gap)) !important; }}
 
-  /* 3) 상태 토글(answering/chat-started) 중에도 가시성만 보장(레이아웃은 불간섭) */
   body.answering section[data-testid="stSidebar"],
   body.chat-started section[data-testid="stSidebar"]{{
     visibility: visible !important; opacity: 1 !important; pointer-events: auto !important;
   }}
 
-  /* 4) 탭은 한 줄(줄바꿈 없음), 넘치면 가로 스크롤 */
+  /* Tabs: keep one line; allow horizontal scroll if overflowing */
   section[data-testid="stSidebar"] [role="tablist"]{{
     display: flex !important; flex-wrap: nowrap !important; gap: 10px !important;
     overflow-x: auto !important; white-space: nowrap !important; scrollbar-width: thin;
@@ -44,9 +41,9 @@ def _lock_left_sidebar(width_px: int = 480, gap_px: int = 28, top_px: int = 0):
 </style>
 """, unsafe_allow_html=True)
 # ============================================================================
-_lock_left_sidebar(480, 28, 0)
-# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
-from __future__ import annotations
+
+_left_sidebar_lock(480, 28, 0)
+
 
 import streamlit as st
 
