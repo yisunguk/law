@@ -277,66 +277,91 @@ SUGGESTED_TAB_KEYWORDS = {
 def cached_suggest_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
-def inject_unified_layout_css(center="1160px", bubble="760px"):
-    st.markdown(f"""
-    <style>
-      :root {{
-        --center-col: {center};
-        --bubble-max: {bubble};
-        --chatbar-h: 56px;
-        --chat-gap: 12px;
-        --flyout-width: 360px;
-        --flyout-gap: 80px;
-      }}
+def inject_sticky_layout_css(mode: str = "wide"):
+    PRESETS = {
+        "wide":   {"center": "1160px", "bubble_max": "760px"},
+        "narrow": {"center": "880px",  "bubble_max": "640px"},
+    }
+    p = PRESETS.get(mode, PRESETS["wide"])
 
-      /* 본문과 입력창 공통 중앙 정렬 */
+    # 전역 CSS 변수(한 군데에서만 선언)
+    root_vars = (
+        ":root {"
+        " --center-col: 1160px;"
+        " --bubble-max: 760px;"
+        " --chatbar-h: 56px;"
+        " --chat-gap: 12px;"
+        " --rail: 460px;"
+        " --hgap: 24px;"
+        "}"
+    )
+
+    css = f"""
+    <style>
+      {root_vars}
+
+      /* 본문/입력창 공통 중앙 정렬 & 동일 폭 */
       .block-container, .stChatInput {{
         max-width: var(--center-col) !important;
         margin-left: auto !important;
         margin-right: auto !important;
       }}
 
-      /* 말풍선 최대 폭 */
+      /* 채팅 말풍선 최대 폭 */
       [data-testid="stChatMessage"] {{
         max-width: var(--bubble-max) !important;
         width: 100% !important;
       }}
       [data-testid="stChatMessage"] .stMarkdown,
-      [data-testid="stChatMessage"] .stMarkdown > div {{ width: 100% !important; }}
+      [data-testid="stChatMessage"] .stMarkdown > div {{
+        width: 100% !important;
+      }}
 
-      /* 하단 입력창 고정(가운데 폭 축소) */
+      /* 대화 전 중앙 히어로 */
+      .center-hero {{
+        min-height: calc(100vh - 220px);
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+      }}
+      .center-hero .stFileUploader, .center-hero .stTextInput {{
+        width: 720px; max-width: 92vw;
+      }}
+
+      /* 업로더 고정: 앵커 다음 형제 업로더 */
+      #bu-anchor + div[data-testid='stFileUploader'] {{
+        position: fixed;
+        left: 50%; transform: translateX(-50%);
+        bottom: calc(var(--chatbar-h) + var(--chat-gap) + 12px);
+        width: clamp(340px, calc(var(--center-col) - 2*var(--hgap)), calc(100vw - var(--rail) - 2*var(--hgap)));
+        max-width: calc(100vw - var(--rail) - 2*var(--hgap));
+        z-index: 60;
+        background: rgba(0,0,0,0.35);
+        padding: 10px 12px; border-radius: 12px;
+        backdrop-filter: blur(6px);
+      }}
+      #bu-anchor + div [data-testid='stFileUploader'] {{
+        background: transparent !important; border: none !important;
+      }}
+
+      /* 입력창 하단 고정 */
       section[data-testid="stChatInput"] {{
         position: fixed; left: 50%; transform: translateX(-50%);
         bottom: 0; z-index: 70;
-        width: clamp(340px, calc(var(--center-col) - 48px), calc(100vw - var(--flyout-width) - var(--flyout-gap) - 48px));
+        width: clamp(340px, calc(var(--center-col) - 2*var(--hgap)), calc(100vw - var(--rail) - 2*var(--hgap)));
+        max-width: calc(100vw - var(--rail) - 2*var(--hgap));
       }}
 
-      /* 우측 플라이아웃: 입력창 바로 위에서 멈추게 */
-      @media (min-width:1280px){{
-        .block-container{{ padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important; }}
-        #search-flyout{{
-          position: fixed !important;
-          right: 24px !important; left: auto !important;
-          bottom: calc(var(--chatbar-h) + var(--chat-gap) + 16px) !important;
-          top: auto !important;
-          width: var(--flyout-width) !important;
-          max-width: 38vw !important;
-          max-height: calc(100vh - (var(--chatbar-h) + var(--chat-gap) + 16px) - 24px) !important;
-          overflow: auto !important;
-        }}
+      /* 본문이 하단 고정 UI와 겹치지 않게 */
+      .block-container {{
+        padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
       }}
 
-      /* 본문이 하단 입력창과 겹치지 않게 */
-      .block-container{{ padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important; }}
-
-      /* 작은 화면에서는 우측 패널 숨김 */
-      @media (max-width:1279px){{ #search-flyout{{ display:none !important; }} }}
+      
     </style>
-    """, unsafe_allow_html=True)
+    """
+    st.markdown(css, unsafe_allow_html=True)
 
-# 호출: 페이지 요소 그린 뒤 아무 곳에서나 한 번
-inject_unified_layout_css()
-
+# 호출 위치: 파일 맨 아래, 모든 컴포넌트를 그린 뒤
+inject_sticky_layout_css("wide")
 
 # ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
 
@@ -2254,7 +2279,11 @@ if not chat_started:
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 화면 분기 (통일 레이아웃: 프리챗 분기 제거)
+# 3) 화면 분기
+if not chat_started:
+    render_pre_chat_center()   # 중앙 히어로 + 중앙 업로더
+    st.stop()
+else:
     # 🔧 대화 시작 후에는 첨부파일 박스를 렌더링하지 않음 (완전히 제거)
     # 스트리밍 중에는 업로더 숨김 (렌더 자체 생략)
     # if not ANSWERING:
@@ -2378,7 +2407,7 @@ def _current_q_and_answer():
 
 # 🔽 대화가 시작된 뒤에만 우측 패널 노출
 # ✅ 로딩(스트리밍) 중에는 패널을 렌더링하지 않음
-if not st.session_state.get("__answering__", False):
+if chat_started and not st.session_state.get("__answering__", False):
     q_for_panel, ans_for_panel = _current_q_and_answer()
     hints = extract_law_names_from_answer(ans_for_panel) if ans_for_panel else None
     render_search_flyout(q_for_panel or user_q, num_rows=8, hint_laws=hints, show_debug=SHOW_SEARCH_DEBUG)
@@ -2444,7 +2473,7 @@ if user_q:
         stream_box.empty()
     
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
-if not st.session_state.get("__answering__", False):
+if chat_started and not st.session_state.get("__answering__", False):
     st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
     submitted, typed_text, files = chatbar(
         placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
