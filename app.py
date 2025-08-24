@@ -1019,6 +1019,14 @@ def render_pinned_question():
 
     st.markdown(
         f"""
+
+# ---- RESCUE: ensure search flyout is always visible ----
+st.markdown("""
+<style>
+#search-flyout{ display:block !important; visibility:visible !important; opacity:1 !important; }
+</style>
+""", unsafe_allow_html=True)
+
         <div class="pinned-q">
           <div class="label">최근 질문</div>
           <div class="text">{_esc_br(last_q)}</div>
@@ -2047,14 +2055,10 @@ st.session_state["__answering__"] = ANSWERING
 
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
-# 1) pending → messages 먼저 옮김
-user_q = _push_user_from_pending()
 
-# 2) 대화 시작 여부 계산
-chat_started = _chat_started()
-
-# ✅ 누락된 한 줄: CSS 토글이 먹도록 세션에 저장
+# ✅ 이 한 줄 추가 — CSS가 먹도록 세션 플래그 설정
 st.session_state["__chat_started__"] = chat_started
+
 
 # (1) 상태 플래그 준비 — 이미 계산했다면 그대로 쓰세요.
 ANSWERING = st.session_state.get("__answering__", False)   # 이번 턴 답변 중?
@@ -2077,9 +2081,9 @@ section[data-testid="stSidebar"]{ position: relative !important; z-index: 200 !i
 section[data-testid="stSidebar"] *{ visibility: visible !important; opacity: 1 !important; }
 
 /* Hide ONLY in main area after chat started (loading + after) */
-body.chat-started .block-container div[data-testid="stFileUploader"]{ display:none !important; }
-body.chat-started section[data-testid="stChatInput"]{ display:none !important; }
-body.chat-started .center-hero{ display:none !important; }
+body.answering .block-container div[data-testid="stFileUploader"]{ display:none !important; }
+body.answering section[data-testid="stChatInput"]{ display:none !important; }
+body.answering .center-hero{ display:none !important; }
 
 /* Ensure fixed uploader/input never overlay sidebar */
 #bu-anchor + div[data-testid="stFileUploader"], section[data-testid="stChatInput"]{
@@ -2104,9 +2108,9 @@ section[data-testid="stSidebar"] *{
 
 /* 대화 시작 후(로딩+완료 포함) 메인 영역 업로더/채팅창 숨김 */
 body.chat-started #chatbar-fixed,
-body.chat-started section[data-testid="stChatInput"],
+body.answering section[data-testid="stChatInput"],
 body.chat-started #bu-anchor + div[data-testid="stFileUploader"],
-body.chat-started .center-hero{
+body.answering .center-hero{
   display: none !important;
 }
 
@@ -2370,5 +2374,19 @@ if user_q:
     if stream_box is not None:
         stream_box.empty()
     
-
+# ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
+if chat_started and not st.session_state.get("__answering__", False):
+    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
+    submitted, typed_text, files = chatbar(
+        placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
+        accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
+    )
+    st.markdown('</div>', unsafe_allow_html=True)                     # ← 래퍼 닫기
+    if submitted:
+        text = (typed_text or "").strip()
+        if text:
+            st.session_state["_pending_user_q"] = text
+            st.session_state["_pending_user_nonce"] = time.time_ns()
+        st.session_state["_clear_input"] = True
+        st.rerun()
 
