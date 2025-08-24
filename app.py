@@ -45,7 +45,7 @@ def _left_sidebar_lock(width_px: int = 520, gap_px: int = 32, top_px: int = 0):
 """, unsafe_allow_html=True)
 # ============================================================================
 
-_left_sidebar_lock(520, 32, 0)
+_left_sidebar_lock(560, 36, 8)
 
 st.set_page_config(
     page_title="법제처 법무 상담사",
