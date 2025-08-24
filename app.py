@@ -2110,8 +2110,11 @@ document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 st.markdown("""
 <style>
 /* 🔧 대화 시작 후에는 모든 첨부파일 업로더를 완전히 숨김 */
-body.chat-started #bu-anchor + div[data-testid="stFileUploader"] { 
-    display: none !important; 
+body.answering #bu-anchor + div[data-testid="stFileUploader"] { display: none !important; }
+/* 기존: display:none !important;  (X) */
+body.chat-started #chatbar-fixed{
+  visibility: hidden !important;   /* 안 보이지만 자리·좌표는 유지 */
+  pointer-events: none !important; /* 클릭 방지 */
 }
 
 /* 답변 중일 때만 하단 여백 축소 */
@@ -2170,11 +2173,9 @@ if not chat_started:
     render_pre_chat_center()   # 중앙 히어로 + 중앙 업로더
     st.stop()
 else:
-    # 🔧 대화 시작 후에는 첨부파일 박스를 렌더링하지 않음 (완전히 제거)
-    # 스트리밍 중에는 업로더 숨김 (렌더 자체 생략)
-    # if not ANSWERING:
-    #     render_bottom_uploader()   # 하단 고정 업로더 - 주석 처리
-    pass
+    # 답변 중이 아닐 때만 하단 업로더 표시
+    if not ANSWERING:
+        render_bottom_uploader()   # 하단 고정 업로더
 
 # === 대화 시작 후: 우측 레일을 피해서 배치(침범 방지) ===
 # ----- RIGHT FLYOUT: align once to the question box, stable -----
@@ -2284,6 +2285,21 @@ with st.container():
             else:
                 st.markdown(content)
 
+
+# ✅ 답변이 끝났을 때만 하단 입력/업로더 표시
+if chat_started and not st.session_state.get("__answering__", False):
+    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)
+    submitted, typed_text, files = chatbar(
+        placeholder="질문을 입력하거나, 관련 문서를 첨부해 주세요…",
+        accept=["pdf","docx","txt"], max_files=5, max_size_mb=15, key_prefix="main"
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+    if submitted and (typed_text or files):
+        st.session_state["_pending_user_q"] = (typed_text or "").strip()
+        st.session_state["_pending_user_nonce"] = time.time_ns()
+        st.rerun()
+
+
 # ✅ 메시지 루프 바로 아래(이미 _inject_right_rail_css() 다음 추천) — 항상 호출
 def _current_q_and_answer():
     msgs = st.session_state.get("messages", [])
@@ -2358,5 +2374,19 @@ if user_q:
     if stream_box is not None:
         stream_box.empty()
     
-
+# ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
+if chat_started and not st.session_state.get("__answering__", False):
+    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
+    submitted, typed_text, files = chatbar(
+        placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
+        accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
+    )
+    st.markdown('</div>', unsafe_allow_html=True)                     # ← 래퍼 닫기
+    if submitted:
+        text = (typed_text or "").strip()
+        if text:
+            st.session_state["_pending_user_q"] = text
+            st.session_state["_pending_user_nonce"] = time.time_ns()
+        st.session_state["_clear_input"] = True
+        st.rerun()
 
