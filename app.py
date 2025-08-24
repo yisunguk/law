@@ -29,6 +29,49 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+/* 1) 제목 내부/형제 위치의 앵커 모두 숨김 */
+.block-container h1 a[href^="#"],
+.block-container h2 a[href^="#"],
+.block-container h3 a[href^="#"],
+.block-container h4 a[href^="#"],
+.block-container h5 a[href^="#"],
+.block-container h6 a[href^="#"],
+.block-container h1 + a[href^="#"],
+.block-container h2 + a[href^="#"],
+.block-container h3 + a[href^="#"],
+.block-container h4 + a[href^="#"],
+.block-container h5 + a[href^="#"],
+.block-container h6 + a[href^="#"],
+.block-container a[aria-label*="link to this"],
+.block-container a[aria-label*="링크"],
+.block-container [data-testid="stHeaderAction"] {
+  display: none !important;
+}
+</style>
+
+<script>
+(function(){
+  // 2) 리렌더링 대비: 생성 즉시 다시 숨김
+  const hide = () => {
+    const sel = [
+      'h1 a[href^="#"]','h2 a[href^="#"]','h3 a[href^="#"]',
+      'h4 a[href^="#"]','h5 a[href^="#"]','h6 a[href^="#"]',
+      'h1 + a[href^="#"]','h2 + a[href^="#"]','h3 + a[href^="#"]',
+      'h4 + a[href^="#"]','h5 + a[href^="#"]','h6 + a[href^="#"]',
+      'a[aria-label*="link to this"]','a[aria-label*="링크"]',
+      '[data-testid="stHeaderAction"]'
+    ].join(',');
+    document.querySelectorAll(sel).forEach(el => { el.style.display = 'none'; });
+  };
+  hide();
+  new MutationObserver(hide).observe(document.body, {subtree:true, childList:true});
+})();
+</script>
+""", unsafe_allow_html=True)
+
+
+st.markdown("""
+<style>
 :root{
   --left-rail: 300px;
   --right-rail: calc(var(--flyout-width, 0px) + var(--flyout-gap, 0px));
