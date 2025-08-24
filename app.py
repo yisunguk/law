@@ -290,6 +290,57 @@ def inject_sticky_layout_css(mode: str = "wide"):
 # 호출 위치: 파일 맨 아래, 모든 컴포넌트를 그린 뒤
 inject_sticky_layout_css("wide")
 
+# ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
+
+# --- Right flyout: 상단 고정 + 하단(채팅창)과 겹치지 않게 ---
+# --- Right flyout: 하단 답변창(입력창) 위에 맞춰 고정 ---
+import streamlit as st
+st.markdown("""
+<style>
+  :root{
+    /* 숫자만 바꾸면 미세조정 됩니다 */
+    --flyout-width: 360px;     /* 우측 패널 폭 */
+    --flyout-gap:   80px;      /* 본문과 패널 사이 가로 간격 */
+    --chatbar-h:    56px;      /* 하단 입력창 높이 */
+    --chat-gap:     12px;      /* 입력창 위 여백 */
+    /* 패널 하단이 멈출 위치(= 입력창 바로 위) */
+    --flyout-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 16px);
+  }
+
+  @media (min-width:1280px){
+    /* 본문이 패널과 겹치지 않도록 우측 여백 확보 */
+    .block-container{
+      padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
+    }
+
+    /* 패널: 화면 하단 기준으로 ‘입력창 위’에 딱 붙이기 */
+    #search-flyout{
+      position: fixed !important;
+      bottom: var(--flyout-bottom) !important;  /* ⬅ 핵심: 답변창 위에 정렬 */
+      top: auto !important;                     /* 기존 top 규칙 무력화 */
+      right: 24px !important; left: auto !important;
+
+      width: var(--flyout-width) !important;
+      max-width: 38vw !important;
+
+      /* 패널 내부만 스크롤되게 최대 높이 제한 */
+      max-height: calc(100vh - var(--flyout-bottom) - 24px) !important;
+      overflow: auto !important;
+
+      z-index: 58 !important; /* 입력창(보통 z=70)보다 낮게 */
+    }
+  }
+
+  /* 모바일/좁은 화면은 자연 흐름 */
+  @media (max-width:1279px){
+    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
+    .block-container{ padding-right: 0 !important; }
+  }
+</style>
+""", unsafe_allow_html=True)
+
+
+
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
 import re
@@ -1019,14 +1070,6 @@ def render_pinned_question():
 
     st.markdown(
         f"""
-
-# ---- RESCUE: ensure search flyout is always visible ----
-st.markdown("""
-<style>
-#search-flyout{ display:block !important; visibility:visible !important; opacity:1 !important; }
-</style>
-""", unsafe_allow_html=True)
-
         <div class="pinned-q">
           <div class="label">최근 질문</div>
           <div class="text">{_esc_br(last_q)}</div>
@@ -2056,86 +2099,32 @@ st.session_state["__answering__"] = ANSWERING
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
 
-# ✅ 이 한 줄 추가 — CSS가 먹도록 세션 플래그 설정
-st.session_state["__chat_started__"] = chat_started
-
-
-# (1) 상태 플래그 준비 — 이미 계산했다면 그대로 쓰세요.
-ANSWERING = st.session_state.get("__answering__", False)   # 이번 턴 답변 중?
-CHAT_STARTED = st.session_state.get("__chat_started__", False)  # 대화 시작했는가?
-
-# (2) body 클래스 토글 (중복으로 또 넣지 마세요)
+# chat_started 계산 직후에 추가
 st.markdown(f"""
 <script>
-const b = document.body;
-b.classList.toggle('answering', {str(ANSWERING).lower()});
-b.classList.toggle('chat-started', {str(CHAT_STARTED).lower()});
+document.body.classList.toggle('chat-started', {str(chat_started).lower()});
+document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 </script>
 """, unsafe_allow_html=True)
 
-# ---- MINIMAL VISIBILITY & HIDE RULES (safe) ----
 st.markdown("""
 <style>
-/* Sidebar always visible and above sticky elements */
-section[data-testid="stSidebar"]{ position: relative !important; z-index: 200 !important; }
-section[data-testid="stSidebar"] *{ visibility: visible !important; opacity: 1 !important; }
+/* 🔧 대화 시작 후에는 모든 첨부파일 업로더를 완전히 숨김 */
+body.chat-started #bu-anchor + div[data-testid="stFileUploader"] { 
+    display: none !important; 
+}
+/* 기존: display:none !important;  (X) */
+body.chat-started #chatbar-fixed{
+  visibility: hidden !important;   /* 안 보이지만 자리·좌표는 유지 */
+  pointer-events: none !important; /* 클릭 방지 */
+}
 
-/* Hide ONLY in main area after chat started (loading + after) */
-body.answering .block-container div[data-testid="stFileUploader"]{ display:none !important; }
-body.answering section[data-testid="stChatInput"]{ display:none !important; }
-body.answering .center-hero{ display:none !important; }
-
-/* Ensure fixed uploader/input never overlay sidebar */
-#bu-anchor + div[data-testid="stFileUploader"], section[data-testid="stChatInput"]{
-  z-index:60 !important;
+/* 답변 중일 때만 하단 여백 축소 */
+body.answering .block-container { 
+    padding-bottom: calc(var(--chat-gap) + 24px) !important; 
 }
 </style>
 """, unsafe_allow_html=True)
-
-
-# (3) CSS — 사이드바는 항상 표시, 메인 업로더/채팅창은 숨김
-st.markdown("""
-<style>
-/* 사이드바는 항상 위로(겹침 방지) */
-section[data-testid="stSidebar"]{
-  position: relative !important;
-  z-index: 200 !important;
-}
-section[data-testid="stSidebar"] *{
-  visibility: visible !important;
-  opacity: 1 !important;
-}
-
-/* 대화 시작 후(로딩+완료 포함) 메인 영역 업로더/채팅창 숨김 */
-body.chat-started #chatbar-fixed,
-body.answering section[data-testid="stChatInput"],
-body.chat-started #bu-anchor + div[data-testid="stFileUploader"],
-body.answering .center-hero{
-  display: none !important;
-}
-
-/* 로딩 중엔(옵션) 입력 막기 — 이미 숨겨지지만 안전망 */
-body.answering #chatbar-fixed{
-  opacity: 0 !important;
-  pointer-events: none !important;
-}
-
-/* 고정 레이어가 사이드바를 덮지 않게 */
-#bu-anchor + div[data-testid="stFileUploader"],
-section[data-testid="stChatInput"]{
-  left: 50% !important; transform: translateX(-50%) !important;
-  z-index: 60 !important; /* 사이드바 200보다 낮게 */
-}
-
-/* 혹시 남아 있는 전역 visibility 규칙 무력화(사이드바만) */
-body.answering section[data-testid="stSidebar"] *,
-body.chat-started section[data-testid="stSidebar"] *{
-  visibility: visible !important;
-  opacity: 1 !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
 if not chat_started:
