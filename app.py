@@ -2048,6 +2048,10 @@ st.session_state["__answering__"] = ANSWERING
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
 
+# ✅ 이 한 줄 추가 — CSS가 먹도록 세션 플래그 설정
+st.session_state["__chat_started__"] = chat_started
+
+
 # (1) 상태 플래그 준비 — 이미 계산했다면 그대로 쓰세요.
 ANSWERING = st.session_state.get("__answering__", False)   # 이번 턴 답변 중?
 CHAT_STARTED = st.session_state.get("__chat_started__", False)  # 대화 시작했는가?
