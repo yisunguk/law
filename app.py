@@ -557,24 +557,40 @@ LINKGEN_KEYWORDS = {
     "용어/별표": ["용어", "정의", "별표", "서식"],
 }
 
-# --- 키워드 위젯 헬퍼: st_tags가 있으면 사용, 없으면 multiselect로 대체 ---
+# st_tags가 있으면 태그 위젯, 없으면 multiselect
 try:
     from streamlit_tags import st_tags
-    def kw_input(label, options, key):
+    def kw_input(label, options, key, tab_name=None):
+        # ✅ 법령 탭은 '질문전'처럼 추천 전부를 기본으로 보여줌
+        if tab_name == "법령":
+            default_value = options
+        else:
+            # 나머지 탭은 1개만 기본 선택(기존 동작 유지)
+            prefer = DEFAULT_KEYWORD.get(tab_name)
+            default_value = [prefer] if (prefer and prefer in options) else (options[:1] if options else [])
         return st_tags(
             label=label,
             text="쉼표(,) 또는 Enter로 추가/삭제",
-            value=options,           # ✅ 기본값: 전부 채움
+            value=default_value,
             suggestions=options,
             maxtags=len(options),
             key=key,
         )
 except Exception:
-    def kw_input(label, options, key):
+    def kw_input(label, options, key, tab_name=None):
+        if tab_name == "법령":
+            default_value = options
+        else:
+            prefer = DEFAULT_KEYWORD.get(tab_name)
+            default_value = [prefer] if (prefer and prefer in options) else (options[:1] if options else [])
         return st.multiselect(
-            label, options=options, default=options,  # ✅ 기본값: 전부 선택
-            key=key, help="필요 없는 키워드는 선택 해제하세요."
+            label=label,
+            options=options,
+            default=default_value,
+            key=key,
+            help="필요한 키워드만 추가로 선택하세요.",
         )
+
 
 
 
@@ -2379,3 +2395,33 @@ if chat_started and not st.session_state.get("__answering__", False):
         st.session_state["_clear_input"] = True
         st.rerun()
 
+st.markdown("""
+<style>
+/* --- ✅ 사이드바는 질문전/답변중/답변후 항상 동일하게 유지 --- */
+section[data-testid="stSidebar"]{
+  position: sticky !important; top: 0 !important;
+  opacity: 1 !important; visibility: visible !important;
+}
+
+/* 답변중/대화시작 후에라도, 사이드바 위젯은 절대 숨기지 않음 */
+body.answering  section[data-testid="stSidebar"] *,
+body.chat-started section[data-testid="stSidebar"] *{
+  display: revert !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  opacity: 1 !important;
+}
+
+/* 혹시 전역 규칙이 .stTextInput / 업로더 등을 건드려도 사이드바는 복구 */
+body.answering  section[data-testid="stSidebar"] .stTextInput,
+body.chat-started section[data-testid="stSidebar"] .stTextInput,
+body.answering  section[data-testid="stSidebar"] [data-testid="stFileUploader"],
+body.chat-started section[data-testid="stSidebar"] [data-testid="stFileUploader"],
+body.answering  section[data-testid="stSidebar"] .stSelectbox,
+body.chat-started section[data-testid="stSidebar"] .stSelectbox,
+body.answering  section[data-testid="stSidebar"] .stButton,
+body.chat-started section[data-testid="stSidebar"] .stButton{
+  display: block !important;
+}
+</style>
+""", unsafe_allow_html=True)
