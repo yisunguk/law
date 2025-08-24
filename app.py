@@ -2364,18 +2364,21 @@ if user_q:
         stream_box.empty()
     
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
-if chat_started and not st.session_state.get("__answering__", False):
-    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
+if chat_started:
+    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)
     submitted, typed_text, files = chatbar(
         placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
         accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
     )
-    st.markdown('</div>', unsafe_allow_html=True)                     # ← 래퍼 닫기
-    if submitted:
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # 답변 중에는 입력 무시(이중 전송 방지)
+    if submitted and not st.session_state.get("__answering__", False):
         text = (typed_text or "").strip()
         if text:
             st.session_state["_pending_user_q"] = text
             st.session_state["_pending_user_nonce"] = time.time_ns()
         st.session_state["_clear_input"] = True
         st.rerun()
+
 
