@@ -2113,11 +2113,12 @@ st.markdown("""
 body.chat-started #bu-anchor + div[data-testid="stFileUploader"] { 
     display: none !important; 
 }
-/* 기존: display:none !important;  (X) */
-body.chat-started #chatbar-fixed{
-  visibility: hidden !important;   /* 안 보이지만 자리·좌표는 유지 */
-  pointer-events: none !important; /* 클릭 방지 */
+#chatbar-fixed{ position: relative; }
+body.answering #chatbar-fixed{ opacity: .55; }                 /* 보이되 흐리게 */
+body.answering #chatbar-fixed::after{                           /* 클릭 차단 오버레이 */
+  content: ""; position: absolute; inset: 0; pointer-events: auto;
 }
+
 
 /* 답변 중일 때만 하단 여백 축소 */
 body.answering .block-container { 
