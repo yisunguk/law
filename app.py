@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import streamlit as st
 
-# === Left sidebar locker (imports-safe) ======================================
-def _left_sidebar_lock(width_px: int = 480, gap_px: int = 28, top_px: int = 0):
+# === Left sidebar locker (tuned) =============================================
+def _left_sidebar_lock(width_px: int = 520, gap_px: int = 32, top_px: int = 0):
     """
-    좌측 사이드바를 100vh로 고정하고(채팅 전/중/후 동일), 폭을 넓히며, 탭을 한 줄 유지합니다.
-    Streamlit 전역 상태(answering/chat-started)에도 가시성만 보장하고 레이아웃은 건드리지 않습니다.
+    좌측 사이드바를 100vh 고정 + 폭 520px + 탭 한 줄(가로 스크롤)로 설정.
+    본문은 레일 폭만큼 오른쪽으로 밀어 겹침 방지. 패널 경계선 추가.
     """
     st.markdown(f"""
 <style>
@@ -22,7 +22,8 @@ def _left_sidebar_lock(width_px: int = 480, gap_px: int = 28, top_px: int = 0):
     z-index: 60 !important;
     visibility: visible !important; opacity: 1 !important;
     box-sizing: border-box !important;
-    padding-bottom: 80px;
+    padding: 8px 12px 88px 12px;
+    box-shadow: inset -1px 0 0 rgba(255,255,255,0.06);
   }}
 
   .block-container{{ margin-left: calc(var(--left-rail) + var(--rail-gap)) !important; }}
@@ -32,9 +33,9 @@ def _left_sidebar_lock(width_px: int = 480, gap_px: int = 28, top_px: int = 0):
     visibility: visible !important; opacity: 1 !important; pointer-events: auto !important;
   }}
 
-  /* Tabs in one line; horizontal scroll if overflow */
+  /* Tabs on one line; allow horizontal scroll */
   section[data-testid="stSidebar"] [role="tablist"]{{
-    display: flex !important; flex-wrap: nowrap !important; gap: 10px !important;
+    display: flex !important; flex-wrap: nowrap !important; gap: 12px !important;
     overflow-x: auto !important; white-space: nowrap !important; scrollbar-width: thin;
   }}
   section[data-testid="stSidebar"] [role="tab"]{{
@@ -44,7 +45,7 @@ def _left_sidebar_lock(width_px: int = 480, gap_px: int = 28, top_px: int = 0):
 """, unsafe_allow_html=True)
 # ============================================================================
 
-_left_sidebar_lock(480, 28, 0)
+_left_sidebar_lock(520, 32, 0)
 
 st.set_page_config(
     page_title="법제처 법무 상담사",
@@ -1957,15 +1958,6 @@ except Exception:
 # =============================
 # Sidebar: 링크 생성기 (무인증)
 # =============================
-# === [FREEZE] sidebar pre-chat defaults =======================================
-if "__SIDEBAR_PRESET__" not in st.session_state:
-    st.session_state["__SIDEBAR_PRESET__"] = {
-        "law_name_default": "",
-        "law_kw_default": ["정의", "목적", "벌칙"],
-    }
-PRESET = st.session_state["__SIDEBAR_PRESET__"]
-# =============================================================================
-
 with st.sidebar:
     # --- 사이드바: 새 대화 버튼(링크 생성기 위) ---
     if st.button("🆕 새 대화", type="primary", use_container_width=True, key="__btn_new_chat__"):
