@@ -3,65 +3,53 @@ from __future__ import annotations
 
 import streamlit as st
 
-# === LEFT DOCK MICRO-APP (self-embed) =========================================
+# ==== Left Dock micro-app (clean) =============================================
+# Query parameter handling (support both stable and experimental)
 try:
-    _q = st.query_params if hasattr(st, "query_params") else st.experimental_get_query_params()
+    _qparams = st.query_params if hasattr(st, "query_params") else st.experimental_get_query_params()
 except Exception:
-    _q = {}
-_left_mode = (_q.get("dock") or [""])[0] == "left"
+    _qparams = {}
+_IN_LEFT_VIEW = (_qparams.get("view") or _qparams.get("dock") or [""])[0] in ("left", "sidebar")
 
-if _left_mode:
-    # Show ONLY sidebar, expand to full width, and neutralize any global "hide while answering" CSS
-    st.markdown("""
-    <style>
-      /* Hide everything except sidebar */
-      .block-container{ display:none !important; }
-      header, footer, [data-testid="stToolbar"]{ display:none !important; }
+if _IN_LEFT_VIEW:
+    # Render only the sidebar area, full-screen
+    st.markdown(
+        """
+        <style>
+          .block-container, header, footer, [data-testid="stToolbar"]{ display:none !important; }
+          section[data-testid="stSidebar"]{
+            display:block !important;
+            position:relative !important;
+            width:100vw !important; max-width:100vw !important;
+            height:100vh !important; overflow:auto !important;
+            visibility:visible !important; opacity:1 !important; z-index:100 !important;
+          }
+          body.answering section[data-testid="stSidebar"],
+          body.chat-started section[data-testid="stSidebar"]{
+            display:block !important; visibility:visible !important; opacity:1 !important;
+          }
+          section[data-testid="stSidebar"] [role="tablist"]{ display:flex !important; flex-wrap:wrap !important; }
+          section[data-testid="stSidebar"] [role="tab"]{ display:inline-flex !important; }
+        </style>
+        """, unsafe_allow_html=True
+    )
+# =============================================================================
 
-      /* Sidebar takes the full viewport */
-      section[data-testid="stSidebar"]{
-        display:block !important;
-        position:relative !important;
-        width:100vw !important; max-width:100vw !important;
-        height:100vh !important; overflow:auto !important;
-        visibility:visible !important; opacity:1 !important;
-        z-index: 100 !important;
-      }
-      section[data-testid="stSidebar"] *{
-        visibility:visible !important; opacity:1 !important;
-        pointer-events:auto !important;
-      }
-
-      /* When app toggles body classes, keep sidebar visible */
-      body.answering section[data-testid="stSidebar"],
-      body.chat-started section[data-testid="stSidebar"]{
-        display:block !important; visibility:visible !important; opacity:1 !important;
-      }
-
-      /* Tabs layout guard */
-      section[data-testid="stSidebar"] [role="tablist"]{ display:flex !important; flex-wrap:wrap !important; }
-      section[data-testid="stSidebar"] [role="tab"]{ display:inline-flex !important; }
-    </style>
-    """, unsafe_allow_html=True)
-    # Important: do NOT st.stop(); let the original sidebar code render as usual into the sidebar area.
-# ==============================================================================
-
-# === Mount isolated left dock (iframe) in MAIN view ===========================
-if not _left_mode:
-    st.markdown("""
-    <style>
-      :root{ --leftdock: 360px; --gap: 24px; }
-      /* Hide native sidebar in main view to avoid duplication */
-      section[data-testid="stSidebar"]{ display:none !important; }
-      /* Fixed left dock container */
-      #leftdock-wrap{ position:fixed; left:0; top:0; bottom:0; width:var(--leftdock); z-index:50; background:transparent; }
-      #leftdock-wrap iframe{ width:100%; height:100%; border:0; }
-      /* Push main content to the right so it doesn't go under the dock */
-      .block-container{ margin-left: calc(var(--leftdock) + var(--gap)) !important; }
-    </style>
-    <div id="leftdock-wrap"><iframe src="?dock=left"></iframe></div>
-    """, unsafe_allow_html=True)
-# ==============================================================================
+# ==== Mount left dock in MAIN view ============================================
+if not _IN_LEFT_VIEW:
+    st.markdown(
+        """
+        <style>
+          :root{ --leftdock: 360px; --gap: 24px; }
+          section[data-testid="stSidebar"]{ display:none !important; } /* avoid duplicate */
+          #leftdock-wrap{ position:fixed; left:0; top:0; bottom:0; width:var(--leftdock); z-index:50; }
+          #leftdock-wrap iframe{ width:100%; height:100%; border:0; }
+          .block-container{ margin-left: calc(var(--leftdock) + var(--gap)) !important; }
+        </style>
+        <div id="leftdock-wrap"><iframe src="?view=left"></iframe></div>
+        """, unsafe_allow_html=True
+    )
+# =============================================================================
 
 st.set_page_config(
     page_title="법제처 법무 상담사",
