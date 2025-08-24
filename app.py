@@ -3,6 +3,37 @@ from __future__ import annotations
 
 import streamlit as st
 
+# === Left sidebar lock (self-contained, tabs-safe) ===========================
+def _lock_left_sidebar(width_px: int = 360, gap_px: int = 24):
+    """좌측 사이드바를 항상 보이도록 위치만 고정하고, 본문을 우측으로 밀어냅니다.
+
+    - 레이아웃(display)을 건드리지 않아 탭/위젯이 깨지지 않습니다.
+
+    - answering/chat-started 중에도 가시성만 보장합니다.
+
+    """
+    st.markdown(f"""
+<style>
+  :root{{ --left-rail:{width_px}px; --rail-gap:{gap_px}px; }}
+  section[data-testid="stSidebar"]{{
+    position: fixed !important; left: 0; top: 0; bottom: 0;
+    width: var(--left-rail) !important;
+    overflow: auto !important; z-index: 60 !important;
+    visibility: visible !important; opacity: 1 !important;
+  }}
+  .block-container{{ margin-left: calc(var(--left-rail) + var(--rail-gap)) !important; }}
+  body.answering section[data-testid="stSidebar"],
+  body.chat-started section[data-testid="stSidebar"]{{
+    visibility: visible !important; opacity: 1 !important; pointer-events: auto !important;
+  }}
+  /* 탭 안전 보강 */
+  section[data-testid="stSidebar"] [role="tablist"]{{ display:flex !important; flex-wrap:wrap !important; }}
+  section[data-testid="stSidebar"] [role="tab"]{{ display:inline-flex !important; }}
+</style>
+""", unsafe_allow_html=True)
+# ============================================================================
+_lock_left_sidebar(360, 24)
+
 st.set_page_config(
     page_title="법제처 법무 상담사",
     page_icon="⚖️",
@@ -139,7 +170,6 @@ class TLS12HttpAdapter(HTTPAdapter):
         return super().init_poolmanager(*args, **kwargs)
 
 from chatbar import chatbar
-from chatbar import lock_left_sidebar
 # (첨부 파싱은 나중 확장용으로 import 유지)
 from utils_extract import extract_text_from_pdf, extract_text_from_docx, read_txt, sanitize
 from external_content import is_url, make_url_context
