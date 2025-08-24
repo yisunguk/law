@@ -557,24 +557,40 @@ LINKGEN_KEYWORDS = {
     "용어/별표": ["용어", "정의", "별표", "서식"],
 }
 
-# --- 키워드 위젯 헬퍼: st_tags가 있으면 사용, 없으면 multiselect로 대체 ---
+# st_tags가 있으면 태그 위젯, 없으면 multiselect
 try:
     from streamlit_tags import st_tags
-    def kw_input(label, options, key):
+    def kw_input(label, options, key, tab_name=None):
+        # ✅ 법령 탭은 '질문전'처럼 추천 전부를 기본으로 보여줌
+        if tab_name == "법령":
+            default_value = options
+        else:
+            # 나머지 탭은 1개만 기본 선택(기존 동작 유지)
+            prefer = DEFAULT_KEYWORD.get(tab_name)
+            default_value = [prefer] if (prefer and prefer in options) else (options[:1] if options else [])
         return st_tags(
             label=label,
             text="쉼표(,) 또는 Enter로 추가/삭제",
-            value=options,           # ✅ 기본값: 전부 채움
+            value=default_value,
             suggestions=options,
             maxtags=len(options),
             key=key,
         )
 except Exception:
-    def kw_input(label, options, key):
+    def kw_input(label, options, key, tab_name=None):
+        if tab_name == "법령":
+            default_value = options
+        else:
+            prefer = DEFAULT_KEYWORD.get(tab_name)
+            default_value = [prefer] if (prefer and prefer in options) else (options[:1] if options else [])
         return st.multiselect(
-            label, options=options, default=options,  # ✅ 기본값: 전부 선택
-            key=key, help="필요 없는 키워드는 선택 해제하세요."
+            label=label,
+            options=options,
+            default=default_value,
+            key=key,
+            help="필요한 키워드만 추가로 선택하세요.",
         )
+
 
 
 
@@ -1838,11 +1854,11 @@ except NameError:
     # 이 패치를 해당 정의 '아래'로 옮겨 붙이세요.
     pass
 
+
 # =============================
-# 키워드 기본값/위젯 헬퍼 (with st.sidebar: 위에 배치)
+# 키워드 기본값/위젯 헬퍼 (unified & stable)
 # =============================
 
-# 탭별 기본 키워드 1개(없으면 첫 항목 사용)
 DEFAULT_KEYWORD = {
     "법령": "개정",
     "행정규칙": "개정",
@@ -1851,37 +1867,43 @@ DEFAULT_KEYWORD = {
     "판례": "대법원",
     "헌재": "위헌",
     "해석례": "유권해석",
-    "용어/별표": "정의",   # ← '용어' 대신 '정의'를 기본으로 권장
+    "용어/별표": "정의",
 }
 
-def one_default(options, prefer=None):
-    """옵션 목록에서 기본으로 1개만 선택해 반환"""
+def choose_default(options, prefer=None):
     if not options:
         return []
     if prefer and prefer in options:
         return [prefer]
     return [options[0]]
 
-# st_tags가 있으면 태그 위젯, 없으면 multiselect로 동작
 try:
     from streamlit_tags import st_tags
     def kw_input(label, options, key, tab_name=None):
-        prefer = DEFAULT_KEYWORD.get(tab_name)
+        if tab_name == "법령":
+            default_value = list(options)
+        else:
+            prefer = DEFAULT_KEYWORD.get(tab_name)
+            default_value = choose_default(options, prefer)
         return st_tags(
             label=label,
             text="쉼표(,) 또는 Enter로 추가/삭제",
-            value=one_default(options, prefer),   # ✅ 기본 1개만
+            value=default_value,
             suggestions=options,
             maxtags=len(options),
             key=key,
         )
 except Exception:
     def kw_input(label, options, key, tab_name=None):
-        prefer = DEFAULT_KEYWORD.get(tab_name)
+        if tab_name == "법령":
+            default_value = list(options)
+        else:
+            prefer = DEFAULT_KEYWORD.get(tab_name)
+            default_value = choose_default(options, prefer)
         return st.multiselect(
             label=label,
             options=options,
-            default=one_default(options, prefer), # ✅ 기본 1개만
+            default=default_value,
             key=key,
             help="필요한 키워드만 추가로 선택하세요.",
         )
@@ -1889,6 +1911,19 @@ except Exception:
 # =============================
 # Sidebar: 링크 생성기 (무인증)
 # =============================
+# =============================
+# Sidebar: 링크 생성기 (무인증)
+# =============================
+
+
+# === [FREEZE] Sidebar preset: keep "pre-chat" menu forever ===
+if "__SIDEBAR_PRESET__" not in st.session_state:
+    st.session_state["__SIDEBAR_PRESET__"] = {
+        "law_name_default": "",
+        "law_kw_default": ["정의", "목적", "벌칙"],
+    }
+PRESET = st.session_state["__SIDEBAR_PRESET__"]
+
 with st.sidebar:
     # --- 사이드바: 새 대화 버튼(링크 생성기 위) ---
     if st.button("🆕 새 대화", type="primary", use_container_width=True, key="__btn_new_chat__"):
@@ -1911,10 +1946,10 @@ with st.sidebar:
 
     # ───────────────────────── 법령
     with tabs[0]:
-        law_name = st.text_input("법령명", value="민법", key="sb_law_name")
+        law_name = st.text_input("법령명", value=st.session_state.get("__sb_law_name__", PRESET["law_name_default"]), key="sb_law_name", label_visibility="visible")
         # 법령명 기반 추천
         law_keys = kw_input("키워드(자동 추천)",
-                            suggest_keywords_for_law(law_name),
+                            PRESET["law_kw_default"],
                             key="sb_law_keys",
                             tab_name="법령")
 
@@ -2103,8 +2138,48 @@ chat_started = _chat_started()
 st.markdown(f"""
 <script>
 document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-document.body.classList.toggle('answering', {str(ANSWERING).lower()});
+document.body.clas
+</style>
+""", unsafe_allow_html=True)
+
+# === [GUARD] Sidebar shield: unaffected by answering/chat-started ===
+st.markdown("""
+<style>
+section[data-testid="stSidebar"]{
+  position: sticky !important; top: 0 !important;
+  visibility: visible !important; opacity: 1 !important;
+}
+section[data-testid="stSidebar"] *{
+  display: revert !important;
+  visibility: visible !important; opacity: 1 !important;
+  height: auto !important; max-height: none !important;
+  overflow: visible !important; pointer-events: auto !important;
+}
+section[data-testid="stSidebar"] .stTextInput,
+section[data-testid="stSidebar"] [data-testid="stTextInput"],
+section[data-testid="stSidebar"] [data-testid="stFileUploader"],
+section[data-testid="stSidebar"] .stSelectbox,
+section[data-testid="stSidebar"] .stButton{ display:block !important; }
+</style>
+<script>
+(() => {
+  const sbSel = 'section[data-testid="stSidebar"]';
+  const fix = () => {
+    const sb = document.querySelector(sbSel);
+    if (!sb) return;
+    sb.style.display = 'block';
+    sb.style.visibility = 'visible';
+    sb.style.opacity = '1';
+  };
+  const mo = new MutationObserver(fix);
+  mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  window.addEventListener('load', fix);
+})();
 </script>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
@@ -2379,3 +2454,108 @@ if chat_started and not st.session_state.get("__answering__", False):
         st.session_state["_clear_input"] = True
         st.rerun()
 
+st.markdown("""
+<style>
+/* --- ✅ 사이드바는 질문전/답변중/답변후 항상 동일하게 유지 --- */
+section[data-testid="stSidebar"]{
+  position: sticky !important; top: 0 !important;
+  opacity: 1 !important; visibility: visible !important;
+}
+
+/* 답변중/대화시작 후에라도, 사이드바 위젯은 절대 숨기지 않음 */
+body.answering  section[data-testid="stSidebar"] *,
+body.chat-started section[data-testid="stSidebar"] *{
+  display: revert !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  opacity: 1 !important;
+}
+
+/* 혹시 전역 규칙이 .stTextInput / 업로더 등을 건드려도 사이드바는 복구 */
+body.answering  section[data-testid="stSidebar"] .stTextInput,
+body.chat-started section[data-testid="stSidebar"] .stTextInput,
+body.answering  section[data-testid="stSidebar"] [data-testid="stFileUploader"],
+body.chat-started section[data-testid="stSidebar"] [data-testid="stFileUploader"],
+body.answering  section[data-testid="stSidebar"] .stSelectbox,
+body.chat-started section[data-testid="stSidebar"] .stSelectbox,
+body.answering  section[data-testid="stSidebar"] .stButton,
+body.chat-started section[data-testid="stSidebar"] .stButton{
+  display: block !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+
+# st_tags가 있으면 태그 위젯, 없으면 multiselect로 동작
+try:
+    from streamlit_tags import st_tags
+    def kw_input(label, options, key, tab_name=None):
+        # ✅ 법령 탭은 '질문전'처럼 추천 전부를 기본으로
+        if tab_name == "법령":
+            default_value = options
+        else:
+            prefer = DEFAULT_KEYWORD.get(tab_name) if 'DEFAULT_KEYWORD' in globals() else None
+            default_value = [prefer] if (prefer and prefer in options) else (options[:1] if options else [])
+        return st_tags(
+            label=label,
+            text="쉼표(,) 또는 Enter로 추가/삭제",
+            value=default_value,
+            suggestions=options,
+            maxtags=len(options),
+            key=key,
+        )
+except Exception:
+    def kw_input(label, options, key, tab_name=None):
+        if tab_name == "법령":
+            default_value = options
+        else:
+            prefer = DEFAULT_KEYWORD.get(tab_name) if 'DEFAULT_KEYWORD' in globals() else None
+            default_value = [prefer] if (prefer and prefer in options) else (options[:1] if options else [])
+        return st.multiselect(
+            label=label,
+            options=options,
+            default=default_value,
+            key=key,
+            help="필요한 키워드만 추가로 선택하세요.",
+        )
+
+
+
+st.markdown("""
+<style>
+/* --- 강제 복구: 사이드바 텍스트 입력이 숨김/축소되어도 보이게 --- */
+section[data-testid="stSidebar"] .stTextInput,
+section[data-testid="stSidebar"] [data-testid="stTextInput"]{
+  display: block !important;
+  visibility: visible !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+  margin-top: 8px !important;
+  margin-bottom: 8px !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+
+st.markdown("""
+<style>
+body.answering section[data-testid="stSidebar"],
+body.answering section[data-testid="stSidebar"] *{
+  display: revert !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+body.answering div[data-testid="stAppViewContainer"] main .center-hero,
+body.answering div[data-testid="stAppViewContainer"] main #chatbar-fixed,
+body.answering div[data-testid="stAppViewContainer"] main [data-testid="stFileUploader"]{
+  display: none !important;
+}
+</style>
+""", unsafe_allow_html=True)
