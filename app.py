@@ -558,6 +558,18 @@ LINKGEN_KEYWORDS = {
 }
 
 # st_tags가 있으면 태그 위젯, 없으면 multiselect
+# === 탭별 추천 키워드 기본값 (사이드바 공통) ===
+DEFAULT_KEYWORD = {
+    "법령": "개정",
+    "행정규칙": "개정",
+    "자치법규": "개정",
+    "조약": "비준",
+    "판례": "대법원",
+    "헌재": "위헌",
+    "해석례": "유권해석",
+    "용어/별표": "정의",
+}
+
 try:
     from streamlit_tags import st_tags
     def kw_input(label, options, key, tab_name=None):
