@@ -2109,23 +2109,28 @@ document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 
 st.markdown("""
 <style>
-/* 🔧 대화 시작 후에는 모든 첨부파일 업로더를 완전히 숨김 */
-body.chat-started #bu-anchor + div[data-testid="stFileUploader"] { 
-    display: none !important; 
-}
-#chatbar-fixed{ position: relative; }
-body.answering #chatbar-fixed{ opacity: .55; }                 /* 보이되 흐리게 */
-body.answering #chatbar-fixed::after{                           /* 클릭 차단 오버레이 */
-  content: ""; position: absolute; inset: 0; pointer-events: auto;
+/* 사이드바는 챗봇 상태(답변중/대화시작)에 상관없이 항상 활성 */
+body.chat-started [data-testid="stSidebar"],
+body.answering  [data-testid="stSidebar"] { 
+  opacity: 1 !important;
 }
 
+/* 사이드바 내부 모든 컨트롤 강제 표시/활성화 */
+body.chat-started [data-testid="stSidebar"] * ,
+body.answering  [data-testid="stSidebar"] *  {
+  visibility: visible !important;
+  pointer-events: auto !important;
+  filter: none !important;
+}
 
-/* 답변 중일 때만 하단 여백 축소 */
-body.answering .block-container { 
-    padding-bottom: calc(var(--chat-gap) + 24px) !important; 
+/* 혹시 다른 곳에서 display:none을 때렸더라도 무력화 */
+body.chat-started [data-testid="stSidebar"] .stTextInput,
+body.answering  [data-testid="stSidebar"] .stTextInput {
+  display: block !important;
 }
 </style>
 """, unsafe_allow_html=True)
+
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
 if not chat_started:
