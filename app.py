@@ -29,6 +29,49 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+/* 1) 제목 내부/형제 위치의 앵커 모두 숨김 */
+.block-container h1 a[href^="#"],
+.block-container h2 a[href^="#"],
+.block-container h3 a[href^="#"],
+.block-container h4 a[href^="#"],
+.block-container h5 a[href^="#"],
+.block-container h6 a[href^="#"],
+.block-container h1 + a[href^="#"],
+.block-container h2 + a[href^="#"],
+.block-container h3 + a[href^="#"],
+.block-container h4 + a[href^="#"],
+.block-container h5 + a[href^="#"],
+.block-container h6 + a[href^="#"],
+.block-container a[aria-label*="link to this"],
+.block-container a[aria-label*="링크"],
+.block-container [data-testid="stHeaderAction"] {
+  display: none !important;
+}
+</style>
+
+<script>
+(function(){
+  // 2) 리렌더링 대비: 생성 즉시 다시 숨김
+  const hide = () => {
+    const sel = [
+      'h1 a[href^="#"]','h2 a[href^="#"]','h3 a[href^="#"]',
+      'h4 a[href^="#"]','h5 a[href^="#"]','h6 a[href^="#"]',
+      'h1 + a[href^="#"]','h2 + a[href^="#"]','h3 + a[href^="#"]',
+      'h4 + a[href^="#"]','h5 + a[href^="#"]','h6 + a[href^="#"]',
+      'a[aria-label*="link to this"]','a[aria-label*="링크"]',
+      '[data-testid="stHeaderAction"]'
+    ].join(',');
+    document.querySelectorAll(sel).forEach(el => { el.style.display = 'none'; });
+  };
+  hide();
+  new MutationObserver(hide).observe(document.body, {subtree:true, childList:true});
+})();
+</script>
+""", unsafe_allow_html=True)
+
+
+st.markdown("""
+<style>
 :root{
   --left-rail: 300px;
   --right-rail: calc(var(--flyout-width, 0px) + var(--flyout-gap, 0px));
@@ -2459,3 +2502,40 @@ if chat_started and not st.session_state.get("__answering__", False):
         st.session_state["_clear_input"] = True
         st.rerun()
 
+
+# --- CLEAN PATCH: left/right rails + anchor icon hide ---
+try:
+    import streamlit as _st
+    _st.markdown("""
+<style>
+:root{
+  --left-rail: 300px;
+  --right-rail: calc(var(--flyout-width, 0px) + var(--flyout-gap, 0px));
+}
+/* Hide anchor icon on hero title */
+.center-hero h1 a, .center-hero h1 svg{ display:none !important; }
+/* Bottom chatbar keeps clear of rails if component uses .cb2-wrap */
+@media (max-width: 1279px){
+  .cb2-wrap{ left: 0 !important; right: 0 !important; }
+}
+</style>
+<script>
+(function(){
+  /* keep --left-rail synced to actual sidebar width, but only observe the sidebar node */
+  function setLeftRail(){
+    const sb = window.parent?.document?.querySelector?.('[data-testid="stSidebar"]');
+    if(!sb) return;
+    const w = Math.round(sb.getBoundingClientRect().width || 300);
+    document.documentElement.style.setProperty('--left-rail', w + 'px');
+  }
+  setLeftRail();
+  window.addEventListener('resize', setLeftRail);
+  const sb = window.parent?.document?.querySelector?.('[data-testid="stSidebar"]');
+  if(sb){
+    new MutationObserver(setLeftRail).observe(sb, {subtree:true, childList:true, attributes:true});
+  }
+})();
+</script>
+""", unsafe_allow_html=True)
+except Exception:
+    pass
