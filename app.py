@@ -1911,9 +1911,7 @@ with st.sidebar:
 
     # ───────────────────────── 법령
     with tabs[0]:
-        st.markdown('<div id="sb-law-name-row">', unsafe_allow_html=True)
         law_name = st.text_input("법령명", value="민법", key="sb_law_name")
-        st.markdown('</div>', unsafe_allow_html=True)
         # 법령명 기반 추천
         law_keys = kw_input("키워드(자동 추천)",
                             suggest_keywords_for_law(law_name),
@@ -2116,7 +2114,7 @@ body.chat-started #bu-anchor + div[data-testid="stFileUploader"] {
     display: none !important; 
 }
 /* 기존: display:none !important;  (X) */
-body.answering #chatbar-fixed{
+body.chat-started #chatbar-fixed{
   visibility: hidden !important;   /* 안 보이지만 자리·좌표는 유지 */
   pointer-events: none !important; /* 클릭 방지 */
 }
@@ -2172,7 +2170,11 @@ if not chat_started:
     </style>
     """, unsafe_allow_html=True)
 
-# 3) 화면 분기 — 통일 레이아웃로 변경: pre-chat center 제거
+# 3) 화면 분기
+if not chat_started:
+    render_pre_chat_center()   # 중앙 히어로 + 중앙 업로더
+    st.stop()
+else:
     # 🔧 대화 시작 후에는 첨부파일 박스를 렌더링하지 않음 (완전히 제거)
     # 스트리밍 중에는 업로더 숨김 (렌더 자체 생략)
     # if not ANSWERING:
@@ -2362,17 +2364,18 @@ if user_q:
         stream_box.empty()
     
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
-st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)
-submitted, typed_text, files = chatbar(
-    placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
-    accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
-)
-st.markdown('</div>', unsafe_allow_html=True)
-if submitted and not st.session_state.get("__answering__", False):
-    text = (typed_text or "").strip()
-    if text:
-        st.session_state["_pending_user_q"] = text
-        st.session_state["_pending_user_nonce"] = time.time_ns()
-    st.session_state["_clear_input"] = True
-    st.rerun()
+if chat_started and not st.session_state.get("__answering__", False):
+    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
+    submitted, typed_text, files = chatbar(
+        placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
+        accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
+    )
+    st.markdown('</div>', unsafe_allow_html=True)                     # ← 래퍼 닫기
+    if submitted:
+        text = (typed_text or "").strip()
+        if text:
+            st.session_state["_pending_user_q"] = text
+            st.session_state["_pending_user_nonce"] = time.time_ns()
+        st.session_state["_clear_input"] = True
+        st.rerun()
 
