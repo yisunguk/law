@@ -614,88 +614,32 @@ def _push_user_from_pending() -> str | None:
     })
     st.session_state["_last_user_nonce"] = nonce
     st.session_state["current_turn_nonce"] = nonce  # ✅ 이 턴의 nonce 확정
-    # reset duplicate-answer guard for a NEW user turn
-    st.session_state.pop('_last_ans_hash', None)
     return q
 
 def render_pre_chat_center():
-    """대화 전: 중앙 히어로 + 중앙 업로더(키: first_files) + 전송 폼"""
+
+    """대화 전: 중앙 히어로 + (통일) chatbar 입력 UI"""
+    import streamlit as st, time
+
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
-    st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
+    st.markdown('<div class="hero-sub">법령 상담을 시작해 보세요</div>', unsafe_allow_html=True)
+    st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-0.3px;margin:8px 0 24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
 
-    # 중앙 업로더 (대화 전 전용)
-    st.file_uploader(
-        "Drag and drop files here",
-        type=["pdf", "docx", "txt"],
-        accept_multiple_files=True,
-        key="first_files",
+    # ✅ 채팅 시작 전에도 in-chat과 동일한 chatbar UI 사용
+    submitted, typed_text, files = chatbar(
+        placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
+        accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix="first",
     )
-
-    # 입력 폼 (전송 시 pending에 저장 후 rerun)
-    with st.form("first_ask", clear_on_submit=True):
-        q = st.text_input("질문을 입력해 주세요...", key="first_input")
-        sent = st.form_submit_button("전송", use_container_width=True)
-
     st.markdown("</section>", unsafe_allow_html=True)
 
-    if sent and (q or "").strip():
-        st.session_state["_pending_user_q"] = q.strip()
-        st.session_state["_pending_user_nonce"] = time.time_ns()
+    if submitted:
+        text = (typed_text or "").strip()
+        if text:
+            st.session_state["_pending_user_q"] = text
+            st.session_state["_pending_user_nonce"] = time.time_ns()
+        st.session_state["_clear_input"] = True
         st.rerun()
 
-# 기존 render_bottom_uploader() 전부 교체
-def render_bottom_uploader():
-    # 업로더 바로 앞에 '앵커'만 출력
-    st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
-
-    # 이 다음에 나오는 업로더를 CSS에서 #bu-anchor + div[...] 로 고정 배치
-    st.file_uploader(
-        "Drag and drop files here",
-        type=["pdf", "docx", "txt"],
-        accept_multiple_files=True,
-        key="bottom_files",
-        help="대화 중에는 업로드 박스가 하단에 고정됩니다.",
-    )
-
-# --- 작동 키워드 목록(필요시 보강/수정) ---
-LINKGEN_KEYWORDS = {
-    "법령": ["제정", "전부개정", "개정", "폐지", "부칙", "정정", "시행", "별표", "별지서식"],
-    "행정규칙": ["훈령", "예규", "고시", "지침", "공고", "전부개정", "개정", "정정", "폐지"],
-    "자치법규": ["조례", "규칙", "훈령", "예규", "전부개정", "개정", "정정", "폐지"],
-    "조약": ["서명", "비준", "발효", "공포", "폐기"],
-    "판례": ["대법원", "전원합의체", "하급심", "손해배상", "불법행위"],
-    "헌재": ["위헌", "합헌", "한정위헌", "한정합헌", "헌법불합치"],
-    "해석례": ["유권해석", "법령해석", "질의회신"],
-    "용어/별표": ["용어", "정의", "별표", "서식"],
-}
-
-# --- 키워드 위젯 헬퍼: st_tags가 있으면 사용, 없으면 multiselect로 대체 ---
-try:
-    from streamlit_tags import st_tags
-    def kw_input(label, options, key):
-        return st_tags(
-            label=label,
-            text="쉼표(,) 또는 Enter로 추가/삭제",
-            value=options,           # ✅ 기본값: 전부 채움
-            suggestions=options,
-            maxtags=len(options),
-            key=key,
-        )
-except Exception:
-    def kw_input(label, options, key):
-        return st.multiselect(
-            label, options=options, default=options,  # ✅ 기본값: 전부 선택
-            key=key, help="필요 없는 키워드는 선택 해제하세요."
-        )
-
-
-
-# =============================
-# Utilities
-# =============================
-_CASE_NO_RE = re.compile(r'(19|20)\d{2}[가-힣]{1,3}\d{1,6}')
-_HBASE = "https://www.law.go.kr"
-LAW_PORTAL_BASE = "https://www.law.go.kr/"
 
 def _chat_started() -> bool:
     msgs = st.session_state.get("messages", [])
@@ -2462,8 +2406,6 @@ st.markdown("""
 
 
 with st.container():
-    # reset UI dedupe guard per rerun
-    st.session_state['_prev_assistant_txt'] = ''
     for i, m in enumerate(st.session_state.messages):
         # --- UI dedup guard: skip if same assistant content as previous ---
         if isinstance(m, dict) and m.get('role')=='assistant':
