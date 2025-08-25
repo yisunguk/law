@@ -745,31 +745,56 @@ def strip_reference_links_block(markdown: str) -> str:
 
 
 # === 새로 추가: 중복 제거 유틸 ===
+
 def _dedupe_blocks(text: str) -> str:
+    """
+    과잉 반복된 본문을 정리한다.
+    - 완전 동일한 절반 반복(AB → A+A) 제거
+    - 꼬리(TAIL)의 즉시 반복 xx...xx 제거
+    - 동일 문단 연속 반복 제거
+    - 내부 절차 문구 노출(의도 분석/추가 검색/재검색) 제거
+    """
+    import re as _re
     s = _normalize_text(text or "")
 
-    # 1) 완전 동일 문단의 연속 중복 제거
-    lines, out, prev = s.split("\n"), [], None
-    for ln in lines:
-        if ln.strip() and ln == prev:
-            continue
-        out.append(ln); prev = ln
-    s = "\n".join(out)
+    # (A) 전체가 두 번 연달아 나온 경우: 앞 절반만 유지
+    if len(s) >= 400:
+        mid = len(s) // 2
+        if s[:mid] == s[mid:] or s[:mid-1] == s[mid+1:]:
+            s = s[:mid]
 
-    # 2) "법률 자문 메모"로 시작하는 동일 본문 2중 출력 방지
-    pat = re.compile(r'(법률\s*자문\s*메모[\s\S]{50,}?)(?:\n+)\1', re.I)
+    # (B) 꼬리 블록이 그대로 한 번 더 이어진 경우(예: 마지막 1000자 동일)
+    for tail_size in range(min(1200, len(s)//2), 300, -100):
+        tail = s[-tail_size:]
+        prev = s[-2*tail_size:-tail_size]
+        if tail == prev:
+            # 반복된 tail을 모두 하나로 축약
+            while s.endswith(tail + tail):
+                s = s[:-tail_size]
+            break
+
+    # (C) 완전 동일 문단(빈 줄로 구분)이 연속되면 하나만 남김
+    parts = [p for p in s.split("\n\n")]
+    out = []
+    for para in parts:
+        if not out or out[-1] != para:
+            out.append(para)
+    s = "\n\n".join(out)
+
+    # (D) "법률 자문 메모 ..." 본문 2중 출력 방지(기존 호환)
+    pat = _re.compile(r'(법률\s*자문\s*메모[\s\S]{50,}?)(?:\n+)\1', _re.I)
     s = pat.sub(r'\1', s)
 
-    # 3) 내부 절차 문구 노출 시 제거(의도 분석/추가 검색/재검색)
-    s = re.sub(
+    # (E) 내부 절차 문구 노출 시 제거(의도 분석/추가 검색/재검색)
+    s = _re.sub(
         r'^\s*\d+\.\s*\*\*?(사용자의 의도 분석|추가 검색|재검색)\*\*?.*?(?=\n\d+\.|\Z)',
         '',
         s,
-        flags=re.M | re.S
+        flags=_re.M | _re.S
     )
 
-    # 빈 줄 정리
-    s = re.sub(r'\n{3,}', '\n\n', s)
+    # (F) 빈 줄 정리
+    s = _re.sub(r'\n{3,}', '\n\n', s)
     return s
 
 # === add: 여러 법령 결과를 한 번에 요약해서 LLM에 먹일 프라이머 ===
