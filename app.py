@@ -362,6 +362,10 @@ def inject_sticky_layout_css(mode: str = "wide"):
         width: 720px; max-width: 92vw;
       }}
 
+.post-chat-ui .stFileUploader, .post-chat-ui .stTextInput {{ width: 720px; max-width: 92vw; }}
+.post-chat-ui {{ margin-top: 8px; }}
+
+
       /* 업로더 고정: 앵커 다음 형제 업로더 */
       #bu-anchor + div[data-testid='stFileUploader'] {{
         position: fixed;
@@ -750,7 +754,7 @@ def render_pre_chat_center():
 # [ADD] 답변 완료 후에도 프리챗과 동일한 UI 사용
 def render_post_chat_simple_ui():
     import time, io
-    st.markdown('<section class="center-hero post-chat-ui">', unsafe_allow_html=True)
+    st.markdown('<section class="post-chat-ui">', unsafe_allow_html=True)
 
     # 업로더 (프리챗과 동일)
     post_files = st.file_uploader(
