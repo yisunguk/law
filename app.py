@@ -2628,6 +2628,11 @@ with st.container():
             else:
                 st.markdown(content)
 
+
+# ✅ 답변 말풍선 바로 아래에 입력/업로더 붙이기 (답변 생성 중이 아닐 때만)
+if chat_started and not st.session_state.get("__answering__", False):
+    render_post_chat_simple_ui()
+
 # ✅ 메시지 루프 바로 아래(이미 _inject_right_rail_css() 다음 추천) — 항상 호출
 def _current_q_and_answer():
     msgs = st.session_state.get("messages", [])
@@ -2713,7 +2718,4 @@ if user_q:
         except Exception:
             pass
 
-# ✅ 채팅이 시작되었고, 지금은 답변 생성 중이 아닐 때 → 프리챗과 동일 UI 출력
-if chat_started and not st.session_state.get("__answering__", False):
-    render_post_chat_simple_ui()
-
+# (moved) post-chat UI is now rendered inline under the last assistant message.
