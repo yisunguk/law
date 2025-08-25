@@ -2615,8 +2615,6 @@ if chat_started:
     """, unsafe_allow_html=True)
 
 # 기존 메시지 렌더링
-for m in st.session_state.get("messages", []):
-    render_message(m)   # ← 기존 함수 그대로
 
 # --- nudge override (safe to edit) ---
 st.markdown("""
