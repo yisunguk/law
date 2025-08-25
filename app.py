@@ -22,7 +22,7 @@ HERO_HTML = '''
 st.markdown("""
 <style>
   :root{
-    --hero-top: 6px;            /* 헤드라인 상단 여백: 필요시 조정 */
+    --hero-top: 0px;            /* 헤드라인 상단 여백: 필요시 조정 */
     --flyout-top: var(--hero-top);  /* 우측 통합검색 상단과 동기화 */
   }
   .global-hero{ position: sticky; top: var(--hero-top); z-index: 10; margin: 0 0 12px; }
