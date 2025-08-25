@@ -64,13 +64,7 @@ div[data-testid="stFileUploaderDropzone"] button{{ display:none !important; visi
   }}
   function getTextarea(form){{
     // aria-label은 st.text_area의 label 텍스트가 들어갑니다("메시지")
-    if(!form) return null;
-    let ta = form.querySelector('textarea');
-    if(!ta){{
-      const cands = Array.from(form.querySelectorAll('textarea'));
-      ta = cands.find(el => el.offsetParent !== null) || cands[0] || null;
-    }}
-    return ta;
+    return form ? form.querySelector('textarea[aria-label="메시지"]') : null;
   }}
   function getSubmitBtn(form){{
     if(!form) return null;
@@ -153,3 +147,74 @@ div[data-testid="stFileUploaderDropzone"] button{{ display:none !important; visi
     st.markdown('</div>', unsafe_allow_html=True)
 
     return submitted, (text_val or '').strip(), files
+
+
+# --- ENTER SUBMIT: prevent duplicate form submit while keeping Enter-to-send ---
+try:
+    import streamlit as _st
+    _st.markdown("""
+<script>
+(function(){
+  if (window.__cbBindEnterOnce__) return;  // guard against double binding
+  window.__cbBindEnterOnce__ = true;
+  try{
+    const root = document.querySelector('.cb2-wrap');
+    if(!root) return;
+    const form = root.querySelector('form') || root.closest('form') || document.querySelector('.cb2-wrap form');
+    if(!form) return;
+
+    // 1) 폼 기본 submit 차단 (중복 방지)
+    form.addEventListener('submit', function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+      return false;
+    }, true);
+
+    // 2) textarea & button 찾기 (레이블/구조 변화 내성)
+    function getTA(){
+      let ta = form.querySelector('textarea');
+      if(!ta){
+        const cands = Array.from(form.querySelectorAll('textarea'));
+        ta = cands.find(el => el.offsetParent !== null) || cands[0] || null;
+      }
+      return ta;
+    }
+    function getBtn(){
+      const btns = Array.from(form.querySelectorAll('button'));
+      let b = btns.find(x => (x.getAttribute('type')||'').toLowerCase()==='submit')
+              || btns[btns.length-1] || null;
+      return b;
+    }
+
+    const ta  = getTA();
+    const btn = getBtn();
+    if(!ta || !btn) return;
+
+    // 3) IME(한글 조합) 중에는 Enter 무시 + 중복 클릭 락
+    let isIME = false, locking = false;
+    ta.addEventListener('compositionstart', ()=> isIME = true);
+    ta.addEventListener('compositionend',   ()=> isIME = false);
+
+    function sendOnce(){
+      if(locking) return;
+      locking = true;
+      btn.click();
+      setTimeout(()=> locking = false, 600);
+    }
+
+    // 4) Enter로 전송(Shift+Enter 줄바꿈 유지), 기본 제출은 차단
+    ta.addEventListener('keydown', function(e){
+      if (e.key === 'Enter' && !e.shiftKey && !isIME) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+        sendOnce();
+      }
+    }, true);
+  }catch(_){}
+})();
+</script>
+""", unsafe_allow_html=True)
+except Exception:
+    pass
