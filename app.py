@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import streamlit as st
 
-# [ADD] 공통 히어로 HTML (프리챗/포스트챗에서 재사용)
-HERO_HTML = """
+
+# === Shared hero (title + two paragraphs) used in pre-chat and inside chat ===
+HERO_HTML = '''
 <h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:12px;">⚖️ 법률상담 챗봇</h1>
 <p style="font-size:15px;line-height:1.8;opacity:.92;margin:0 0 6px;">
   법제처 국가법령정보 DB를 기반으로 최신 법령과 행정규칙, 자치법규, 조약, 법령해석례, 헌재결정례, 법령용어를 신뢰성 있게 제공합니다.
@@ -12,7 +13,7 @@ HERO_HTML = """
 <p style="font-size:15px;line-height:1.8;opacity:.92;margin:0 0 24px;">
   본 챗봇은 신속하고 정확한 법령 정보를 안내하여, 사용자가 법률적 쟁점을 이해하고 합리적인 판단을 내릴 수 있도록 돕습니다.
 </p>
-"""
+'''
 
 # --- per-turn nonce ledger (prevents double appends)
 st.session_state.setdefault('_nonce_done', {})
@@ -79,6 +80,13 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
+
+st.markdown('''
+<style>
+.hero-in-chat { margin: 8px 0 2px; }
+.hero-in-chat h1 { margin-bottom: 10px !important; }
+</style>
+''' , unsafe_allow_html=True)
 
 st.markdown("""
 <style>
@@ -767,11 +775,7 @@ def render_post_chat_simple_ui():
     import time, io
     st.markdown('<section class="post-chat-ui">', unsafe_allow_html=True)
 
-    
-    # 헤드라인/소개 (프리챗과 동일)
-    st.markdown(HERO_HTML, unsafe_allow_html=True)
-
-# 업로더 (프리챗과 동일)
+    # 업로더 (프리챗과 동일)
     post_files = st.file_uploader(
         "Drag and drop files here",
         type=["pdf", "docx", "txt"],
@@ -2622,6 +2626,18 @@ st.markdown("""
 with st.container():
     st.session_state['_prev_assistant_txt'] = ''  # reset per rerun
     for i, m in enumerate(st.session_state.messages):
+        # --- Hero above the most recent user question (shows during loading & after) ---
+        if '_latest_user_index' not in st.session_state:
+            _msgs = st.session_state.get('messages', [])
+            _latest = None
+            for _idx in range(len(_msgs)-1, -1, -1):
+                _mm = _msgs[_idx]
+                if isinstance(_mm, dict) and _mm.get('role') == 'user' and (_mm.get('content') or '').strip():
+                    _latest = _idx
+                    break
+            st.session_state['_latest_user_index'] = _latest
+
+
         # --- UI dedup guard: skip if same assistant content as previous ---
         if isinstance(m, dict) and m.get('role')=='assistant':
             _t = (m.get('content') or '').strip()
@@ -2634,6 +2650,10 @@ with st.container():
         content = (m.get("content") or "")
         if role == "assistant" and not content.strip():
             continue  # ✅ 내용이 비면 말풍선 자체를 만들지 않음
+        # If this is the latest user bubble, show the shared hero just above it
+        if (role == "user") and (st.session_state.get('_latest_user_index') == i):
+            st.markdown('<div class="hero-in-chat">' + HERO_HTML + '</div>', unsafe_allow_html=True)
+
 
         with st.chat_message(role):
             if role == "assistant":
