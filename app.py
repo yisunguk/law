@@ -2502,20 +2502,16 @@ if chat_started and not st.session_state.get("__answering__", False):
 
 # ===============================
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
-# ===============================
+# ===============================\n
 if user_q:
-    # --- safe defaults for streaming vars (used outside condition) ---
+    # --- streaming aggregator v2: keep deltas for preview, but FINAL wins ---
     stream_box = None
-    full_text = ''
-    buffer = ''
-    final_text = ''
+    deltas_only = ""
+    final_payload = ""
     collected_laws = []
 
     if client and AZURE:
-        # 프리뷰/버퍼 초기화
         stream_box = st.empty()
-        full_text, buffer, collected_laws = "", "", []
-        final_text = ""   # NameError 방지
 
     try:
         if stream_box is not None:
@@ -2523,27 +2519,14 @@ if user_q:
 
         for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
             if kind == "delta":
-                buffer += (payload or "")
-                if len(buffer) >= 200:
-                    full_text += buffer
-                    buffer = ""
-                    if SHOW_STREAM_PREVIEW and stream_box is not None:
-                        stream_box.markdown(_normalize_text(full_text[-1500:]))
-            elif kind == "final":
-                # flush last buffer then set final
-                if buffer:
-                    full_text += buffer
-                    buffer = ""
-                if payload and payload.strip() == full_text.strip():
-                    payload = ""
                 if payload:
-                    full_text += payload
+                    deltas_only += payload
+                    if SHOW_STREAM_PREVIEW and stream_box is not None:
+                        stream_box.markdown(_normalize_text(deltas_only[-1500:]))
+            elif kind == "final":
+                final_payload  = (payload or "")
                 collected_laws = law_list or []
                 break
-
-        # 루프 종료 후 남은 버퍼 반영
-        if buffer:
-            full_text += buffer
 
     except Exception as e:
         # 예외 시 폴백
@@ -2551,14 +2534,14 @@ if user_q:
         collected_laws = laws
         law_ctx = format_law_context(laws)
         title = "법률 자문 메모"
-        full_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
-        final_text = apply_final_postprocess(full_text, collected_laws)
-        final_text = _dedupe_repeats(final_text)
+        base_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
+    else:
+        # 정상 경로: final이 있으면 final, 없으면 delta 누적 사용
+        base_text = (final_payload.strip() or deltas_only)
 
-    # --- ✅ 정상 경로 후처리: 항상 실행되도록 보장 ---
-    if not final_text.strip():
-        final_text = apply_final_postprocess(full_text, collected_laws)
-        final_text = _dedupe_repeats(final_text)
+    # --- Postprocess & de-dup ---
+    final_text = apply_final_postprocess(base_text, collected_laws)
+    final_text = _dedupe_repeats(final_text)
 
     # --- seatbelt: skip if same answer already stored this turn ---
     _ans_hash = _hash_text(final_text)
@@ -2587,6 +2570,7 @@ if user_q:
             stream_box.empty()
         except Exception:
             pass
+
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
 if chat_started and not st.session_state.get("__answering__", False):
     st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
