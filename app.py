@@ -25,7 +25,7 @@ st.markdown("""
     --hero-top: 6px;            /* 헤드라인 상단 여백: 필요시 조정 */
     --flyout-top: var(--hero-top);  /* 우측 통합검색 상단과 동기화 */
   }
-  .global-hero{ position: fixed; top: var(--hero-top); left: var(--bc-left, 24px); width: var(--bc-w, calc(100vw - 48px)); z-index: 100; transform: none; }
+  .global-hero{ position: fixed; top: var(--hero-top); left: var(--bc-left, 24px); width: var(--bc-w, calc(100vw - 48px)); box-sizing: border-box; padding-right: 24px; overflow: hidden; z-index: 20; transform: none; }
   .global-hero h1{ margin-bottom: 10px !important; }
   /* 이전 방식 비활성화 */
   .hero-stick, .hero-in-chat{ display:none !important; }
@@ -34,6 +34,58 @@ st.markdown("""
     .block-container{ padding-top: calc(var(--hero-top) + var(--hero-h, 108px) + 16px) !important; }
   </style>
 """, unsafe_allow_html=True)
+st.markdown('''
+<script>
+(function(){
+  function syncHeroMetrics(){
+    try{
+      var bc = document.querySelector('.block-container');
+      var vw = window.innerWidth || document.documentElement.clientWidth;
+
+      // 3-1) 기본 본문 기준선
+      var baseLeft = 24, baseRight = vw - 24;
+      if (bc){
+        var br = bc.getBoundingClientRect();
+        baseLeft = br.left; baseRight = br.right;
+      }
+
+      // 3-2) 좌측 오버레이(링크 생성기 등) 차단선 계산
+      var selectors = ['#left-flyout', '.left-flyout', '#link-factory', '.link-factory', '.stSidebar', '[data-side=\"left\"]'];
+      var guardRight = 0;
+      for (var i=0;i<selectors.length;i++){
+        var el = document.querySelector(selectors[i]);
+        if(!el) continue;
+        var cs = getComputedStyle(el);
+        if(['fixed','sticky','absolute'].indexOf(cs.position) === -1) continue;
+        var r = el.getBoundingClientRect();
+        // 화면 왼쪽 절반에 걸치고, 어느 정도 폭이 있는 요소만 고려
+        if (r.width > 100 && r.left < vw*0.5){
+          guardRight = Math.max(guardRight, r.right);
+        }
+      }
+
+      // 3-3) 헤드라인 좌표/폭 산정 (좌측 오버레이 + 본문 기준선 동시 반영)
+      var heroLeft = Math.max(baseLeft, guardRight + 8); // 8px 여백
+      var heroRight = Math.min(baseRight, vw - 24);
+      var heroWidth = Math.max(160, heroRight - heroLeft);
+
+      document.documentElement.style.setProperty('--bc-left', heroLeft + 'px');
+      document.documentElement.style.setProperty('--bc-w', heroWidth + 'px');
+
+      // 3-4) 헤드라인 높이 반영
+      var hero = document.querySelector('.global-hero');
+      if (hero){
+        var h = Math.round(hero.getBoundingClientRect().height || 0);
+        if(h>0) document.documentElement.style.setProperty('--hero-h', h + 'px');
+      }
+    }catch(e){}
+  }
+  syncHeroMetrics();
+  addEventListener('resize', syncHeroMetrics);
+  new MutationObserver(syncHeroMetrics).observe(document.body, {subtree:true, childList:true, attributes:true});
+})();
+</script>
+''', unsafe_allow_html=True)
 
 st.markdown("""
 <style>
@@ -125,30 +177,19 @@ st.markdown("""
   --right-rail: calc(var(--flyout-width, 0px) + var(--flyout-gap, 0px));
 }
 </style>
-
 <script>
 (function(){
-  function syncHeroMetrics(){
-    try{
-      var hero = document.querySelector('.global-hero');
-      var bc = document.querySelector('.block-container');
-      if (bc){
-        var r = bc.getBoundingClientRect();
-        document.documentElement.style.setProperty('--bc-left', r.left + 'px');
-        document.documentElement.style.setProperty('--bc-w', r.width + 'px');
-      }
-      if(hero){
-        var h = Math.round(hero.getBoundingClientRect().height || 0);
-        if(h>0) document.documentElement.style.setProperty('--hero-h', h + 'px');
-      }
-    }catch(e){}
+  function setLeftRail(){
+    const sb = window.parent.document.querySelector('[data-testid="stSidebar"]');
+    if(!sb) return;
+    const w = Math.round(sb.getBoundingClientRect().width || 300);
+    document.documentElement.style.setProperty('--left-rail', w + 'px');
   }
-  syncHeroMetrics();
-  addEventListener('resize', syncHeroMetrics);
-  new MutationObserver(syncHeroMetrics).observe(document.body, {subtree:true, childList:true, attributes:true});
+  setLeftRail();
+  window.addEventListener('resize', setLeftRail);
+  new MutationObserver(setLeftRail).observe(window.parent.document.body, {subtree:true, childList:true, attributes:true});
 })();
 </script>
-
 """, unsafe_allow_html=True)
 
 
