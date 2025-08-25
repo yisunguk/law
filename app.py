@@ -2573,12 +2573,12 @@ if user_q:
 
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
 if chat_started and not st.session_state.get("__answering__", False):
-    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
+    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)
     submitted, typed_text, files = chatbar(
         placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
         accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
     )
-    st.markdown('</div>', unsafe_allow_html=True)                     # ← 래퍼 닫기
+    st.markdown('</div>', unsafe_allow_html=True)
     if submitted:
         text = (typed_text or "").strip()
         if text:
@@ -2586,3 +2586,18 @@ if chat_started and not st.session_state.get("__answering__", False):
             st.session_state["_pending_user_nonce"] = time.time_ns()
         st.session_state["_clear_input"] = True
         st.rerun()
+
+# ▼▼▼ 여기 ‘바로 아래’에 추가 (좌측 본문/컬럼 안, 메시지 출력 직전)
+if chat_started:
+    st.markdown("""
+    <style>
+      /* 우측 패널 top 변수(있으면) 따라가고, 없으면 88px */
+      #answer-spacer{ height: var(--content-top, var(--flyout-top, 88px)); }
+      @media (max-width:1279px){ #answer-spacer{ height:0 } }
+    </style>
+    <div id="answer-spacer"></div>
+    """, unsafe_allow_html=True)
+
+# 기존 메시지 렌더링
+for m in st.session_state.get("messages", []):
+    render_message(m)   # ← 기존 함수 그대로
