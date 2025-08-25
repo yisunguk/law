@@ -25,13 +25,13 @@ st.markdown("""
     --hero-top: 6px;            /* 헤드라인 상단 여백: 필요시 조정 */
     --flyout-top: var(--hero-top);  /* 우측 통합검색 상단과 동기화 */
   }
-  .global-hero{ position: fixed; top: var(--hero-top); left: var(--bc-left, 24px); width: var(--bc-w, calc(100vw - 48px)); box-sizing: border-box; padding-right: 24px; overflow: hidden; z-index: 20; transform: none; }
+  .global-hero{ position: sticky; top: var(--hero-top); z-index: 10; margin: 0 0 12px; }
   .global-hero h1{ margin-bottom: 10px !important; }
   /* 이전 방식 비활성화 */
   .hero-stick, .hero-in-chat{ display:none !important; }
 </style>
   <style>
-    .block-container{ padding-top: calc(var(--hero-top) + var(--hero-h, 108px) + 16px) !important; }
+    .block-container{ padding-top: var(--hero-top) !important; }
   </style>
 """, unsafe_allow_html=True)
 st.markdown('''
@@ -41,38 +41,38 @@ st.markdown('''
     try{
       var bc = document.querySelector('.block-container');
       var vw = window.innerWidth || document.documentElement.clientWidth;
-
-      // 3-1) 기본 본문 기준선
       var baseLeft = 24, baseRight = vw - 24;
       if (bc){
         var br = bc.getBoundingClientRect();
         baseLeft = br.left; baseRight = br.right;
       }
 
-      // 3-2) 좌측 오버레이(링크 생성기 등) 차단선 계산
+      // Guard left overlays (sidebar/drawers)
       var selectors = ['#left-flyout', '.left-flyout', '#link-factory', '.link-factory', '.stSidebar', '[data-side=\"left\"]'];
       var guardRight = 0;
       for (var i=0;i<selectors.length;i++){
         var el = document.querySelector(selectors[i]);
         if(!el) continue;
-        var cs = getComputedStyle(el);
-        if(['fixed','sticky','absolute'].indexOf(cs.position) === -1) continue;
         var r = el.getBoundingClientRect();
-        // 화면 왼쪽 절반에 걸치고, 어느 정도 폭이 있는 요소만 고려
-        if (r.width > 100 && r.left < vw*0.5){
-          guardRight = Math.max(guardRight, r.right);
-        }
+        if (r.width > 100 && r.left < vw*0.5) guardRight = Math.max(guardRight, r.right);
       }
 
-      // 3-3) 헤드라인 좌표/폭 산정 (좌측 오버레이 + 본문 기준선 동시 반영)
-      var heroLeft = Math.max(baseLeft, guardRight + 8); // 8px 여백
-      var heroRight = Math.min(baseRight, vw - 24);
+      // Prefer explicit chat column anchor if present
+      var heroLeft = Math.max(baseLeft, guardRight + 8);
+      var anchor = document.querySelector('#chat-col-anchor');
+      if(anchor){
+        var ar = anchor.getBoundingClientRect();
+        // anchor is inside the chat column; use its left edge
+        heroLeft = Math.max(heroLeft, ar.left);
+      }
+
+      var heroRight = baseRight;
       var heroWidth = Math.max(160, heroRight - heroLeft);
 
       document.documentElement.style.setProperty('--bc-left', heroLeft + 'px');
       document.documentElement.style.setProperty('--bc-w', heroWidth + 'px');
 
-      // 3-4) 헤드라인 높이 반영
+      // Update hero height variable
       var hero = document.querySelector('.global-hero');
       if (hero){
         var h = Math.round(hero.getBoundingClientRect().height || 0);
@@ -826,6 +826,8 @@ def _push_user_from_pending() -> str | None:
     return q
 
 def render_pre_chat_center():
+    # chat column left anchor for hero alignment
+    st.markdown('<div id=\"chat-col-anchor\"></div>', unsafe_allow_html=True)
     """대화 전: 중앙 히어로 + 중앙 업로더(키: first_files) + 전송 폼"""
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
     st.markdown('<div class="global-hero">' + HERO_HTML + '</div>', unsafe_allow_html=True)
@@ -854,6 +856,8 @@ def render_pre_chat_center():
 
 # [ADD] 답변 완료 후에도 프리챗과 동일한 UI 사용
 def render_post_chat_simple_ui():
+    # chat column left anchor for hero alignment
+    st.markdown('<div id=\"chat-col-anchor\"></div>', unsafe_allow_html=True)
     import time, io
     st.markdown('<section class="post-chat-ui">', unsafe_allow_html=True)
 
