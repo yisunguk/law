@@ -27,6 +27,9 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# 최상단 스크롤 기준점
+st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
+
 st.markdown("""
 <style>
 :root{
@@ -2243,30 +2246,35 @@ body.answering .block-container {
 if not chat_started:
     st.markdown("""
     <style>
-      /* 첫 질문 전엔 우측 패널만 숨김 */
+      /* 첫 질문 전엔 우측 패널만 숨김 (레이아웃은 전역 CSS 그대로) */
       #search-flyout{ display:none !important; }
-
-      /* 위쪽 여백 살짝만 주고(선택), 히어로는 문서 흐름 그대로 */
+      /* 필요하면 약간의 상단 여백만 */
       .block-container{ padding-top: 8px !important; }
-      .center-hero{ margin-top: 16px !important; }  /* 필요 없으면 삭제 */
     </style>
     <script>
     (function(){
-      /* 프리챗 첫 렌더에서 자동 포커스/스크롤로 인해 하단에 고정된 것처럼 보이는 현상 방지 */
-      const KEY = "prechatScrolledTop";
-      if(!sessionStorage.getItem(KEY)){
-        sessionStorage.setItem(KEY, "1");
-        /* 바로 맨 위로 올림 */
-        window.scrollTo({top: 0, left: 0, behavior: "auto"});
-        /* 혹시 포커스가 내려가면 다시 한 번 위로 */
-        setTimeout(()=>window.scrollTo(0,0), 0);
+      // 브라우저의 이전 스크롤 복원/포커스 스크롤을 무력화
+      try{ history.scrollRestoration = 'manual'; }catch(e){}
+      function up(){
+        var a = document.getElementById('__top_anchor__');
+        if(a && a.scrollIntoView) a.scrollIntoView({block:'start'});
+        window.scrollTo(0,0);
+        // 포커스가 내려가면 다시 위로
+        if(document.activeElement) document.activeElement.blur();
       }
+      // 즉시 + 짧은 기간 반복해서 위로 고정
+      up();
+      var n=0, id=setInterval(function(){ up(); if(++n>30) clearInterval(id); }, 50);
+      // DOM 변화/포커스 발생 시에도 다시 위로
+      document.addEventListener('focusin', up, true);
+      new MutationObserver(up).observe(document.body, {subtree:true, childList:true});
     })();
     </script>
     """, unsafe_allow_html=True)
 
     render_pre_chat_center()
     st.stop()
+
 
 
 # 🎯 대화 전에는 우측 패널 숨기고, 여백을 0으로 만들어 완전 중앙 정렬
