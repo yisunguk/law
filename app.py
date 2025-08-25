@@ -2282,7 +2282,7 @@ if not chat_started:
 # 3) 화면 분기
 if not chat_started:
     render_pre_chat_center()   # 중앙 히어로 + 중앙 업로더
-    None  # removed st.stop()
+    st.stop()
 else:
     # 🔧 대화 시작 후에는 첨부파일 박스를 렌더링하지 않음 (완전히 제거)
     # 스트리밍 중에는 업로더 숨김 (렌더 자체 생략)
@@ -2407,7 +2407,7 @@ def _current_q_and_answer():
 
 # 🔽 대화가 시작된 뒤에만 우측 패널 노출
 # ✅ 로딩(스트리밍) 중에는 패널을 렌더링하지 않음
-if not st.session_state.get("__answering__", False):
+if chat_started and not st.session_state.get("__answering__", False):
     q_for_panel, ans_for_panel = _current_q_and_answer()
     hints = extract_law_names_from_answer(ans_for_panel) if ans_for_panel else None
     render_search_flyout(q_for_panel or user_q, num_rows=8, hint_laws=hints, show_debug=SHOW_SEARCH_DEBUG)
@@ -2473,7 +2473,7 @@ if user_q:
         stream_box.empty()
     
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
-if not st.session_state.get("__answering__", False):
+if chat_started and not st.session_state.get("__answering__", False):
     st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
     submitted, typed_text, files = chatbar(
         placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
