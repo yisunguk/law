@@ -25,7 +25,7 @@ st.markdown("""
     --hero-top: 6px;            /* 헤드라인 상단 여백: 필요시 조정 */
     --flyout-top: var(--hero-top);  /* 우측 통합검색 상단과 동기화 */
   }
-  .global-hero{ position: fixed; top: var(--hero-top); left: 50%; transform: translateX(-50%); z-index: 100; max-width: var(--center-col, 1160px); width: calc(100vw - 48px); }
+  .global-hero{ position: fixed; top: var(--hero-top); left: var(--bc-left, 24px); width: var(--bc-w, calc(100vw - 48px)); z-index: 100; transform: none; }
   .global-hero h1{ margin-bottom: 10px !important; }
   /* 이전 방식 비활성화 */
   .hero-stick, .hero-in-chat{ display:none !important; }
@@ -33,26 +33,6 @@ st.markdown("""
   <style>
     .block-container{ padding-top: calc(var(--hero-top) + var(--hero-h, 108px) + 16px) !important; }
   </style>
-""", unsafe_allow_html=True)
-
-
-st.markdown("""
-<script>
-(function(){
-  function setHeroHeight(){
-    try{
-      var el = document.querySelector('.global-hero');
-      if(!el) return;
-      var h = Math.round(el.getBoundingClientRect().height || 0);
-      if(h>0){ document.documentElement.style.setProperty('--hero-h', h + 'px'); }
-    }catch(e){}
-  }
-  setHeroHeight();
-  window.addEventListener('resize', setHeroHeight);
-  // rerun-safe: observe changes in body to recompute once elements mount
-  new MutationObserver(function(m){ setHeroHeight(); }).observe(document.body, {subtree:true, childList:true});
-})();
-</script>
 """, unsafe_allow_html=True)
 
 st.markdown("""
@@ -145,19 +125,30 @@ st.markdown("""
   --right-rail: calc(var(--flyout-width, 0px) + var(--flyout-gap, 0px));
 }
 </style>
+
 <script>
 (function(){
-  function setLeftRail(){
-    const sb = window.parent.document.querySelector('[data-testid="stSidebar"]');
-    if(!sb) return;
-    const w = Math.round(sb.getBoundingClientRect().width || 300);
-    document.documentElement.style.setProperty('--left-rail', w + 'px');
+  function syncHeroMetrics(){
+    try{
+      var hero = document.querySelector('.global-hero');
+      var bc = document.querySelector('.block-container');
+      if (bc){
+        var r = bc.getBoundingClientRect();
+        document.documentElement.style.setProperty('--bc-left', r.left + 'px');
+        document.documentElement.style.setProperty('--bc-w', r.width + 'px');
+      }
+      if(hero){
+        var h = Math.round(hero.getBoundingClientRect().height || 0);
+        if(h>0) document.documentElement.style.setProperty('--hero-h', h + 'px');
+      }
+    }catch(e){}
   }
-  setLeftRail();
-  window.addEventListener('resize', setLeftRail);
-  new MutationObserver(setLeftRail).observe(window.parent.document.body, {subtree:true, childList:true, attributes:true});
+  syncHeroMetrics();
+  addEventListener('resize', syncHeroMetrics);
+  new MutationObserver(syncHeroMetrics).observe(document.body, {subtree:true, childList:true, attributes:true});
 })();
 </script>
+
 """, unsafe_allow_html=True)
 
 
@@ -2609,7 +2600,7 @@ st.markdown("""
     #search-flyout{
       position: fixed !important;                 /* ← A) 화면 고정 */
       /* position: sticky !important;             /* ← B) 따라오지 않게: 이 줄로 교체 */
-      top: calc(var(--hero-top)) !important;   /* JS가 한 번 계산해 넣음 */
+      top: var(--hero-top) !important;   /* JS가 한 번 계산해 넣음 */
       right: 24px !important;
       left: auto !important; bottom: auto !important;
 
@@ -2711,7 +2702,9 @@ for i, m in enumerate(st.session_state.messages):
         if role == "assistant" and not content.strip():
             continue  # ✅ 내용이 비면 말풍선 자체를 만들지 않음
         # If this is the latest user bubble, show the shared hero just above it
-        
+        if (role == "user") and (st.session_state.get('_latest_user_index') == i):
+            st.markdown('<div class="hero-in-chat">' + HERO_HTML + '</div>', unsafe_allow_html=True)
+
 
         with st.chat_message(role):
             if role == "assistant":
