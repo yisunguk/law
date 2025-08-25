@@ -15,6 +15,18 @@ HERO_HTML = '''
 </p>
 '''
 
+
+
+st.markdown("""
+<style>
+  :root{ --ans-nudge: 0px; }
+  .hero-stick{ position: sticky; top: var(--flyout-top, 12px); z-index: 5; margin: 0 0 12px; }
+  .hero-stick h1{ margin-bottom: 10px !important; }
+  /* hide previous bubble-anchored hero if present */
+  .hero-in-chat{ display:none !important; }
+</style>
+""", unsafe_allow_html=True)
+
 # --- per-turn nonce ledger (prevents double appends)
 st.session_state.setdefault('_nonce_done', {})
 # --- cache helpers: suggestions shouldn't jitter on reruns ---
@@ -2625,7 +2637,14 @@ st.markdown("""
 
 with st.container():
     st.session_state['_prev_assistant_txt'] = ''  # reset per rerun
-    for i, m in enumerate(st.session_state.messages):
+
+# --- Anchor used to align with right flyout (for consistent top spacing) ---
+st.markdown('<div id="ans-anchor"></div>', unsafe_allow_html=True)
+
+# --- Sticky hero at the top of the chat area (stays aligned with flyout) ---
+st.markdown('<div class="hero-stick">' + HERO_HTML + '</div>', unsafe_allow_html=True)
+
+for i, m in enumerate(st.session_state.messages):
         # --- Hero above the most recent user question (shows during loading & after) ---
         if '_latest_user_index' not in st.session_state:
             _msgs = st.session_state.get('messages', [])
