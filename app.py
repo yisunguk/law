@@ -2519,11 +2519,16 @@ if user_q:
 
     # ▶ 답변을 세션에 넣고 rerun
     if final_text.strip():
-        _append_message("assistant", final_text, law=collected_laws)
-        st.session_state["last_q"] = user_q
-        st.session_state.pop("_pending_user_q", None)
-        st.session_state.pop("_pending_user_nonce", None)
-        st.rerun()
+        ans_hash = __import__('hashlib').md5((final_text or '').encode('utf-8')).hexdigest()
+        if st.session_state.get('_last_ans_hash') == ans_hash:
+            pass  # duplicate answer detected; skip appending
+        else:
+            _append_message('assistant', final_text, law=collected_laws)
+            st.session_state['_last_ans_hash'] = ans_hash
+            st.session_state['last_q'] = user_q
+            st.session_state.pop('_pending_user_q', None)
+            st.session_state.pop('_pending_user_nonce', None)
+            st.rerun()
 
     # 프리뷰 컨테이너 비우기
     if stream_box is not None:
