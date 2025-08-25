@@ -2437,28 +2437,19 @@ st.markdown("""
 
 
 
-
 with st.container():
-    _prev_ai_txt = None  # ✅ 렌더링 단계에서 '연속된 동일 답변'은 건너뜀
+    _prev_assistant_txt = None  # UI dedup guard: skip immediate identical assistant bubbles
     for i, m in enumerate(st.session_state.messages):
         role = m.get("role")
         content = (m.get("content") or "")
         if role == "assistant" and not content.strip():
             continue  # ✅ 내용이 비면 말풍선 자체를 만들지 않음
 
-        # ✅ 직전 어시스턴트 말풍선과 텍스트가 완전히 같으면 렌더링 스킵(중복 출력 보호)
-        if role == "assistant":
-            try:
-                _norm_cur = _normalize_text(content)
-                _norm_prev = _normalize_text(_prev_ai_txt) if _prev_ai_txt is not None else None
-            except Exception:
-                _norm_cur = (content or "").strip()
-                _norm_prev = (_prev_ai_txt or "").strip() if _prev_ai_txt is not None else None
-            if _norm_prev is not None and _norm_cur == _norm_prev:
-                continue
-
         with st.chat_message(role):
             if role == "assistant":
+                if content.strip() == (_prev_assistant_txt or ""):
+                    continue  # skip immediate identical assistant message
+                _prev_assistant_txt = content.strip()
                 render_bubble_with_copy(content, key=f"past-{i}")
                 if m.get("law"):
                     with st.expander("📋 이 턴에서 참고한 법령 요약"):
@@ -2469,9 +2460,14 @@ with st.container():
             else:
                 st.markdown(content)
 
-        if role == "assistant":
-            _prev_ai_txt = content
-get("content",""), (last_a or {}).get("content","")
+# ✅ 메시지 루프 바로 아래(이미 _inject_right_rail_css() 다음 추천) — 항상 호출
+def _current_q_and_answer():
+    msgs = st.session_state.get("messages", []) or []
+    last_q = next((m for m in reversed(msgs) if isinstance(m, dict) and m.get("role")=="user" and (m.get("content") or "").strip()), None)
+    last_a = next((m for m in reversed(msgs) if isinstance(m, dict) and m.get("role")=="assistant" and (m.get("content") or "").strip()), None)
+    q_txt = last_q.get("content", "") if isinstance(last_q, dict) else ""
+    a_txt = last_a.get("content", "") if isinstance(last_a, dict) else ""
+    return q_txt, a_txt
 
 # 🔽 대화가 시작된 뒤에만 우측 패널 노출
 # ✅ 로딩(스트리밍) 중에는 패널을 렌더링하지 않음
@@ -2484,11 +2480,10 @@ if chat_started and not st.session_state.get("__answering__", False):
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
 # ===============================
 if user_q:
-    if client and AZURE:
-        # 프리뷰/버퍼 초기화
-        stream_box = st.empty()
-        full_text, buffer, collected_laws = "", "", []
-        final_text = ""   # NameError 방지
+    # 프리뷰/버퍼 초기화 (클라우드/로컬 모두 공통)
+    stream_box = st.empty()
+    full_text, buffer, collected_laws = "", "", []
+    final_text = ""   # NameError 방지
 
     try:
         stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
@@ -2555,4 +2550,3 @@ if chat_started and not st.session_state.get("__answering__", False):
             st.session_state["_pending_user_nonce"] = time.time_ns()
         st.session_state["_clear_input"] = True
         st.rerun()
-
