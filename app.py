@@ -32,6 +32,12 @@ st.set_page_config(
 # 최상단 스크롤 기준점
 st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
 
+
+st.markdown("""
+<style>
+  :root{ --ans-nudge: 0px; }  /* 답변-우측패널 정렬용 미세조정 값 (음수면 위로) */
+</style>
+""", unsafe_allow_html=True)
 st.markdown("""
 <style>
 :root{
