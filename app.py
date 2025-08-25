@@ -8,7 +8,7 @@ import streamlit as st
 st.markdown("""
 <style>
   :root{
-    --center-nudge: -32px;   /* 음수면 전체 중앙 컬럼이 위로, 양수면 아래로 이동 */
+    --center-nudge: -64px;   /* 음수면 전체 중앙 컬럼이 위로, 양수면 아래로 이동 */
   }
   .chat-root{ margin-top: var(--center-nudge); }
   @media (max-width: 992px){
