@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import streamlit as st
 
-# --- per-turn nonce ledger (prevents double appends)
-st.session_state.setdefault('_nonce_done', {})
 # --- cache helpers: suggestions shouldn't jitter on reruns ---
 def cached_suggest_for_tab(tab_key: str):
     import streamlit as st
@@ -2207,8 +2205,8 @@ with st.sidebar:
 # 1) pending → messages 먼저 옮김
 user_q = _push_user_from_pending()
 
-# capture the nonce associated with this pending input (if any)
-st.session_state['current_turn_nonce'] = st.session_state.get('_pending_user_nonce')
+if user_q:
+    st.session_state['_turn_finalized'] = False
 # === 지금 턴이 '답변을 생성하는 런'인지 여부 (스트리밍 중 표시/숨김에 사용)
 ANSWERING = bool(user_q)
 st.session_state["__answering__"] = ANSWERING
@@ -2522,21 +2520,14 @@ if user_q:
         final_text = apply_final_postprocess(full_text, collected_laws)
 
     # ▶ 답변을 세션에 넣고 rerun
-    if final_text.strip():
-        # --- per-turn nonce guard: allow only one assistant append per user turn ---
-        _nonce = st.session_state.get('current_turn_nonce') or st.session_state.get('_pending_user_nonce')
-        _done = st.session_state.get('_nonce_done', {})
-        if _nonce and _done.get(_nonce):
-            pass  # already appended for this user turn
-        else:
-            _append_message('assistant', final_text, law=collected_laws)
-            if _nonce:
-                _done[_nonce] = True
-                st.session_state['_nonce_done'] = _done
-            st.session_state['last_q'] = user_q
-            st.session_state.pop('_pending_user_q', None)
-            st.session_state.pop('_pending_user_nonce', None)
-            st.rerun()
+    # --- finalize-once per turn guard ---
+    if final_text.strip() and not st.session_state.get('_turn_finalized', False):
+        _append_message('assistant', final_text, law=collected_laws)
+        st.session_state['_turn_finalized'] = True
+        st.session_state['last_q'] = user_q
+        st.session_state.pop('_pending_user_q', None)
+        st.session_state.pop('_pending_user_nonce', None)
+        st.rerun()
 
     # 프리뷰 컨테이너 비우기 이후 원래 코드 계속...
 
