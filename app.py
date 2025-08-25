@@ -35,7 +35,7 @@ st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
 
 st.markdown("""
 <style>
-  :root{ --ans-nudge: 0px; }  /* 답변-우측패널 정렬용 미세조정 값 (음수면 위로) */
+  :root{ --ans-nudge: 0px; }
 </style>
 """, unsafe_allow_html=True)
 st.markdown("""
@@ -234,6 +234,33 @@ from external_content import extract_first_url
 from typing import Iterable, List
 
 import hashlib
+
+
+# --- Utilities: de-duplicate repeated paragraphs/halves ---
+def _dedupe_repeats(txt: str) -> str:
+    if not txt:
+        return txt
+    n = len(txt)
+    # Heuristic 1: if halves overlap (common duplication pattern)
+    if n > 600:
+        half = n // 2
+        a, b = txt[:half].strip(), txt[half:].strip()
+        if a and b and (a == b or a.startswith(b[:200]) or b.startswith(a[:200])):
+            return a if len(a) >= len(b) else b
+    # Heuristic 2: paragraph-level dedupe while preserving order
+    parts = re.split(r"\n\s*\n", txt)
+    seen = set()
+    out_parts = []
+    for p in parts:
+        key = p.strip()
+        norm = re.sub(r"\s+", " ", key).strip().lower()
+        if norm and norm in seen:
+            continue
+        if norm:
+            seen.add(norm)
+        out_parts.append(p)
+    return "\n\n".join(out_parts)
+
 
 def _hash_text(s: str) -> str:
     return hashlib.md5((s or "").encode("utf-8")).hexdigest()
@@ -592,6 +619,7 @@ def _push_user_from_pending() -> str | None:
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     })
     st.session_state["_last_user_nonce"] = nonce
+    st.session_state["current_turn_nonce"] = nonce  # ✅ 이 턴의 nonce 확정
     return q
 
 def render_pre_chat_center():
@@ -2214,7 +2242,6 @@ with st.sidebar:
 user_q = _push_user_from_pending()
 
 # capture the nonce associated with this pending input (if any)
-st.session_state['current_turn_nonce'] = st.session_state.get('_pending_user_nonce')
 # === 지금 턴이 '답변을 생성하는 런'인지 여부 (스트리밍 중 표시/숨김에 사용)
 ANSWERING = bool(user_q)
 st.session_state["__answering__"] = ANSWERING
@@ -2439,16 +2466,7 @@ st.markdown("""
 
 
 with st.container():
-    msgs = st.session_state.get("messages", [])
-    last_ass_idx = -1
-    for _i, _m in enumerate(msgs):
-        if isinstance(_m, dict) and _m.get('role')=='assistant' and (_m.get('content') or '').strip():
-            last_ass_idx = _i
-
-    for i, m in enumerate(msgs):
-        if i == last_ass_idx:
-            st.markdown('<div id="ans-anchor"></div>', unsafe_allow_html=True)
-
+    for i, m in enumerate(st.session_state.messages):
         # --- UI dedup guard: skip if same assistant content as previous ---
         if isinstance(m, dict) and m.get('role')=='assistant':
             _t = (m.get('content') or '').strip()
@@ -2490,40 +2508,34 @@ if chat_started and not st.session_state.get("__answering__", False):
 
 # ===============================
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
-# ===============================
+# ===============================\n
 if user_q:
-    st.markdown('<div id="ans-anchor"></div>', unsafe_allow_html=True)  # anchor for left answer start
+
+    st.markdown('<div id="ans-anchor"></div>', unsafe_allow_html=True)
+
+    # --- streaming aggregator v2: keep deltas for preview, but FINAL wins ---
+    stream_box = None
+    deltas_only = ""
+    final_payload = ""
+    collected_laws = []
 
     if client and AZURE:
-        # 프리뷰/버퍼 초기화
         stream_box = st.empty()
-        full_text, buffer, collected_laws = "", "", []
-        final_text = ""   # NameError 방지
 
     try:
-        stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
+        if stream_box is not None:
+            stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
 
         for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
             if kind == "delta":
-                buffer += (payload or "")
-                if len(buffer) >= 200:
-                    full_text += buffer
-                    buffer = ""
-                    if SHOW_STREAM_PREVIEW and stream_box is not None:
-                        stream_box.markdown(_normalize_text(full_text[-1500:]))
-
-            elif kind == "final":
-                if buffer:
-                    full_text += buffer
-                    buffer = ""
                 if payload:
-                    full_text += payload
+                    deltas_only += payload
+                    if SHOW_STREAM_PREVIEW and stream_box is not None:
+                        stream_box.markdown(_normalize_text(deltas_only[-1500:]))
+            elif kind == "final":
+                final_payload  = (payload or "")
                 collected_laws = law_list or []
                 break
-
-        # 루프 종료 후 남은 버퍼 반영
-        if buffer:
-            full_text += buffer
 
     except Exception as e:
         # 예외 시 폴백
@@ -2531,21 +2543,27 @@ if user_q:
         collected_laws = laws
         law_ctx = format_law_context(laws)
         title = "법률 자문 메모"
-        full_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
-        final_text = apply_final_postprocess(full_text, collected_laws)
+        base_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
+    else:
+        # 정상 경로: final이 있으면 final, 없으면 delta 누적 사용
+        base_text = (final_payload.strip() or deltas_only)
 
-    # --- ✅ 정상 경로 후처리: 항상 실행되도록 보장 ---
-    if not final_text.strip():
-        final_text = apply_final_postprocess(full_text, collected_laws)
+    # --- Postprocess & de-dup ---
+    final_text = apply_final_postprocess(base_text, collected_laws)
+    final_text = _dedupe_repeats(final_text)
 
-    # ▶ 답변을 세션에 넣고 rerun
+    # --- seatbelt: skip if same answer already stored this turn ---
+    _ans_hash = _hash_text(final_text)
+    if st.session_state.get('_last_ans_hash') == _ans_hash:
+        final_text = ""
+    else:
+        st.session_state['_last_ans_hash'] = _ans_hash
+
     if final_text.strip():
         # --- per-turn nonce guard: allow only one assistant append per user turn ---
         _nonce = st.session_state.get('current_turn_nonce') or st.session_state.get('_pending_user_nonce')
         _done = st.session_state.get('_nonce_done', {})
-        if _nonce and _done.get(_nonce):
-            pass  # already appended for this user turn
-        else:
+        if not (_nonce and _done.get(_nonce)):
             _append_message('assistant', final_text, law=collected_laws)
             if _nonce:
                 _done[_nonce] = True
@@ -2555,20 +2573,21 @@ if user_q:
             st.session_state.pop('_pending_user_nonce', None)
             st.rerun()
 
-    # 프리뷰 컨테이너 비우기 이후 원래 코드 계속...
-
     # 프리뷰 컨테이너 비우기
     if stream_box is not None:
-        stream_box.empty()
-    
+        try:
+            stream_box.empty()
+        except Exception:
+            pass
+
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
 if chat_started and not st.session_state.get("__answering__", False):
-    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
+    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)
     submitted, typed_text, files = chatbar(
         placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
         accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
     )
-    st.markdown('</div>', unsafe_allow_html=True)                     # ← 래퍼 닫기
+    st.markdown('</div>', unsafe_allow_html=True)
     if submitted:
         text = (typed_text or "").strip()
         if text:
@@ -2577,9 +2596,29 @@ if chat_started and not st.session_state.get("__answering__", False):
         st.session_state["_clear_input"] = True
         st.rerun()
 
+# ▼▼▼ 여기 ‘바로 아래’에 추가 (좌측 본문/컬럼 안, 메시지 출력 직전)
+if chat_started:
+    st.markdown("""
+    <style>
+      /* 우측 패널 top 변수(있으면) 따라가고, 없으면 88px */
+      #answer-spacer{ height: var(--content-top, var(--flyout-top, 88px)); }
+      @media (max-width:1279px){ #answer-spacer{ height:0 } }
+    </style>
+    <div id="answer-spacer"></div>
+    """, unsafe_allow_html=True)
 
+# 기존 메시지 렌더링
+for m in st.session_state.get("messages", []):
+    render_message(m)   # ← 기존 함수 그대로
 
-# --- ans-anchor align script (non-invasive; runs after load & on DOM changes) ---
+# --- nudge override (safe to edit) ---
+st.markdown("""
+<style>
+  :root{ --ans-nudge: -18px !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# --- ans-anchor align script (with nudge support) ---
 st.markdown("""
 <script>
 (function(){
@@ -2587,13 +2626,14 @@ st.markdown("""
     var a=document.querySelector('#ans-anchor');
     if(!a) return;
     var r=a.getBoundingClientRect();
-    var top=Math.max(12, Math.round(r.top));
+    var n=parseInt(getComputedStyle(document.documentElement).getPropertyValue('--ans-nudge'))||0;
+    var top=Math.max(12, Math.round(r.top + n));
     document.documentElement.style.setProperty('--flyout-top',  top+'px');
     document.documentElement.style.setProperty('--content-top', top+'px');
   }
   new MutationObserver(align).observe(document.body,{childList:true,subtree:true});
-  window.addEventListener('load', align, {once:false});
-  window.addEventListener('resize', align, {passive:true});
+  window.addEventListener('load', align);
+  window.addEventListener('resize', align);
   setTimeout(align, 0);
 })();
 </script>
