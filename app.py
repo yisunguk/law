@@ -126,7 +126,7 @@ def cached_suggest_for_law(law_name: str):
     return store[law_name]
 
 st.set_page_config(
-    page_title="법제처 법무 상담사",
+    page_title="인공지능 법률상담사",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -424,6 +424,26 @@ def cached_suggest_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
 def inject_sticky_layout_css(mode: str = "wide"):
+    st.markdown("""
+<style>
+  /* 프리-챗(대화 시작 전)에는 헤드라인/업로더/입력창을 '상단'으로 배치 */
+  body:not(.chat-started) .center-hero{
+    display: block !important;
+    min-height: auto !important;
+    margin-top: 12px !important;     /* 필요하면 0~24px 사이로 조절 */
+  }
+  body:not(.chat-started) .block-container{
+    padding-top: 12px !important;     /* 상단 여백 최소화 */
+    padding-bottom: 0 !important;     /* 불필요한 하단 여백 제거 */
+  }
+  /* 혹시 남아있는 중앙정렬 흔적 제거 */
+  body:not(.chat-started) .center-hero { 
+    align-items: stretch !important; 
+    justify-content: flex-start !important; 
+  }
+</style>
+""", unsafe_allow_html=True) 
+    
     PRESETS = {
         "wide":   {"center": "1160px", "bubble_max": "760px"},
         "narrow": {"center": "880px",  "bubble_max": "640px"},
@@ -2607,16 +2627,24 @@ else:
 if not chat_started:
     st.markdown("""
     <style>
-      /* hide right rail before first message */
+      /* 프리-챗(첫 화면)에서만 우측 패널 숨김 */
       #search-flyout { display: none !important; }
-      /* remove right gutter so hero sits dead-center */
-      @media (min-width:1280px) { .block-container { padding-right: 0 !important; } }
-      /* bottom padding 크게 줄여서 화면 정중앙에 오도록 */
-      .block-container { padding-bottom: 64px !important; }
-      /* hero 높이 살짝 줄여 위/아래 균형 */
-      .center-hero { min-height: calc(100vh - 160px) !important; }
+
+      /* 프리-챗을 '상단'에 배치 */
+      .center-hero{
+        display: block !important;
+        min-height: auto !important;
+        margin-top: 12px !important;
+        align-items: stretch !important;
+        justify-content: flex-start !important;
+      }
+      .block-container{
+        padding-top: 12px !important;
+        padding-bottom: 0 !important;
+      }
     </style>
     """, unsafe_allow_html=True)
+
 
 # 3) 화면 분기
 if not chat_started:
