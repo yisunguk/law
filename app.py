@@ -31,17 +31,25 @@ HERO_HTML = '''
 st.markdown("""
 <style>
   :root{
-    --hero-top: 6px;            /* 헤드라인 상단 여백: 필요시 조정 */
-    --flyout-top: var(--hero-top);  /* 우측 통합검색 상단과 동기화 */
+    --hero-top: 6px;
+    --flyout-top: var(--hero-top);
   }
-  .global-hero{ position: sticky; top: var(--hero-top); z-index: 10; margin: 0 0 12px; }
+
+  /* 채팅 시작 후에만 스티키 + 상단 여백 반영 */
+  body.chat-started .global-hero{
+    position: sticky; top: var(--hero-top); z-index: 10; margin: 0 0 12px;
+  }
+  body.chat-started .block-container{
+    padding-top: calc(var(--hero-top) + var(--hero-h, 108px) + 16px) !important;
+  }
+
+  /* 프리-챗은 상단 붙이기 */
+  body:not(.chat-started) .global-hero{ position: static; margin: 6px 0 12px; }
+  body:not(.chat-started) .block-container{ padding-top: 12px !important; }
+
   .global-hero h1{ margin-bottom: 10px !important; }
-  /* 이전 방식 비활성화 */
   .hero-stick, .hero-in-chat{ display:none !important; }
 </style>
-  <style>
-    .block-container{ padding-top: calc(var(--hero-top) + var(--hero-h, 108px) + 16px) !important; }
-  </style>
 """, unsafe_allow_html=True)
 st.markdown('''
 <script>
@@ -126,7 +134,7 @@ def cached_suggest_for_law(law_name: str):
     return store[law_name]
 
 st.set_page_config(
-    page_title="인공지능 법률상담사",
+    page_title="법제처 법무 상담사",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -424,26 +432,6 @@ def cached_suggest_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
 def inject_sticky_layout_css(mode: str = "wide"):
-    st.markdown("""
-<style>
-  /* 프리-챗(대화 시작 전)에는 헤드라인/업로더/입력창을 '상단'으로 배치 */
-  body:not(.chat-started) .center-hero{
-    display: block !important;
-    min-height: auto !important;
-    margin-top: 12px !important;     /* 필요하면 0~24px 사이로 조절 */
-  }
-  body:not(.chat-started) .block-container{
-    padding-top: 12px !important;     /* 상단 여백 최소화 */
-    padding-bottom: 0 !important;     /* 불필요한 하단 여백 제거 */
-  }
-  /* 혹시 남아있는 중앙정렬 흔적 제거 */
-  body:not(.chat-started) .center-hero { 
-    align-items: stretch !important; 
-    justify-content: flex-start !important; 
-  }
-</style>
-""", unsafe_allow_html=True) 
-    
     PRESETS = {
         "wide":   {"center": "1160px", "bubble_max": "760px"},
         "narrow": {"center": "880px",  "bubble_max": "640px"},
@@ -2627,16 +2615,14 @@ else:
 if not chat_started:
     st.markdown("""
     <style>
-      /* 프리-챗(첫 화면)에서만 우측 패널 숨김 */
+      /* pre-chat: hide right rail and force top alignment */
       #search-flyout { display: none !important; }
-
-      /* 프리-챗을 '상단'에 배치 */
       .center-hero{
-        display: block !important;
-        min-height: auto !important;
-        margin-top: 12px !important;
+        display:block !important;
+        min-height:auto !important;
+        margin-top:12px !important;
         align-items: stretch !important;
-        justify-content: flex-start !important;
+        justify-content:flex-start !important;
       }
       .block-container{
         padding-top: 12px !important;
@@ -2644,7 +2630,6 @@ if not chat_started:
       }
     </style>
     """, unsafe_allow_html=True)
-
 
 # 3) 화면 분기
 if not chat_started:
@@ -2756,7 +2741,8 @@ st.markdown('<div id="ans-anchor"></div>', unsafe_allow_html=True)
 st.markdown('<div class="hero-stick">' + HERO_HTML + '</div>', unsafe_allow_html=True)
 
 # --- Global sticky hero at the very top ---
-st.markdown('<div class="global-hero">' + HERO_HTML + '</div>', unsafe_allow_html=True)
+if chat_started:
+    st.markdown('<div class="global-hero">' + HERO_HTML + '</div>', unsafe_allow_html=True)
 
 for i, m in enumerate(st.session_state.messages):
         # --- Hero above the most recent user question (shows during loading & after) ---
