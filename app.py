@@ -229,6 +229,33 @@ from typing import Iterable, List
 
 import hashlib
 
+
+# --- Utilities: de-duplicate repeated paragraphs/halves ---
+def _dedupe_repeats(txt: str) -> str:
+    if not txt:
+        return txt
+    n = len(txt)
+    # Heuristic 1: if halves overlap (common duplication pattern)
+    if n > 600:
+        half = n // 2
+        a, b = txt[:half].strip(), txt[half:].strip()
+        if a and b and (a == b or a.startswith(b[:200]) or b.startswith(a[:200])):
+            return a if len(a) >= len(b) else b
+    # Heuristic 2: paragraph-level dedupe while preserving order
+    parts = re.split(r"\n\s*\n", txt)
+    seen = set()
+    out_parts = []
+    for p in parts:
+        key = p.strip()
+        norm = re.sub(r"\s+", " ", key).strip().lower()
+        if norm and norm in seen:
+            continue
+        if norm:
+            seen.add(norm)
+        out_parts.append(p)
+    return "\n\n".join(out_parts)
+
+
 def _hash_text(s: str) -> str:
     return hashlib.md5((s or "").encode("utf-8")).hexdigest()
 
@@ -2477,6 +2504,13 @@ if chat_started and not st.session_state.get("__answering__", False):
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
 # ===============================
 if user_q:
+    # --- safe defaults for streaming vars (used outside condition) ---
+    stream_box = None
+    full_text = ''
+    buffer = ''
+    final_text = ''
+    collected_laws = []
+
     if client and AZURE:
         # 프리뷰/버퍼 초기화
         stream_box = st.empty()
@@ -2484,7 +2518,8 @@ if user_q:
         final_text = ""   # NameError 방지
 
     try:
-        stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
+        if stream_box is not None:
+            stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
 
         for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
             if kind == "delta":
@@ -2494,8 +2529,8 @@ if user_q:
                     buffer = ""
                     if SHOW_STREAM_PREVIEW and stream_box is not None:
                         stream_box.markdown(_normalize_text(full_text[-1500:]))
-
             elif kind == "final":
+                # flush last buffer then set final
                 if buffer:
                     full_text += buffer
                     buffer = ""
@@ -2518,25 +2553,25 @@ if user_q:
         title = "법률 자문 메모"
         full_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
         final_text = apply_final_postprocess(full_text, collected_laws)
+        final_text = _dedupe_repeats(final_text)
 
     # --- ✅ 정상 경로 후처리: 항상 실행되도록 보장 ---
     if not final_text.strip():
         final_text = apply_final_postprocess(full_text, collected_laws)
+        final_text = _dedupe_repeats(final_text)
 
-    # ▶ 답변을 세션에 넣고 rerun
-        # --- seatbelt: skip if same answer already stored this turn ---
+    # --- seatbelt: skip if same answer already stored this turn ---
     _ans_hash = _hash_text(final_text)
     if st.session_state.get('_last_ans_hash') == _ans_hash:
         final_text = ""
     else:
         st.session_state['_last_ans_hash'] = _ans_hash
-if final_text.strip():
+
+    if final_text.strip():
         # --- per-turn nonce guard: allow only one assistant append per user turn ---
         _nonce = st.session_state.get('current_turn_nonce') or st.session_state.get('_pending_user_nonce')
         _done = st.session_state.get('_nonce_done', {})
-        if _nonce and _done.get(_nonce):
-            pass  # already appended for this user turn
-        else:
+        if not (_nonce and _done.get(_nonce)):
             _append_message('assistant', final_text, law=collected_laws)
             if _nonce:
                 _done[_nonce] = True
@@ -2546,12 +2581,12 @@ if final_text.strip():
             st.session_state.pop('_pending_user_nonce', None)
             st.rerun()
 
-    # 프리뷰 컨테이너 비우기 이후 원래 코드 계속...
-
     # 프리뷰 컨테이너 비우기
-if stream_box is not None:
-    stream_box.empty()
-    
+    if stream_box is not None:
+        try:
+            stream_box.empty()
+        except Exception:
+            pass
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
 if chat_started and not st.session_state.get("__answering__", False):
     st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
