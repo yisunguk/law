@@ -2243,13 +2243,31 @@ body.answering .block-container {
 if not chat_started:
     st.markdown("""
     <style>
-      /* 첫 질문 전엔 우측 패널만 숨김. 나머지 레이아웃은 전역 CSS와 동일 */
+      /* 첫 질문 전엔 우측 패널만 숨김 */
       #search-flyout{ display:none !important; }
+
+      /* 위쪽 여백 살짝만 주고(선택), 히어로는 문서 흐름 그대로 */
+      .block-container{ padding-top: 8px !important; }
+      .center-hero{ margin-top: 16px !important; }  /* 필요 없으면 삭제 */
     </style>
+    <script>
+    (function(){
+      /* 프리챗 첫 렌더에서 자동 포커스/스크롤로 인해 하단에 고정된 것처럼 보이는 현상 방지 */
+      const KEY = "prechatScrolledTop";
+      if(!sessionStorage.getItem(KEY)){
+        sessionStorage.setItem(KEY, "1");
+        /* 바로 맨 위로 올림 */
+        window.scrollTo({top: 0, left: 0, behavior: "auto"});
+        /* 혹시 포커스가 내려가면 다시 한 번 위로 */
+        setTimeout(()=>window.scrollTo(0,0), 0);
+      }
+    })();
+    </script>
     """, unsafe_allow_html=True)
 
     render_pre_chat_center()
     st.stop()
+
 
 # 🎯 대화 전에는 우측 패널 숨기고, 여백을 0으로 만들어 완전 중앙 정렬
 if not chat_started:
