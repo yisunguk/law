@@ -2246,35 +2246,44 @@ body.answering .block-container {
 if not chat_started:
     st.markdown("""
     <style>
-      /* 첫 질문 전엔 우측 패널만 숨김 (레이아웃은 전역 CSS 그대로) */
+      /* 우측 패널만 숨김 */
       #search-flyout{ display:none !important; }
-      /* 필요하면 약간의 상단 여백만 */
-      .block-container{ padding-top: 8px !important; }
+
+      /* ⛳️ 프리챗: 스크롤 생기지 않게 잠그고 상단 고정 */
+      html, body{ height:100%; overflow-y:hidden !important; }
+      .main > div:first-child{ height:100vh !important; }              /* Streamlit 루트 */
+      .block-container{
+        min-height:100vh !important;   /* 화면만큼만 */
+        padding-top:12px !important;
+        padding-bottom:0 !important;   /* 바닥 여백 제거 */
+        margin-left:auto !important; margin-right:auto !important;
+      }
     </style>
     <script>
     (function(){
-      // 브라우저의 이전 스크롤 복원/포커스 스크롤을 무력화
-      try{ history.scrollRestoration = 'manual'; }catch(e){}
-      function up(){
-        var a = document.getElementById('__top_anchor__');
-        if(a && a.scrollIntoView) a.scrollIntoView({block:'start'});
-        window.scrollTo(0,0);
-        // 포커스가 내려가면 다시 위로
-        if(document.activeElement) document.activeElement.blur();
-      }
-      // 즉시 + 짧은 기간 반복해서 위로 고정
-      up();
-      var n=0, id=setInterval(function(){ up(); if(++n>30) clearInterval(id); }, 50);
-      // DOM 변화/포커스 발생 시에도 다시 위로
+      try{ history.scrollRestoration='manual'; }catch(e){}
+      const up=()=>{ window.scrollTo(0,0); if(document.activeElement) document.activeElement.blur(); };
+      up(); setTimeout(up,0); setTimeout(up,50);    // 자동 포커스 대비
       document.addEventListener('focusin', up, true);
       new MutationObserver(up).observe(document.body, {subtree:true, childList:true});
     })();
-    </script>
+    </script>            
+               
     """, unsafe_allow_html=True)
 
     render_pre_chat_center()
     st.stop()
+    
+else:
+    st.markdown("""
+    <style>
+      /* 📌 채팅 시작 후에는 정상 스크롤 */
+      html, body{ overflow-y:auto !important; }
+      .block-container{ min-height:auto !important; }
+    </style>
+    """, unsafe_allow_html=True)
 
+    # ... 기존 렌더링 계속
 
 
 # 🎯 대화 전에는 우측 패널 숨기고, 여백을 0으로 만들어 완전 중앙 정렬
