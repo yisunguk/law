@@ -614,6 +614,9 @@ def _push_user_from_pending() -> str | None:
     })
     st.session_state["_last_user_nonce"] = nonce
     st.session_state["current_turn_nonce"] = nonce  # ✅ 이 턴의 nonce 확정
+    # reset duplicate-answer guard for a NEW user turn
+    st.session_state.pop('_last_ans_hash', None)
+
     return q
 
 def render_pre_chat_center():
@@ -2460,6 +2463,7 @@ st.markdown("""
 
 
 with st.container():
+    st.session_state['_prev_assistant_txt'] = ''  # reset per rerun
     for i, m in enumerate(st.session_state.messages):
         # --- UI dedup guard: skip if same assistant content as previous ---
         if isinstance(m, dict) and m.get('role')=='assistant':
@@ -2571,47 +2575,16 @@ if user_q:
         except Exception:
             pass
 
-
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
 if chat_started and not st.session_state.get("__answering__", False):
     st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
-
-    # ▶ pre-chat과 동일한 폼 UI + JS Enter-to-send
-    with st.form("main_ask", clear_on_submit=True):
-        q = st.text_input(
-            "질문을 입력해 주세요...",
-            key="main_input",
-            placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
-        )
-        sent = st.form_submit_button("전송", use_container_width=True)
+    submitted, typed_text, files = chatbar(
+        placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
+        accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
+    )
     st.markdown('</div>', unsafe_allow_html=True)                     # ← 래퍼 닫기
-
-    # JS: Enter 입력 시 전송 버튼 클릭 (조합중 한글엔터 제외)
-    st.markdown("""
-        <script>
-        (function(){
-          const root = document.querySelector('#chatbar-fixed');
-          if(!root) return;
-          function wire(){
-            const input = root.querySelector('input[type="text"]');
-            const btn = root.querySelector('button');
-            if(!input || !btn){ requestAnimationFrame(wire); return; }
-            if(input.__wired) return; input.__wired = true;
-            input.addEventListener('keydown', function(e){
-              if(e.isComposing) return;
-              if(e.key === 'Enter'){
-                e.preventDefault();
-                btn.click();
-              }
-            });
-          }
-          wire();
-        })();
-        </script>
-        """, unsafe_allow_html=True)
-
-    if sent:
-        text = (q or "").strip()
+    if submitted:
+        text = (typed_text or "").strip()
         if text:
             st.session_state["_pending_user_q"] = text
             st.session_state["_pending_user_nonce"] = time.time_ns()
