@@ -3,92 +3,12 @@ from __future__ import annotations
 
 import streamlit as st
 
-# --- cache helpers: suggestions shouldn't jitter on reruns ---
-def cached_suggest_for_tab(tab_key: str):
-    import streamlit as st
-    store = st.session_state.setdefault("__tab_suggest__", {})
-    if tab_key not in store:
-        from modules import suggest_keywords_for_tab
-        store[tab_key] = cached_suggest_for_tab(tab_key)
-    return store[tab_key]
-
-def cached_suggest_for_law(law_name: str):
-    import streamlit as st
-    store = st.session_state.setdefault("__law_suggest__", {})
-    if law_name not in store:
-        from modules import suggest_keywords_for_law
-        store[law_name] = cached_suggest_for_law(law_name)
-    return store[law_name]
-
 st.set_page_config(
     page_title="법제처 법무 상담사",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-# 최상단 스크롤 기준점
-st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
-
-st.markdown("""
-<style>
-:root{
-  --center-col: 980px;   /* 중앙 전체 폭 */
-  --bubble-max: 760px;   /* 말풍선 최대 폭 */
-  --pad-x: 12px;         /* 좌우 여백 */
-}
-
-/* 본문(채팅 전/후 공통) 중앙 폭 고정 */
-.block-container{
-  max-width: var(--center-col) !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-  padding-left: var(--pad-x) !important;
-  padding-right: var(--pad-x) !important;
-}
-
-/* 업로더/폼/카드류도 같은 폭 */
-.block-container [data-testid="stFileUploader"],
-.block-container form,
-.block-container .stForm,
-.block-container .stMarkdown>div{
-  max-width: var(--center-col) !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-}
-
-/* 채팅 메시지 폭(답변 후) */
-[data-testid="stChatMessage"]{
-  max-width: var(--bubble-max) !important;
-  width: 100% !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<style>
-:root{
-  --left-rail: 300px;
-  --right-rail: calc(var(--flyout-width, 0px) + var(--flyout-gap, 0px));
-}
-</style>
-<script>
-(function(){
-  function setLeftRail(){
-    const sb = window.parent.document.querySelector('[data-testid="stSidebar"]');
-    if(!sb) return;
-    const w = Math.round(sb.getBoundingClientRect().width || 300);
-    document.documentElement.style.setProperty('--left-rail', w + 'px');
-  }
-  setLeftRail();
-  window.addEventListener('resize', setLeftRail);
-  new MutationObserver(setLeftRail).observe(window.parent.document.body, {subtree:true, childList:true, attributes:true});
-})();
-</script>
-""", unsafe_allow_html=True)
-
 
 # === [BOOTSTRAP] session keys (must be first) ===
 if "messages" not in st.session_state:
@@ -261,7 +181,7 @@ SUGGESTED_LAW_KEYWORDS = {
 }
 FALLBACK_LAW_KEYWORDS = ["정의", "목적", "벌칙"]
 
-def cached_suggest_for_law(law_name: str) -> list[str]:
+def suggest_keywords_for_law(law_name: str) -> list[str]:
     if not law_name:
         return FALLBACK_LAW_KEYWORDS
     if law_name in SUGGESTED_LAW_KEYWORDS:
@@ -281,7 +201,7 @@ SUGGESTED_TAB_KEYWORDS = {
     "cc":     ["위헌", "합헌", "각하", "침해", "기각"],
     "expc":   ["유권해석", "질의회신", "법령해석", "적용범위"],
 }
-def cached_suggest_for_tab(tab_kind: str) -> list[str]:
+def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
 def inject_sticky_layout_css(mode: str = "wide"):
@@ -1980,49 +1900,13 @@ with st.sidebar:
     st.header("🔗 링크 생성기 (무인증)")
     tabs = st.tabs(["법령", "행정규칙", "자치법규", "조약", "판례", "헌재", "해석례", "용어/별표"])
 
-    # persist/restore active sidebar tab across reruns
-    st.markdown("""
-<script>
-(function(){
-  const KEY = "left_sidebar_active_tab";
-  function labelOf(btn){ return (btn?.innerText || btn?.textContent || "").trim(); }
-  function restore(){
-    const want = sessionStorage.getItem(KEY);
-    if(!want) return false;
-    const btns = Array.from(window.parent.document.querySelectorAll('[data-testid="stSidebar"] [role="tablist"] button[role="tab"]'));
-    if(btns.length === 0) return false;
-    const match = btns.find(b => labelOf(b) === want);
-    if(!match) return false;
-    if(match.getAttribute('aria-selected') !== 'true'){ match.click(); }
-    return true;
-  }
-  function bind(){
-    const root = window.parent.document.querySelector('[data-testid="stSidebar"]');
-    if(!root) return;
-    // Save when user clicks a tab
-    root.addEventListener('click', (e)=>{
-      const b = e.target.closest('button[role="tab"]');
-      if(b){ sessionStorage.setItem(KEY, labelOf(b)); }
-    }, true);
-    // Keep trying to restore selection until ready
-    const tid = setInterval(()=>{ if(restore()) clearInterval(tid); }, 100);
-    setTimeout(()=>clearInterval(tid), 4000);
-    // Also restore when DOM changes (e.g., reruns)
-    new MutationObserver(()=>restore()).observe(root, {subtree:true, childList:true, attributes:true});
-  }
-  window.addEventListener('load', bind, {once:true});
-  setTimeout(bind, 0);
-})();
-</script>
-""", unsafe_allow_html=True)
-
     # 공통 추천 프리셋(모두 1개만 기본 선택되도록 kw_input + DEFAULT_KEYWORD 활용)
-    adm_suggest    = cached_suggest_for_tab("admrul")
-    ordin_suggest  = cached_suggest_for_tab("ordin")
-    trty_suggest   = cached_suggest_for_tab("trty")
-    case_suggest   = cached_suggest_for_tab("prec")
-    cc_suggest     = cached_suggest_for_tab("cc")
-    interp_suggest = cached_suggest_for_tab("expc")
+    adm_suggest    = suggest_keywords_for_tab("admrul")
+    ordin_suggest  = suggest_keywords_for_tab("ordin")
+    trty_suggest   = suggest_keywords_for_tab("trty")
+    case_suggest   = suggest_keywords_for_tab("prec")
+    cc_suggest     = suggest_keywords_for_tab("cc")
+    interp_suggest = suggest_keywords_for_tab("expc")
     term_suggest   = ["정의", "용어", "별표", "서식"]
 
     # ───────────────────────── 법령
@@ -2030,7 +1914,7 @@ with st.sidebar:
         law_name = st.text_input("법령명", value="민법", key="sb_law_name")
         # 법령명 기반 추천
         law_keys = kw_input("키워드(자동 추천)",
-                            cached_suggest_for_law(law_name),
+                            suggest_keywords_for_law(law_name),
                             key="sb_law_keys",
                             tab_name="법령")
 
@@ -2246,75 +2130,30 @@ body.answering .block-container {
 if not chat_started:
     st.markdown("""
     <style>
-      /* 프리챗: 우측 패널만 숨기고, 스크롤을 잠가 상단 고정 */
-      #search-flyout{ display:none !important; }
-      html, body{ height:100%; overflow-y:hidden !important; }
-      .main > div:first-child{ height:100vh !important; }
-      .block-container{ min-height:100vh !important; padding-top:12px !important; padding-bottom:0 !important; }
-      /* 전역 가운데 정렬 규칙이 있어도 프리챗에선 히어로를 '위에서부터' 배치 */
-      .center-hero{ min-height:auto !important; display:block !important; }
-    </style>
-    <script>
-    (function(){
-      try{ history.scrollRestoration='manual'; }catch(e){}
-      const up=()=>{ window.scrollTo(0,0); if(document.activeElement) document.activeElement.blur(); };
-      up(); setTimeout(up,0); setTimeout(up,50);
-      document.addEventListener('focusin', up, true);
-      new MutationObserver(up).observe(document.body, {subtree:true, childList:true});
-    })();
-    </script>
-    """, unsafe_allow_html=True)
-
-    st.markdown("""
-    <style>
-      /* 우측 패널만 숨김 */
+      /* 우측 패널 숨김 */
       #search-flyout{ display:none !important; }
 
-      /* ⛳️ 프리챗: 스크롤 생기지 않게 잠그고 상단 고정 */
-      html, body{ height:100%; overflow-y:hidden !important; }
-      .main > div:first-child{ height:100vh !important; }              /* Streamlit 루트 */
-      .block-container{
-        min-height:100vh !important;   /* 화면만큼만 */
-        padding-top:12px !important;
-        padding-bottom:0 !important;   /* 바닥 여백 제거 */
-        margin-left:auto !important; margin-right:auto !important;
+      /* 우측/하단 여백 제거 */
+      @media (min-width:1280px){ .block-container{ padding-right:0 !important; } }
+      .block-container{ padding-bottom:0 !important; }
+
+      /* 히어로를 뷰포트 절대 중앙에 고정 */
+      .center-hero{
+        position: fixed !important;
+        left: 50% !important; top: 50% !important;
+        transform: translate(-50%, -50%) !important;
+        width: var(--center-col); max-width: 92vw;
+        margin: 0 !important; padding: 0 !important;
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center;
+      }
+
+      /* 히어로 내부 위젯 폭 */
+      .center-hero .stFileUploader, .center-hero .stTextInput{
+        width: 720px; max-width: 92vw;
       }
     </style>
-    <script>
-    (function(){
-      try{ history.scrollRestoration='manual'; }catch(e){}
-      const up=()=>{ window.scrollTo(0,0); if(document.activeElement) document.activeElement.blur(); };
-      up(); setTimeout(up,0); setTimeout(up,50);    // 자동 포커스 대비
-      document.addEventListener('focusin', up, true);
-      new MutationObserver(up).observe(document.body, {subtree:true, childList:true});
-    })();
-    </script>            
-               
     """, unsafe_allow_html=True)
-
-    render_pre_chat_center()
-    st.stop()
-    
-else:
-    st.markdown("""
-    <style>
-      /* 채팅 시작 후: 스크롤 정상 복원 */
-      html, body{ overflow-y:auto !important; }
-      .main > div:first-child{ height:auto !important; }
-      .block-container{ min-height:auto !important; }
-    </style>
-    """, unsafe_allow_html=True)
-
-    st.markdown("""
-    <style>
-      /* 📌 채팅 시작 후에는 정상 스크롤 */
-      html, body{ overflow-y:auto !important; }
-      .block-container{ min-height:auto !important; }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # ... 기존 렌더링 계속
-
 
 # 🎯 대화 전에는 우측 패널 숨기고, 여백을 0으로 만들어 완전 중앙 정렬
 if not chat_started:
@@ -2518,11 +2357,10 @@ if user_q:
         st.session_state["last_q"] = user_q
         st.session_state.pop("_pending_user_q", None)
         st.session_state.pop("_pending_user_nonce", None)
-        st.rerun()
-
-    # 프리뷰 컨테이너 비우기
+        # clear preview before rerun
     if stream_box is not None:
         stream_box.empty()
+    st.rerun()
     
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
 if chat_started and not st.session_state.get("__answering__", False):
