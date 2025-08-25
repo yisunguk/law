@@ -614,6 +614,8 @@ def _push_user_from_pending() -> str | None:
     })
     st.session_state["_last_user_nonce"] = nonce
     st.session_state["current_turn_nonce"] = nonce  # ✅ 이 턴의 nonce 확정
+    # reset duplicate-answer guard for a NEW user turn
+    st.session_state.pop('_last_ans_hash', None)
     return q
 
 def render_pre_chat_center():
@@ -2460,7 +2462,8 @@ st.markdown("""
 
 
 with st.container():
-    st.session_state['_prev_assistant_txt'] = ''  # reset per rerun
+    # reset UI dedupe guard per rerun
+    st.session_state['_prev_assistant_txt'] = ''
     for i, m in enumerate(st.session_state.messages):
         # --- UI dedup guard: skip if same assistant content as previous ---
         if isinstance(m, dict) and m.get('role')=='assistant':
