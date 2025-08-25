@@ -607,6 +607,107 @@ def _push_user_from_pending() -> str | None:
         return None
     if nonce and st.session_state.get("_last_user_nonce") == nonce:
         return None
+
+    # === 첨부파일 처리: 업로드된 파일 텍스트를 질문 뒤에 부착 ===
+    try:
+        att_payload = st.session_state.pop("_pending_user_files", None)
+    except Exception:
+        att_payload = None
+
+    # 우선순위: 명시 payload > 포스트-챗 업로더 > 프리챗 업로더 > 하단 업로더
+    files_to_read = []
+    try:
+        if att_payload:
+            for it in att_payload:
+                name = it.get("name") or "uploaded"
+                data = it.get("data", b"")
+                mime = it.get("type") or ""
+                files_to_read.append(("__bytes__", name, data, mime))
+    except Exception:
+        pass
+    # 스트림릿 업로더에서 직접 읽기 (fallback)
+    for key in ("post_files", "first_files", "bottom_files"):
+        try:
+            for f in (st.session_state.get(key) or []):
+                files_to_read.append(("__widget__", getattr(f, "name", "uploaded"), f, getattr(f, "type", "")))
+        except Exception:
+            pass
+
+    def _try_extract(name, src, mime):
+        txt = ""
+        try:
+            # utils_extract 사용 우선
+            if name.lower().endswith(".pdf"):
+                try:
+                    txt = extract_text_from_pdf(src)
+                except Exception:
+                    import io
+                    try:
+                        data = src if isinstance(src, (bytes, bytearray)) else src.read()
+                        txt = extract_text_from_pdf(io.BytesIO(data))
+                    except Exception:
+                        txt = ""
+            elif name.lower().endswith(".docx"):
+                try:
+                    txt = extract_text_from_docx(src)
+                except Exception:
+                    import io
+                    try:
+                        data = src if isinstance(src, (bytes, bytearray)) else src.read()
+                        txt = extract_text_from_docx(io.BytesIO(data))
+                    except Exception:
+                        txt = ""
+            elif name.lower().endswith(".txt"):
+                try:
+                    if hasattr(src, "read"):
+                        data = src.read()
+                        try: src.seek(0)
+                        except Exception: pass
+                    else:
+                        data = src if isinstance(src, (bytes, bytearray)) else b""
+                    txt = read_txt(data)
+                except Exception:
+                    try:
+                        txt = data.decode("utf-8", errors="ignore")
+                    except Exception:
+                        txt = ""
+        except Exception:
+            txt = ""
+        return sanitize(txt) if "sanitize" in globals() else txt
+
+    ATTACH_LIMIT_PER_FILE = 6000   # chars
+    ATTACH_TOTAL_LIMIT    = 16000  # chars
+
+    pieces = []
+    total = 0
+    for kind, name, src, mime in files_to_read[:6]:
+        try:
+            t = _try_extract(name, src if kind=="__widget__" else src, mime) or ""
+        except Exception:
+            t = ""
+        if not t:
+            continue
+        t = t.strip()
+        if not t:
+            continue
+        t = t[:ATTACH_LIMIT_PER_FILE]
+        if total + len(t) > ATTACH_TOTAL_LIMIT:
+            t = t[: max(0, ATTACH_TOTAL_LIMIT - total) ]
+        if not t:
+            break
+        pieces.append(f"### {name}\\n{t}")
+        total += len(t)
+        if total >= ATTACH_TOTAL_LIMIT:
+            break
+
+    attach_block = "\\n\\n".join(pieces) if pieces else ""
+
+    # === 최종 콘텐츠 합성 ===
+    content_final = q.strip()
+    if attach_block:
+        content_final += "\\n\\n[첨부 문서 발췌]\\n" + attach_block + "\\n"
+    else:
+        content_final = q.strip()
     st.session_state.messages.append({
         "role": "user",
         "content": q.strip(),
@@ -645,6 +746,48 @@ def render_pre_chat_center():
         st.rerun()
 
 # 기존 render_bottom_uploader() 전부 교체
+
+# [ADD] 답변 완료 후에도 프리챗과 동일한 UI 사용
+def render_post_chat_simple_ui():
+    import time, io
+    st.markdown('<section class="center-hero post-chat-ui">', unsafe_allow_html=True)
+
+    # 업로더 (프리챗과 동일)
+    post_files = st.file_uploader(
+        "Drag and drop files here",
+        type=["pdf", "docx", "txt"],
+        accept_multiple_files=True,
+        key="post_files",
+    )
+
+    # 텍스트 입력 + 전송 버튼 (프리챗과 동일)
+    with st.form("next_ask", clear_on_submit=True):
+        q = st.text_input("질문을 입력해 주세요...", key="next_input")
+        sent = st.form_submit_button("전송", use_container_width=True)
+
+    st.markdown("</section>", unsafe_allow_html=True)
+
+    if sent and (q or "").strip():
+        # 업로드된 파일을 안전하게 세션에 보관 (바로 rerun할 것이므로 바이트로 저장)
+        safe_payload = []
+        try:
+            for f in (post_files or []):
+                try:
+                    data = f.read()
+                    f.seek(0)
+                except Exception:
+                    data = None
+                safe_payload.append({
+                    "name": getattr(f, "name", "uploaded"),
+                    "type": getattr(f, "type", ""),
+                    "data": data,
+                })
+        except Exception:
+            pass
+        st.session_state["_pending_user_q"] = (q or "").strip()
+        st.session_state["_pending_user_nonce"] = time.time_ns()
+        st.session_state["_pending_user_files"] = safe_payload
+        st.rerun()
 def render_bottom_uploader():
     # 업로더 바로 앞에 '앵커'만 출력
     st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
@@ -2256,16 +2399,11 @@ document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 
 st.markdown("""
 <style>
-/* 🔧 대화 시작 후에는 모든 첨부파일 업로더를 완전히 숨김 */
-body.chat-started #bu-anchor + div[data-testid="stFileUploader"] { 
-    display: none !important; 
-}
-/* 기존: display:none !important;  (X) */
-body.chat-started #chatbar-fixed{
-  visibility: hidden !important;   /* 안 보이지만 자리·좌표는 유지 */
-  pointer-events: none !important; /* 클릭 방지 */
-}
+/* ✅ 포스트-챗 UI(업로더+입력폼)는 '답변 생성 중'에만 숨김 */
+body.answering .post-chat-ui { display: none !important; }
 
+/* ✅ 기존 chatbar 컴포넌트는 사용하지 않으므로 완전 숨김 */
+#chatbar-fixed { display: none !important; }
 /* 답변 중일 때만 하단 여백 축소 */
 body.answering .block-container { 
     padding-bottom: calc(var(--chat-gap) + 24px) !important; 
@@ -2575,18 +2713,7 @@ if user_q:
         except Exception:
             pass
 
-# ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
+# ✅ 채팅이 시작되었고, 지금은 답변 생성 중이 아닐 때 → 프리챗과 동일 UI 출력
 if chat_started and not st.session_state.get("__answering__", False):
-    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
-    submitted, typed_text, files = chatbar(
-        placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
-        accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
-    )
-    st.markdown('</div>', unsafe_allow_html=True)                     # ← 래퍼 닫기
-    if submitted:
-        text = (typed_text or "").strip()
-        if text:
-            st.session_state["_pending_user_q"] = text
-            st.session_state["_pending_user_nonce"] = time.time_ns()
-        st.session_state["_clear_input"] = True
-        st.rerun()
+    render_post_chat_simple_ui()
+
