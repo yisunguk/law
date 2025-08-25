@@ -32,12 +32,6 @@ st.set_page_config(
 # 최상단 스크롤 기준점
 st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
 
-
-st.markdown("""
-<style>
-  :root{ --ans-nudge: -24px; }
-</style>
-""", unsafe_allow_html=True)
 st.markdown("""
 <style>
 :root{
@@ -2466,15 +2460,8 @@ st.markdown("""
 
 
 with st.container():
-    msgs_loop = st.session_state.messages
-    last_ass_idx = -1
-    for _ii, _mm in enumerate(msgs_loop):
-        if isinstance(_mm, dict) and _mm.get('role')=='assistant' and (_mm.get('content') or '').strip():
-            last_ass_idx = _ii
-    for i, m in enumerate(msgs_loop):
-        if i == last_ass_idx:
-            st.markdown('<div id="ans-anchor"></div>', unsafe_allow_html=True)
-# --- UI dedup guard: skip if same assistant content as previous ---
+    for i, m in enumerate(st.session_state.messages):
+        # --- UI dedup guard: skip if same assistant content as previous ---
         if isinstance(m, dict) and m.get('role')=='assistant':
             _t = (m.get('content') or '').strip()
             if '_prev_assistant_txt' not in st.session_state:
@@ -2517,9 +2504,6 @@ if chat_started and not st.session_state.get("__answering__", False):
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
 # ===============================\n
 if user_q:
-
-    st.markdown('<div id=\"ans-anchor-live\"></div>', unsafe_allow_html=True)
-
     # --- streaming aggregator v2: keep deltas for preview, but FINAL wins ---
     stream_box = None
     deltas_only = ""
@@ -2589,12 +2573,12 @@ if user_q:
 
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
 if chat_started and not st.session_state.get("__answering__", False):
-    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)
+    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
     submitted, typed_text, files = chatbar(
         placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
         accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
     )
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)                     # ← 래퍼 닫기
     if submitted:
         text = (typed_text or "").strip()
         if text:
@@ -2602,84 +2586,3 @@ if chat_started and not st.session_state.get("__answering__", False):
             st.session_state["_pending_user_nonce"] = time.time_ns()
         st.session_state["_clear_input"] = True
         st.rerun()
-
-# ▼▼▼ 여기 ‘바로 아래’에 추가 (좌측 본문/컬럼 안, 메시지 출력 직전)
-if chat_started:
-    st.markdown("""
-    <style>
-      /* 우측 패널 top 변수(있으면) 따라가고, 없으면 88px */
-      #answer-spacer{ height: var(--content-top, var(--flyout-top, 88px)); }
-      @media (max-width:1279px){ #answer-spacer{ height:0 } }
-    </style>
-    <div id="answer-spacer"></div>
-    """, unsafe_allow_html=True)
-
-# 기존 메시지 렌더링
-
-# --- nudge override (safe to edit) ---
-st.markdown("""
-<style>
-  :root{ --ans-nudge: 0px !important; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- robust align script (anchor → first answer → flyout header) ---
-st.markdown("""
-<script>
-(function(){
-  function headerTop(){
-    const h = document.querySelector('#search-flyout h3') || document.querySelector('#search-flyout');
-    return h ? h.getBoundingClientRect().top : null;
-  }
-  function anchorEl(){
-    return document.getElementById('ans-anchor-live') || document.getElementById('ans-anchor');
-  }
-  function firstAnswerAfter(a){
-    if(!a) return null;
-    const aTop = a.getBoundingClientRect().top;
-    const nodes = Array.from(document.querySelectorAll("[data-testid='stChatMessage']"));
-    for(const el of nodes){
-      if(el.getBoundingClientRect().top >= aTop - 2) return el;
-    }
-    let el = a.nextElementSibling;
-    while(el){
-      if (el.querySelector && el.querySelector("[data-testid='stChatMessage']")) return el;
-      el = el.nextElementSibling;
-    }
-    return null;
-  }
-  function align(){
-    const a = anchorEl();
-    const ht = headerTop();
-    if(!a || ht == null) return;
-    const t = firstAnswerAfter(a);
-    if(!t) return;
-    const delta = Math.round(ht - t.getBoundingClientRect().top);
-    t.style.transform = "translateY(" + delta + "px)";
-    t.style.willChange = "transform";
-  }
-  const mo = new MutationObserver(align);
-  mo.observe(document.body, {subtree:true, childList:true, attributes:true});
-  window.addEventListener('load', align);
-  window.addEventListener('resize', align);
-  setInterval(align, 400);
-})();
-</script>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<style>
-  /* anchors compact */
-  #ans-anchor, #ans-anchor-live { height:0 !important; margin:0 !important; padding:0 !important; }
-</style>
-""", unsafe_allow_html=True)
-
-
-
-st.markdown("""
-<style>
-  /* force spacer off to remove extra vertical gap */
-  #answer-spacer{ height:0 !important; }
-</style>
-""", unsafe_allow_html=True)
-
