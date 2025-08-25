@@ -369,6 +369,22 @@ def inject_sticky_layout_css(mode: str = "wide"):
     """
     st.markdown(css, unsafe_allow_html=True)
 
+    st.markdown("""
+<style>
+  /* 숫자만 바꾸면 됩니다: -16px이면 위로 16px */
+  :root { --ans-nudge: -16px; }
+
+  /* 답변 시작 앵커를 살짝 끌어올려 좌우를 함께 올림 */
+  #ans-anchor { display:block; margin-top: var(--ans-nudge); }
+
+  /* 모바일/좁은 화면은 원위치 */
+  @media (max-width:1279px){
+    :root { --ans-nudge: 0px; }
+  }
+</style>
+""", unsafe_allow_html=True)
+
+
 # 호출 위치: 파일 맨 아래, 모든 컴포넌트를 그린 뒤
 inject_sticky_layout_css("wide")
 
