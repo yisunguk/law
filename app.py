@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import streamlit as st
 
+# --- per-turn nonce ledger (prevents double appends)
+st.session_state.setdefault('_nonce_done', {})
 # --- cache helpers: suggestions shouldn't jitter on reruns ---
 def cached_suggest_for_tab(tab_key: str):
     import streamlit as st
@@ -1771,22 +1773,15 @@ def find_law_with_fallback(user_query: str, num_rows: int = 10):
 
 def _append_message(role: str, content: str, **extra):
     
-    
     txt = (content or "").strip()
     is_code_only = (txt.startswith("```") and txt.endswith("```"))
     if not txt or is_code_only:
         return
     msgs = st.session_state.get("messages", [])
-    if msgs and isinstance(msgs[-1], dict):
-        _last_role = msgs[-1].get("role")
-        _last_txt = (msgs[-1].get("content") or "")
-        # Normalize whitespace for robust dedupe
-        _t_norm = " ".join(txt.split())
-        _last_norm = " ".join(_last_txt.split())
-        if _last_role == role and _t_norm == _last_norm:
-            return
+    if msgs and isinstance(msgs[-1], dict) and msgs[-1].get("role")==role and (msgs[-1].get("content") or "").strip()==txt:
+        # skip exact duplicate of the last message (role+content)
+        return
     st.session_state.messages.append({"role": role, "content": txt, **extra})
-
 
 
 
@@ -2212,6 +2207,8 @@ with st.sidebar:
 # 1) pending → messages 먼저 옮김
 user_q = _push_user_from_pending()
 
+# capture the nonce associated with this pending input (if any)
+st.session_state['current_turn_nonce'] = st.session_state.get('_pending_user_nonce')
 # === 지금 턴이 '답변을 생성하는 런'인지 여부 (스트리밍 중 표시/숨김에 사용)
 ANSWERING = bool(user_q)
 st.session_state["__answering__"] = ANSWERING
@@ -2437,15 +2434,6 @@ st.markdown("""
 
 with st.container():
     for i, m in enumerate(st.session_state.messages):
-        # --- UI dedupe guard (normalized) ---
-        if isinstance(m, dict) and m.get('role')=='assistant':
-            _t = (m.get('content') or '')
-            _t_norm = ' '.join(_t.split())
-            if '_prev_assistant_norm' not in st.session_state:
-                st.session_state['_prev_assistant_norm'] = ''
-            if _t_norm and _t_norm == st.session_state.get('_prev_assistant_norm',''):
-                continue
-            st.session_state['_prev_assistant_norm'] = _t_norm
         # --- UI dedup guard: skip if same assistant content as previous ---
         if isinstance(m, dict) and m.get('role')=='assistant':
             _t = (m.get('content') or '').strip()
@@ -2535,13 +2523,16 @@ if user_q:
 
     # ▶ 답변을 세션에 넣고 rerun
     if final_text.strip():
-        _t_norm = ' '.join((final_text or '').split())
-        ans_hash = __import__('hashlib').md5(_t_norm.encode('utf-8')).hexdigest()
-        if st.session_state.get('_last_ans_hash') == ans_hash:
-            pass  # duplicate answer detected; skip appending
+        # --- per-turn nonce guard: allow only one assistant append per user turn ---
+        _nonce = st.session_state.get('current_turn_nonce') or st.session_state.get('_pending_user_nonce')
+        _done = st.session_state.get('_nonce_done', {})
+        if _nonce and _done.get(_nonce):
+            pass  # already appended for this user turn
         else:
             _append_message('assistant', final_text, law=collected_laws)
-            st.session_state['_last_ans_hash'] = ans_hash
+            if _nonce:
+                _done[_nonce] = True
+                st.session_state['_nonce_done'] = _done
             st.session_state['last_q'] = user_q
             st.session_state.pop('_pending_user_q', None)
             st.session_state.pop('_pending_user_nonce', None)
