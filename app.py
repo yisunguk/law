@@ -3,12 +3,52 @@ from __future__ import annotations
 
 import streamlit as st
 
+# --- cache helpers: suggestions shouldn't jitter on reruns ---
+def cached_suggest_for_tab(tab_key: str):
+    import streamlit as st
+    store = st.session_state.setdefault("__tab_suggest__", {})
+    if tab_key not in store:
+        from modules import suggest_keywords_for_tab
+        store[tab_key] = cached_suggest_for_tab(tab_key)
+    return store[tab_key]
+
+def cached_suggest_for_law(law_name: str):
+    import streamlit as st
+    store = st.session_state.setdefault("__law_suggest__", {})
+    if law_name not in store:
+        from modules import suggest_keywords_for_law
+        store[law_name] = cached_suggest_for_law(law_name)
+    return store[law_name]
+
 st.set_page_config(
     page_title="법제처 법무 상담사",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+st.markdown("""
+<style>
+:root{
+  --left-rail: 300px;
+  --right-rail: calc(var(--flyout-width, 0px) + var(--flyout-gap, 0px));
+}
+</style>
+<script>
+(function(){
+  function setLeftRail(){
+    const sb = window.parent.document.querySelector('[data-testid="stSidebar"]');
+    if(!sb) return;
+    const w = Math.round(sb.getBoundingClientRect().width || 300);
+    document.documentElement.style.setProperty('--left-rail', w + 'px');
+  }
+  setLeftRail();
+  window.addEventListener('resize', setLeftRail);
+  new MutationObserver(setLeftRail).observe(window.parent.document.body, {subtree:true, childList:true, attributes:true});
+})();
+</script>
+""", unsafe_allow_html=True)
+
 
 # === [BOOTSTRAP] session keys (must be first) ===
 if "messages" not in st.session_state:
@@ -181,7 +221,7 @@ SUGGESTED_LAW_KEYWORDS = {
 }
 FALLBACK_LAW_KEYWORDS = ["정의", "목적", "벌칙"]
 
-def suggest_keywords_for_law(law_name: str) -> list[str]:
+def cached_suggest_for_law(law_name: str) -> list[str]:
     if not law_name:
         return FALLBACK_LAW_KEYWORDS
     if law_name in SUGGESTED_LAW_KEYWORDS:
@@ -201,7 +241,7 @@ SUGGESTED_TAB_KEYWORDS = {
     "cc":     ["위헌", "합헌", "각하", "침해", "기각"],
     "expc":   ["유권해석", "질의회신", "법령해석", "적용범위"],
 }
-def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
+def cached_suggest_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
 def inject_sticky_layout_css(mode: str = "wide"):
@@ -745,56 +785,31 @@ def strip_reference_links_block(markdown: str) -> str:
 
 
 # === 새로 추가: 중복 제거 유틸 ===
-
 def _dedupe_blocks(text: str) -> str:
-    """
-    과잉 반복된 본문을 정리한다.
-    - 완전 동일한 절반 반복(AB → A+A) 제거
-    - 꼬리(TAIL)의 즉시 반복 xx...xx 제거
-    - 동일 문단 연속 반복 제거
-    - 내부 절차 문구 노출(의도 분석/추가 검색/재검색) 제거
-    """
-    import re as _re
     s = _normalize_text(text or "")
 
-    # (A) 전체가 두 번 연달아 나온 경우: 앞 절반만 유지
-    if len(s) >= 400:
-        mid = len(s) // 2
-        if s[:mid] == s[mid:] or s[:mid-1] == s[mid+1:]:
-            s = s[:mid]
+    # 1) 완전 동일 문단의 연속 중복 제거
+    lines, out, prev = s.split("\n"), [], None
+    for ln in lines:
+        if ln.strip() and ln == prev:
+            continue
+        out.append(ln); prev = ln
+    s = "\n".join(out)
 
-    # (B) 꼬리 블록이 그대로 한 번 더 이어진 경우(예: 마지막 1000자 동일)
-    for tail_size in range(min(1200, len(s)//2), 300, -100):
-        tail = s[-tail_size:]
-        prev = s[-2*tail_size:-tail_size]
-        if tail == prev:
-            # 반복된 tail을 모두 하나로 축약
-            while s.endswith(tail + tail):
-                s = s[:-tail_size]
-            break
-
-    # (C) 완전 동일 문단(빈 줄로 구분)이 연속되면 하나만 남김
-    parts = [p for p in s.split("\n\n")]
-    out = []
-    for para in parts:
-        if not out or out[-1] != para:
-            out.append(para)
-    s = "\n\n".join(out)
-
-    # (D) "법률 자문 메모 ..." 본문 2중 출력 방지(기존 호환)
-    pat = _re.compile(r'(법률\s*자문\s*메모[\s\S]{50,}?)(?:\n+)\1', _re.I)
+    # 2) "법률 자문 메모"로 시작하는 동일 본문 2중 출력 방지
+    pat = re.compile(r'(법률\s*자문\s*메모[\s\S]{50,}?)(?:\n+)\1', re.I)
     s = pat.sub(r'\1', s)
 
-    # (E) 내부 절차 문구 노출 시 제거(의도 분석/추가 검색/재검색)
-    s = _re.sub(
+    # 3) 내부 절차 문구 노출 시 제거(의도 분석/추가 검색/재검색)
+    s = re.sub(
         r'^\s*\d+\.\s*\*\*?(사용자의 의도 분석|추가 검색|재검색)\*\*?.*?(?=\n\d+\.|\Z)',
         '',
         s,
-        flags=_re.M | _re.S
+        flags=re.M | re.S
     )
 
-    # (F) 빈 줄 정리
-    s = _re.sub(r'\n{3,}', '\n\n', s)
+    # 빈 줄 정리
+    s = re.sub(r'\n{3,}', '\n\n', s)
     return s
 
 # === add: 여러 법령 결과를 한 번에 요약해서 LLM에 먹일 프라이머 ===
@@ -1925,13 +1940,49 @@ with st.sidebar:
     st.header("🔗 링크 생성기 (무인증)")
     tabs = st.tabs(["법령", "행정규칙", "자치법규", "조약", "판례", "헌재", "해석례", "용어/별표"])
 
+    # persist/restore active sidebar tab across reruns
+    st.markdown("""
+<script>
+(function(){
+  const KEY = "left_sidebar_active_tab";
+  function labelOf(btn){ return (btn?.innerText || btn?.textContent || "").trim(); }
+  function restore(){
+    const want = sessionStorage.getItem(KEY);
+    if(!want) return false;
+    const btns = Array.from(window.parent.document.querySelectorAll('[data-testid="stSidebar"] [role="tablist"] button[role="tab"]'));
+    if(btns.length === 0) return false;
+    const match = btns.find(b => labelOf(b) === want);
+    if(!match) return false;
+    if(match.getAttribute('aria-selected') !== 'true'){ match.click(); }
+    return true;
+  }
+  function bind(){
+    const root = window.parent.document.querySelector('[data-testid="stSidebar"]');
+    if(!root) return;
+    // Save when user clicks a tab
+    root.addEventListener('click', (e)=>{
+      const b = e.target.closest('button[role="tab"]');
+      if(b){ sessionStorage.setItem(KEY, labelOf(b)); }
+    }, true);
+    // Keep trying to restore selection until ready
+    const tid = setInterval(()=>{ if(restore()) clearInterval(tid); }, 100);
+    setTimeout(()=>clearInterval(tid), 4000);
+    // Also restore when DOM changes (e.g., reruns)
+    new MutationObserver(()=>restore()).observe(root, {subtree:true, childList:true, attributes:true});
+  }
+  window.addEventListener('load', bind, {once:true});
+  setTimeout(bind, 0);
+})();
+</script>
+""", unsafe_allow_html=True)
+
     # 공통 추천 프리셋(모두 1개만 기본 선택되도록 kw_input + DEFAULT_KEYWORD 활용)
-    adm_suggest    = suggest_keywords_for_tab("admrul")
-    ordin_suggest  = suggest_keywords_for_tab("ordin")
-    trty_suggest   = suggest_keywords_for_tab("trty")
-    case_suggest   = suggest_keywords_for_tab("prec")
-    cc_suggest     = suggest_keywords_for_tab("cc")
-    interp_suggest = suggest_keywords_for_tab("expc")
+    adm_suggest    = cached_suggest_for_tab("admrul")
+    ordin_suggest  = cached_suggest_for_tab("ordin")
+    trty_suggest   = cached_suggest_for_tab("trty")
+    case_suggest   = cached_suggest_for_tab("prec")
+    cc_suggest     = cached_suggest_for_tab("cc")
+    interp_suggest = cached_suggest_for_tab("expc")
     term_suggest   = ["정의", "용어", "별표", "서식"]
 
     # ───────────────────────── 법령
@@ -1939,7 +1990,7 @@ with st.sidebar:
         law_name = st.text_input("법령명", value="민법", key="sb_law_name")
         # 법령명 기반 추천
         law_keys = kw_input("키워드(자동 추천)",
-                            suggest_keywords_for_law(law_name),
+                            cached_suggest_for_law(law_name),
                             key="sb_law_keys",
                             tab_name="법령")
 
@@ -2382,10 +2433,11 @@ if user_q:
         st.session_state["last_q"] = user_q
         st.session_state.pop("_pending_user_q", None)
         st.session_state.pop("_pending_user_nonce", None)
-        # clear preview before rerun
+        st.rerun()
+
+    # 프리뷰 컨테이너 비우기
     if stream_box is not None:
         stream_box.empty()
-    st.rerun()
     
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
 if chat_started and not st.session_state.get("__answering__", False):
