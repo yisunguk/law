@@ -35,9 +35,9 @@ HERO_HTML = '''
 st.markdown("""
 <style>
   :root{
-    --hero-top: 6px;            /* 헤드라인 상단 여백: 필요시 조정 */
-    --flyout-top: var(--hero-top);  /* 우측 통합검색 상단과 동기화 */
-  }
+-  --hero-top: 6px;
++  --hero-top: 0px;       /* 더 붙이려면 -8px, -12px도 가능 */
+}
   .global-hero{ position: sticky; top: var(--hero-top); z-index: 10; margin: 0 0 12px; }
   .global-hero h1{ margin-bottom: 10px !important; }
   /* 이전 방식 비활성화 */
@@ -791,7 +791,10 @@ def render_pre_chat_center():
     st.markdown('<div class="chat-root">', unsafe_allow_html=True)
 
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
+    
     st.markdown('<div class="global-hero">' + HERO_HTML + '</div>', unsafe_allow_html=True)
+
+
 
     # 중앙 업로더 (대화 전 전용)
     st.file_uploader(
@@ -812,7 +815,9 @@ def render_pre_chat_center():
         st.session_state["_pending_user_q"] = q.strip()
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
-
+# ... 업로더/질문 입력/전송 버튼까지 모두 렌더한 직후 ↓
+st.markdown("</section>", unsafe_allow_html=True)   # <section class="center-hero"> 닫기
+st.markdown("</div>", unsafe_allow_html=True)       # <div class="chat-root"> 닫기
 # 기존 render_bottom_uploader() 전부 교체
 
 # [ADD] 답변 완료 후에도 프리챗과 동일한 UI 사용    st.markdown('</div>', unsafe_allow_html=True)
@@ -857,6 +862,10 @@ def render_post_chat_simple_ui():
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.session_state["_pending_user_files"] = safe_payload
         st.rerun()
+
+        # ... 대화 메시지/입력창 렌더 완료 직후 ↓
+st.markdown("</div>", unsafe_allow_html=True)       # <div class="chat-root"> 닫기
+
 def render_bottom_uploader():
     # 업로더 바로 앞에 '앵커'만 출력
     st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
@@ -2477,9 +2486,11 @@ body.answering .post-chat-ui{ margin-top: 8px; }
 /* ✅ 기존 chatbar 컴포넌트는 사용하지 않으므로 완전 숨김 */
 #chatbar-fixed { display: none !important; }
 /* 답변 중일 때만 하단 여백 축소 */
-body.answering .block-container { 
-    padding-bottom: calc(var(--chat-gap) + 24px) !important; 
+.block-container{
+-  padding-top:12px !important;
++  padding-top: var(--hero-top) !important;
 }
+
 </style>
 """, unsafe_allow_html=True)
 
