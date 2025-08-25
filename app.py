@@ -2614,7 +2614,7 @@ for m in st.session_state.get("messages", []):
 # --- nudge override (safe to edit) ---
 st.markdown("""
 <style>
-  :root{ --ans-nudge: -18px !important; }
+  :root{ --ans-nudge: -24x !important; }
 </style>
 """, unsafe_allow_html=True)
 
