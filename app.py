@@ -2460,6 +2460,7 @@ st.markdown("""
 
 
 with st.container():
+    st.session_state['_prev_assistant_txt'] = ''  # reset per rerun
     for i, m in enumerate(st.session_state.messages):
         # --- UI dedup guard: skip if same assistant content as previous ---
         if isinstance(m, dict) and m.get('role')=='assistant':
