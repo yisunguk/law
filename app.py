@@ -35,7 +35,7 @@ st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
 
 st.markdown("""
 <style>
-  :root{ --ans-nudge: 0px; }
+  :root{ --ans-nudge: -24px; }
 </style>
 """, unsafe_allow_html=True)
 st.markdown("""
@@ -2518,7 +2518,7 @@ if chat_started and not st.session_state.get("__answering__", False):
 # ===============================\n
 if user_q:
 
-    st.markdown('<div id="ans-anchor"></div>', unsafe_allow_html=True)
+    st.markdown('<div id=\"ans-anchor-live\"></div>', unsafe_allow_html=True)
 
     # --- streaming aggregator v2: keep deltas for preview, but FINAL wins ---
     stream_box = None
@@ -2623,52 +2623,53 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# --- robust align script (anchor → first answer → flyout header) ---
 st.markdown("""
 <script>
 (function(){
-  // 좌(답변) 앵커와 우(통합검색) 패널의 상단을 자동으로 일치시킵니다.
-  function sync(){
-    var a   = document.querySelector('#ans-anchor');
-    var fly = document.querySelector('#search-flyout');
-    if(!a || !fly) return;
-
-    // 현재 각 요소의 뷰포트 상단 위치
-    var at = a.getBoundingClientRect().top;
-    var ft = fly.getBoundingClientRect().top;
-
-    // (답변 상단 + nudge) == (패널 상단) 이 되도록 nudge를 산출
-    var n = Math.round(ft - at);
-    document.documentElement.style.setProperty('--ans-nudge', n + 'px');
-
-    // 공통 top 변수 갱신 → 양쪽이 같은 높이에서 시작
-    var top = Math.max(12, Math.round(at + n));
-    document.documentElement.style.setProperty('--flyout-top',  top + 'px');
-    document.documentElement.style.setProperty('--content-top', top + 'px');
+  function headerTop(){
+    const h = document.querySelector('#search-flyout h3') || document.querySelector('#search-flyout');
+    return h ? h.getBoundingClientRect().top : null;
   }
-
-  // 변동이 잦은 Streamlit DOM 특성상, 가볍게 재동기화
-  new MutationObserver(sync).observe(document.body, {childList:true, subtree:true, attributes:true});
-  window.addEventListener('load',  sync);
-  window.addEventListener('resize', sync);
-  setInterval(sync, 300); // 짧은 보호 타이머(깜빡임 방지)
+  function anchorEl(){
+    return document.getElementById('ans-anchor-live') || document.getElementById('ans-anchor');
+  }
+  function firstAnswerAfter(a){
+    if(!a) return null;
+    const aTop = a.getBoundingClientRect().top;
+    const nodes = Array.from(document.querySelectorAll("[data-testid='stChatMessage']"));
+    for(const el of nodes){
+      if(el.getBoundingClientRect().top >= aTop - 2) return el;
+    }
+    let el = a.nextElementSibling;
+    while(el){
+      if (el.querySelector && el.querySelector("[data-testid='stChatMessage']")) return el;
+      el = el.nextElementSibling;
+    }
+    return null;
+  }
+  function align(){
+    const a = anchorEl();
+    const ht = headerTop();
+    if(!a || ht == null) return;
+    const t = firstAnswerAfter(a);
+    if(!t) return;
+    const delta = Math.round(ht - t.getBoundingClientRect().top);
+    t.style.transform = "translateY(" + delta + "px)";
+    t.style.willChange = "transform";
+  }
+  const mo = new MutationObserver(align);
+  mo.observe(document.body, {subtree:true, childList:true, attributes:true});
+  window.addEventListener('load', align);
+  window.addEventListener('resize', align);
+  setInterval(align, 400);
 })();
 </script>
 """, unsafe_allow_html=True)
 
-# --- Align answer bubble to the flyout header (anchor-sibling transform) ---
 st.markdown("""
 <style>
-  /* ① 앵커 바로 다음(첫 말풍선 래퍼)을 nudge 만큼 위/아래로 이동 */
-  #ans-anchor + div{
-    transform: translateY(var(--ans-nudge, 0px));
-    will-change: transform;
-  }
-
-  /* ② 앵커 자체는 공간을 차지하지 않게 */
-  #ans-anchor{ height:0 !important; margin:0 !important; padding:0 !important; }
-
-  /* ③ 예전 스페이서가 왼쪽을 더 내리는 문제 차단 */
-  #answer-spacer{ height:0 !important; }
+  /* anchors compact */
+  #ans-anchor, #ans-anchor-live { height:0 !important; margin:0 !important; padding:0 !important; }
 </style>
 """, unsafe_allow_html=True)
-
