@@ -27,37 +27,41 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- 제목 앵커/헤더 액션 숨김 (재렌더링 내성) ---
 st.markdown("""
 <style>
-.block-container h1 a[href^="#"],
-.block-container h2 a[href^="#"],
-.block-container h3 a[href^="#"],
-.block-container h4 a[href^="#"],
-.block-container h5 a[href^="#"],
-.block-container h6 a[href^="#"],
-.block-container h1 + a[href^="#"],
-.block-container h2 + a[href^="#"],
-.block-container h3 + a[href^="#"],
-.block-container h4 + a[href^="#"],
-.block-container h5 + a[href^="#"],
-.block-container h6 + a[href^="#"],
-.block-container a[aria-label*="link to this"],
-.block-container [data-testid="stHeaderAction"]{
-  display:none !important;
+:root{
+  --center-col: 980px;   /* 중앙 전체 폭 */
+  --bubble-max: 760px;   /* 말풍선 최대 폭 */
+  --pad-x: 12px;         /* 좌우 여백 */
+}
+
+/* 본문(채팅 전/후 공통) 중앙 폭 고정 */
+.block-container{
+  max-width: var(--center-col) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  padding-left: var(--pad-x) !important;
+  padding-right: var(--pad-x) !important;
+}
+
+/* 업로더/폼/카드류도 같은 폭 */
+.block-container [data-testid="stFileUploader"],
+.block-container form,
+.block-container .stForm,
+.block-container .stMarkdown>div{
+  max-width: var(--center-col) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+/* 채팅 메시지 폭(답변 후) */
+[data-testid="stChatMessage"]{
+  max-width: var(--bubble-max) !important;
+  width: 100% !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
 }
 </style>
-<script>
-(function(){
-  const hide=()=>{document.querySelectorAll(
-    'h1 a[href^="#"],h2 a[href^="#"],h3 a[href^="#"],h4 a[href^="#"],h5 a[href^="#"],h6 a[href^="#"],' +
-    'h1 + a[href^="#"],h2 + a[href^="#"],h3 + a[href^="#"],h4 + a[href^="#"],h5 + a[href^="#"],h6 + a[href^="#"],' +
-    'a[aria-label*="link to this"],[data-testid="stHeaderAction"]'
-  ).forEach(el=>el.style.display="none");};
-  hide();
-  new MutationObserver(hide).observe(document.body,{subtree:true,childList:true,attributes:true});
-})();
-</script>
 """, unsafe_allow_html=True)
 
 st.markdown("""
@@ -2239,30 +2243,13 @@ body.answering .block-container {
 if not chat_started:
     st.markdown("""
     <style>
-      /* 우측 패널 숨김 */
+      /* 첫 질문 전엔 우측 패널만 숨김. 나머지 레이아웃은 전역 CSS와 동일 */
       #search-flyout{ display:none !important; }
-
-      /* 우측/하단 여백 제거 */
-      @media (min-width:1280px){ .block-container{ padding-right:0 !important; } }
-      .block-container{ padding-bottom:0 !important; }
-
-      /* 히어로를 뷰포트 절대 중앙에 고정 */
-      .center-hero{
-        position: fixed !important;
-        left: 50% !important; top: 50% !important;
-        transform: translate(-50%, -50%) !important;
-        width: var(--center-col); max-width: 92vw;
-        margin: 0 !important; padding: 0 !important;
-        display: flex; flex-direction: column; align-items: center;
-        justify-content: center;
-      }
-
-      /* 히어로 내부 위젯 폭 */
-      .center-hero .stFileUploader, .center-hero .stTextInput{
-        width: 720px; max-width: 92vw;
-      }
     </style>
     """, unsafe_allow_html=True)
+
+    render_pre_chat_center()
+    st.stop()
 
 # 🎯 대화 전에는 우측 패널 숨기고, 여백을 0으로 만들어 완전 중앙 정렬
 if not chat_started:
