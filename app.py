@@ -2567,3 +2567,24 @@ if chat_started and not st.session_state.get("__answering__", False):
         st.session_state["_clear_input"] = True
         st.rerun()
 
+
+
+# --- ans-anchor align script (non-invasive; runs after load & on DOM changes) ---
+st.markdown("""
+<script>
+(function(){
+  function align(){
+    var a=document.querySelector('#ans-anchor');
+    if(!a) return;
+    var r=a.getBoundingClientRect();
+    var top=Math.max(12, Math.round(r.top));
+    document.documentElement.style.setProperty('--flyout-top',  top+'px');
+    document.documentElement.style.setProperty('--content-top', top+'px');
+  }
+  new MutationObserver(align).observe(document.body,{childList:true,subtree:true});
+  window.addEventListener('load', align, {once:false});
+  window.addEventListener('resize', align, {passive:true});
+  setTimeout(align, 0);
+})();
+</script>
+""", unsafe_allow_html=True)
