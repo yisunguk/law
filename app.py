@@ -1771,15 +1771,22 @@ def find_law_with_fallback(user_query: str, num_rows: int = 10):
 
 def _append_message(role: str, content: str, **extra):
     
+    
     txt = (content or "").strip()
     is_code_only = (txt.startswith("```") and txt.endswith("```"))
     if not txt or is_code_only:
         return
     msgs = st.session_state.get("messages", [])
-    if msgs and isinstance(msgs[-1], dict) and msgs[-1].get("role")==role and (msgs[-1].get("content") or "").strip()==txt:
-        # skip exact duplicate of the last message (role+content)
-        return
+    if msgs and isinstance(msgs[-1], dict):
+        _last_role = msgs[-1].get("role")
+        _last_txt = (msgs[-1].get("content") or "")
+        # Normalize whitespace for robust dedupe
+        _t_norm = " ".join(txt.split())
+        _last_norm = " ".join(_last_txt.split())
+        if _last_role == role and _t_norm == _last_norm:
+            return
     st.session_state.messages.append({"role": role, "content": txt, **extra})
+
 
 
 
@@ -2430,6 +2437,15 @@ st.markdown("""
 
 with st.container():
     for i, m in enumerate(st.session_state.messages):
+        # --- UI dedupe guard (normalized) ---
+        if isinstance(m, dict) and m.get('role')=='assistant':
+            _t = (m.get('content') or '')
+            _t_norm = ' '.join(_t.split())
+            if '_prev_assistant_norm' not in st.session_state:
+                st.session_state['_prev_assistant_norm'] = ''
+            if _t_norm and _t_norm == st.session_state.get('_prev_assistant_norm',''):
+                continue
+            st.session_state['_prev_assistant_norm'] = _t_norm
         # --- UI dedup guard: skip if same assistant content as previous ---
         if isinstance(m, dict) and m.get('role')=='assistant':
             _t = (m.get('content') or '').strip()
@@ -2519,7 +2535,8 @@ if user_q:
 
     # ▶ 답변을 세션에 넣고 rerun
     if final_text.strip():
-        ans_hash = __import__('hashlib').md5((final_text or '').encode('utf-8')).hexdigest()
+        _t_norm = ' '.join((final_text or '').split())
+        ans_hash = __import__('hashlib').md5(_t_norm.encode('utf-8')).hexdigest()
         if st.session_state.get('_last_ans_hash') == ans_hash:
             pass  # duplicate answer detected; skip appending
         else:
@@ -2529,7 +2546,8 @@ if user_q:
             st.session_state.pop('_pending_user_q', None)
             st.session_state.pop('_pending_user_nonce', None)
             st.rerun()
-    
+
+    # 프리뷰 컨테이너 비우기 이후 원래 코드 계속...
 
     # 프리뷰 컨테이너 비우기
     if stream_box is not None:
