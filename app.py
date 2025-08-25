@@ -2654,3 +2654,21 @@ st.markdown("""
 })();
 </script>
 """, unsafe_allow_html=True)
+
+# --- Align answer bubble to the flyout header (anchor-sibling transform) ---
+st.markdown("""
+<style>
+  /* ① 앵커 바로 다음(첫 말풍선 래퍼)을 nudge 만큼 위/아래로 이동 */
+  #ans-anchor + div{
+    transform: translateY(var(--ans-nudge, 0px));
+    will-change: transform;
+  }
+
+  /* ② 앵커 자체는 공간을 차지하지 않게 */
+  #ans-anchor{ height:0 !important; margin:0 !important; padding:0 !important; }
+
+  /* ③ 예전 스페이서가 왼쪽을 더 내리는 문제 차단 */
+  #answer-spacer{ height:0 !important; }
+</style>
+""", unsafe_allow_html=True)
+
