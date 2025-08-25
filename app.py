@@ -2246,6 +2246,27 @@ body.answering .block-container {
 if not chat_started:
     st.markdown("""
     <style>
+      /* 프리챗: 우측 패널만 숨기고, 스크롤을 잠가 상단 고정 */
+      #search-flyout{ display:none !important; }
+      html, body{ height:100%; overflow-y:hidden !important; }
+      .main > div:first-child{ height:100vh !important; }
+      .block-container{ min-height:100vh !important; padding-top:12px !important; padding-bottom:0 !important; }
+      /* 전역 가운데 정렬 규칙이 있어도 프리챗에선 히어로를 '위에서부터' 배치 */
+      .center-hero{ min-height:auto !important; display:block !important; }
+    </style>
+    <script>
+    (function(){
+      try{ history.scrollRestoration='manual'; }catch(e){}
+      const up=()=>{ window.scrollTo(0,0); if(document.activeElement) document.activeElement.blur(); };
+      up(); setTimeout(up,0); setTimeout(up,50);
+      document.addEventListener('focusin', up, true);
+      new MutationObserver(up).observe(document.body, {subtree:true, childList:true});
+    })();
+    </script>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <style>
       /* 우측 패널만 숨김 */
       #search-flyout{ display:none !important; }
 
@@ -2275,6 +2296,15 @@ if not chat_started:
     st.stop()
     
 else:
+    st.markdown("""
+    <style>
+      /* 채팅 시작 후: 스크롤 정상 복원 */
+      html, body{ overflow-y:auto !important; }
+      .main > div:first-child{ height:auto !important; }
+      .block-container{ min-height:auto !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
     st.markdown("""
     <style>
       /* 📌 채팅 시작 후에는 정상 스크롤 */
