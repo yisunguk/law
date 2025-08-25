@@ -2437,12 +2437,25 @@ st.markdown("""
 
 
 
+
 with st.container():
+    _prev_ai_txt = None  # ✅ 렌더링 단계에서 '연속된 동일 답변'은 건너뜀
     for i, m in enumerate(st.session_state.messages):
         role = m.get("role")
         content = (m.get("content") or "")
         if role == "assistant" and not content.strip():
             continue  # ✅ 내용이 비면 말풍선 자체를 만들지 않음
+
+        # ✅ 직전 어시스턴트 말풍선과 텍스트가 완전히 같으면 렌더링 스킵(중복 출력 보호)
+        if role == "assistant":
+            try:
+                _norm_cur = _normalize_text(content)
+                _norm_prev = _normalize_text(_prev_ai_txt) if _prev_ai_txt is not None else None
+            except Exception:
+                _norm_cur = (content or "").strip()
+                _norm_prev = (_prev_ai_txt or "").strip() if _prev_ai_txt is not None else None
+            if _norm_prev is not None and _norm_cur == _norm_prev:
+                continue
 
         with st.chat_message(role):
             if role == "assistant":
@@ -2456,12 +2469,9 @@ with st.container():
             else:
                 st.markdown(content)
 
-# ✅ 메시지 루프 바로 아래(이미 _inject_right_rail_css() 다음 추천) — 항상 호출
-def _current_q_and_answer():
-    msgs = st.session_state.get("messages", [])
-    last_q = next((m for m in reversed(msgs) if m.get("role")=="user" and (m.get("content") or "").strip()), None)
-    last_a = next((m for m in reversed(msgs) if m.get("role")=="assistant" and (m.get("content") or "").strip()), None)
-    return (last_q or {}).get("content",""), (last_a or {}).get("content","")
+        if role == "assistant":
+            _prev_ai_txt = content
+get("content",""), (last_a or {}).get("content","")
 
 # 🔽 대화가 시작된 뒤에만 우측 패널 노출
 # ✅ 로딩(스트리밍) 중에는 패널을 렌더링하지 않음
