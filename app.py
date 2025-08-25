@@ -35,7 +35,7 @@ st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
 
 st.markdown("""
 <style>
-  :root{ --ans-nudge: 0px; }
+  :root{ --ans-nudge: -24px; }
 </style>
 """, unsafe_allow_html=True)
 st.markdown("""
@@ -2466,8 +2466,15 @@ st.markdown("""
 
 
 with st.container():
-    for i, m in enumerate(st.session_state.messages):
-        # --- UI dedup guard: skip if same assistant content as previous ---
+    msgs_loop = st.session_state.messages
+    last_ass_idx = -1
+    for _ii, _mm in enumerate(msgs_loop):
+        if isinstance(_mm, dict) and _mm.get('role')=='assistant' and (_mm.get('content') or '').strip():
+            last_ass_idx = _ii
+    for i, m in enumerate(msgs_loop):
+        if i == last_ass_idx:
+            st.markdown('<div id="ans-anchor"></div>', unsafe_allow_html=True)
+# --- UI dedup guard: skip if same assistant content as previous ---
         if isinstance(m, dict) and m.get('role')=='assistant':
             _t = (m.get('content') or '').strip()
             if '_prev_assistant_txt' not in st.session_state:
@@ -2614,7 +2621,7 @@ for m in st.session_state.get("messages", []):
 # --- nudge override (safe to edit) ---
 st.markdown("""
 <style>
-  :root{ --ans-nudge: -24x !important; }
+  :root{ --ans-nudge: -24px !important; }
 </style>
 """, unsafe_allow_html=True)
 
