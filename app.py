@@ -30,6 +30,9 @@ st.markdown("""
   /* 이전 방식 비활성화 */
   .hero-stick, .hero-in-chat{ display:none !important; }
 </style>
+  <style>
+    .block-container{ padding-top: var(--hero-top) !important; }
+  </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
@@ -2586,7 +2589,7 @@ st.markdown("""
     #search-flyout{
       position: fixed !important;                 /* ← A) 화면 고정 */
       /* position: sticky !important;             /* ← B) 따라오지 않게: 이 줄로 교체 */
-      top: var(--flyout-top, 120px) !important;   /* JS가 한 번 계산해 넣음 */
+      top: var(--hero-top) !important;   /* JS가 한 번 계산해 넣음 */
       right: 24px !important;
       left: auto !important; bottom: auto !important;
 
