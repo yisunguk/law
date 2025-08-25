@@ -35,7 +35,7 @@ st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
 
 st.markdown("""
 <style>
-  :root{ --ans-nudge: -24px; }
+  :root{ --ans-nudge: 0px; }
 </style>
 """, unsafe_allow_html=True)
 st.markdown("""
@@ -2619,27 +2619,38 @@ if chat_started:
 # --- nudge override (safe to edit) ---
 st.markdown("""
 <style>
-  :root{ --ans-nudge: -24px !important; }
+  :root{ --ans-nudge: 0px !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- ans-anchor align script (with nudge support) ---
 st.markdown("""
 <script>
 (function(){
-  function align(){
-    var a=document.querySelector('#ans-anchor');
-    if(!a) return;
-    var r=a.getBoundingClientRect();
-    var n=parseInt(getComputedStyle(document.documentElement).getPropertyValue('--ans-nudge'))||0;
-    var top=Math.max(12, Math.round(r.top + n));
-    document.documentElement.style.setProperty('--flyout-top',  top+'px');
-    document.documentElement.style.setProperty('--content-top', top+'px');
+  // 좌(답변) 앵커와 우(통합검색) 패널의 상단을 자동으로 일치시킵니다.
+  function sync(){
+    var a   = document.querySelector('#ans-anchor');
+    var fly = document.querySelector('#search-flyout');
+    if(!a || !fly) return;
+
+    // 현재 각 요소의 뷰포트 상단 위치
+    var at = a.getBoundingClientRect().top;
+    var ft = fly.getBoundingClientRect().top;
+
+    // (답변 상단 + nudge) == (패널 상단) 이 되도록 nudge를 산출
+    var n = Math.round(ft - at);
+    document.documentElement.style.setProperty('--ans-nudge', n + 'px');
+
+    // 공통 top 변수 갱신 → 양쪽이 같은 높이에서 시작
+    var top = Math.max(12, Math.round(at + n));
+    document.documentElement.style.setProperty('--flyout-top',  top + 'px');
+    document.documentElement.style.setProperty('--content-top', top + 'px');
   }
-  new MutationObserver(align).observe(document.body,{childList:true,subtree:true});
-  window.addEventListener('load', align);
-  window.addEventListener('resize', align);
-  setTimeout(align, 0);
+
+  // 변동이 잦은 Streamlit DOM 특성상, 가볍게 재동기화
+  new MutationObserver(sync).observe(document.body, {childList:true, subtree:true, attributes:true});
+  window.addEventListener('load',  sync);
+  window.addEventListener('resize', sync);
+  setInterval(sync, 300); // 짧은 보호 타이머(깜빡임 방지)
 })();
 </script>
 """, unsafe_allow_html=True)
