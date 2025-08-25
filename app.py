@@ -2529,6 +2529,7 @@ if user_q:
             st.session_state.pop('_pending_user_q', None)
             st.session_state.pop('_pending_user_nonce', None)
             st.rerun()
+    
 
     # 프리뷰 컨테이너 비우기
     if stream_box is not None:
