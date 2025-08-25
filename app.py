@@ -31,25 +31,17 @@ HERO_HTML = '''
 st.markdown("""
 <style>
   :root{
-    --hero-top: 6px;
-    --flyout-top: var(--hero-top);
+    --hero-top: 6px;            /* 헤드라인 상단 여백: 필요시 조정 */
+    --flyout-top: var(--hero-top);  /* 우측 통합검색 상단과 동기화 */
   }
-
-  /* 채팅 시작 후에만 스티키 + 상단 여백 반영 */
-  body.chat-started .global-hero{
-    position: sticky; top: var(--hero-top); z-index: 10; margin: 0 0 12px;
-  }
-  body.chat-started .block-container{
-    padding-top: calc(var(--hero-top) + var(--hero-h, 108px) + 16px) !important;
-  }
-
-  /* 프리-챗은 상단 붙이기 */
-  body:not(.chat-started) .global-hero{ position: static; margin: 6px 0 12px; }
-  body:not(.chat-started) .block-container{ padding-top: 12px !important; }
-
+  .global-hero{ position: sticky; top: var(--hero-top); z-index: 10; margin: 0 0 12px; }
   .global-hero h1{ margin-bottom: 10px !important; }
+  /* 이전 방식 비활성화 */
   .hero-stick, .hero-in-chat{ display:none !important; }
 </style>
+  <style>
+    .block-container{ padding-top: calc(var(--hero-top) + var(--hero-h, 108px) + 16px) !important; }
+  </style>
 """, unsafe_allow_html=True)
 st.markdown('''
 <script>
@@ -844,9 +836,20 @@ def _push_user_from_pending() -> str | None:
 
 def render_pre_chat_center():
     # chat column left anchor for hero alignment
-    st.markdown('<div id=\"chat-col-anchor\"></div>', unsafe_allow_html=True)
-    """대화 전: 중앙 히어로 + 중앙 업로더(키: first_files) + 전송 폼"""
-    st.markdown('<section class="center-hero">', unsafe_allow_html=True)
+    st.markdown('<div id="chat-col-anchor"></div>', unsafe_allow_html=True)
+    """대화 전: 상단 히어로 + 상단 업로더(키: first_files) + 전송 폼"""
+    # ✅ 프리-챗 전용 상단 배치 오버라이드(중앙정렬 규칙 무력화 + 우측 패널 숨김 + 상단 여백 최소화)
+    st.markdown("""
+<style>
+      body:not(.chat-started) .block-container{ padding-top: 12px !important; padding-bottom: 0 !important; }
+      body:not(.chat-started) #search-flyout{ display: none !important; }
+      /* 과거 center-hero 중앙정렬 규칙 강제 무력화 */
+      body:not(.chat-started) .center-hero{ display:block !important; min-height:auto !important; margin:0 !important; align-items:stretch !important; justify-content:flex-start !important; }
+          #prechat-top .stFileUploader, #prechat-top .stTextInput{ width: 720px; max-width:92vw; }
+    </style>
+    """, unsafe_allow_html=True)
+    st.markdown('<section id="prechat-top" class="prechat-top">', unsafe_allow_html=True)
+
     st.markdown('<div class="global-hero">' + HERO_HTML + '</div>', unsafe_allow_html=True)
 
     # 중앙 업로더 (대화 전 전용)
@@ -2615,19 +2618,14 @@ else:
 if not chat_started:
     st.markdown("""
     <style>
-      /* pre-chat: hide right rail and force top alignment */
+      /* hide right rail before first message */
       #search-flyout { display: none !important; }
-      .center-hero{
-        display:block !important;
-        min-height:auto !important;
-        margin-top:12px !important;
-        align-items: stretch !important;
-        justify-content:flex-start !important;
-      }
-      .block-container{
-        padding-top: 12px !important;
-        padding-bottom: 0 !important;
-      }
+      /* remove right gutter so hero sits dead-center */
+      @media (min-width:1280px) { .block-container { padding-right: 0 !important; } }
+      /* bottom padding 크게 줄여서 화면 정중앙에 오도록 */
+      .block-container { padding-bottom: 64px !important; }
+      /* hero 높이 살짝 줄여 위/아래 균형 */
+      .center-hero { min-height: calc(100vh - 160px) !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -2741,8 +2739,7 @@ st.markdown('<div id="ans-anchor"></div>', unsafe_allow_html=True)
 st.markdown('<div class="hero-stick">' + HERO_HTML + '</div>', unsafe_allow_html=True)
 
 # --- Global sticky hero at the very top ---
-if chat_started:
-    st.markdown('<div class="global-hero">' + HERO_HTML + '</div>', unsafe_allow_html=True)
+st.markdown('<div class="global-hero">' + HERO_HTML + '</div>', unsafe_allow_html=True)
 
 for i, m in enumerate(st.session_state.messages):
         # --- Hero above the most recent user question (shows during loading & after) ---
