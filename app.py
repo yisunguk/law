@@ -7,13 +7,9 @@ import streamlit as st
 
 st.markdown("""
 <style>
-  :root{
-    --center-nudge: -64px;   /* 음수면 전체 중앙 컬럼이 위로, 양수면 아래로 이동 */
-  }
+  :root{ --center-nudge: -32px; }
   .chat-root{ margin-top: var(--center-nudge); }
-  @media (max-width: 992px){
-    .chat-root{ margin-top: 0; } /* 모바일에서는 기본값 */
-  }
+  @media (max-width: 992px){ .chat-root{ margin-top: 0; } }
 </style>
 """, unsafe_allow_html=True)
 
@@ -35,18 +31,70 @@ HERO_HTML = '''
 st.markdown("""
 <style>
   :root{
--  --hero-top: 6px;
-+  --hero-top: 0px;       /* 더 붙이려면 -8px, -12px도 가능 */
-}
+    --hero-top: 6px;            /* 헤드라인 상단 여백: 필요시 조정 */
+    --flyout-top: var(--hero-top);  /* 우측 통합검색 상단과 동기화 */
+  }
   .global-hero{ position: sticky; top: var(--hero-top); z-index: 10; margin: 0 0 12px; }
   .global-hero h1{ margin-bottom: 10px !important; }
   /* 이전 방식 비활성화 */
   .hero-stick, .hero-in-chat{ display:none !important; }
 </style>
   <style>
-    .block-container{ padding-top: var(--hero-top) !important; }
+    .block-container{ padding-top: calc(var(--hero-top) + var(--hero-h, 108px) + 16px) !important; }
   </style>
 """, unsafe_allow_html=True)
+st.markdown('''
+<script>
+(function(){
+  function syncHeroMetrics(){
+    try{
+      var bc = document.querySelector('.block-container');
+      var vw = window.innerWidth || document.documentElement.clientWidth;
+      var baseLeft = 24, baseRight = vw - 24;
+      if (bc){
+        var br = bc.getBoundingClientRect();
+        baseLeft = br.left; baseRight = br.right;
+      }
+
+      // Guard left overlays (sidebar/drawers)
+      var selectors = ['#left-flyout', '.left-flyout', '#link-factory', '.link-factory', '.stSidebar', '[data-side=\"left\"]'];
+      var guardRight = 0;
+      for (var i=0;i<selectors.length;i++){
+        var el = document.querySelector(selectors[i]);
+        if(!el) continue;
+        var r = el.getBoundingClientRect();
+        if (r.width > 100 && r.left < vw*0.5) guardRight = Math.max(guardRight, r.right);
+      }
+
+      // Prefer explicit chat column anchor if present
+      var heroLeft = Math.max(baseLeft, guardRight + 8);
+      var anchor = document.querySelector('#chat-col-anchor');
+      if(anchor){
+        var ar = anchor.getBoundingClientRect();
+        // anchor is inside the chat column; use its left edge
+        heroLeft = Math.max(heroLeft, ar.left);
+      }
+
+      var heroRight = baseRight;
+      var heroWidth = Math.max(160, heroRight - heroLeft);
+
+      document.documentElement.style.setProperty('--bc-left', heroLeft + 'px');
+      document.documentElement.style.setProperty('--bc-w', heroWidth + 'px');
+
+      // Update hero height variable
+      var hero = document.querySelector('.global-hero');
+      if (hero){
+        var h = Math.round(hero.getBoundingClientRect().height || 0);
+        if(h>0) document.documentElement.style.setProperty('--hero-h', h + 'px');
+      }
+    }catch(e){}
+  }
+  syncHeroMetrics();
+  addEventListener('resize', syncHeroMetrics);
+  new MutationObserver(syncHeroMetrics).observe(document.body, {subtree:true, childList:true, attributes:true});
+})();
+</script>
+''', unsafe_allow_html=True)
 
 st.markdown("""
 <style>
@@ -787,14 +835,11 @@ def _push_user_from_pending() -> str | None:
     return q
 
 def render_pre_chat_center():
+    # chat column left anchor for hero alignment
+    st.markdown('<div id=\"chat-col-anchor\"></div>', unsafe_allow_html=True)
     """대화 전: 중앙 히어로 + 중앙 업로더(키: first_files) + 전송 폼"""
-    st.markdown('<div class="chat-root">', unsafe_allow_html=True)
-
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
-    
     st.markdown('<div class="global-hero">' + HERO_HTML + '</div>', unsafe_allow_html=True)
-
-
 
     # 중앙 업로더 (대화 전 전용)
     st.file_uploader(
@@ -815,14 +860,13 @@ def render_pre_chat_center():
         st.session_state["_pending_user_q"] = q.strip()
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
-# ... 업로더/질문 입력/전송 버튼까지 모두 렌더한 직후 ↓
-st.markdown("</section>", unsafe_allow_html=True)   # <section class="center-hero"> 닫기
-st.markdown("</div>", unsafe_allow_html=True)       # <div class="chat-root"> 닫기
+
 # 기존 render_bottom_uploader() 전부 교체
 
-# [ADD] 답변 완료 후에도 프리챗과 동일한 UI 사용    st.markdown('</div>', unsafe_allow_html=True)
-
+# [ADD] 답변 완료 후에도 프리챗과 동일한 UI 사용
 def render_post_chat_simple_ui():
+    # chat column left anchor for hero alignment
+    st.markdown('<div id=\"chat-col-anchor\"></div>', unsafe_allow_html=True)
     import time, io
     st.markdown('<section class="post-chat-ui">', unsafe_allow_html=True)
 
@@ -862,10 +906,6 @@ def render_post_chat_simple_ui():
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.session_state["_pending_user_files"] = safe_payload
         st.rerun()
-
-        # ... 대화 메시지/입력창 렌더 완료 직후 ↓
-st.markdown("</div>", unsafe_allow_html=True)       # <div class="chat-root"> 닫기
-
 def render_bottom_uploader():
     # 업로더 바로 앞에 '앵커'만 출력
     st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
@@ -1001,15 +1041,12 @@ def extract_law_names_from_answer(md: str) -> list[str]:
 
 def normalize_law_link(u: str) -> str:
     """상대/스킴누락 링크를 www.law.go.kr 절대 URL로 교정"""
-    st.markdown('<div class="chat-root">', unsafe_allow_html=True)
-
     if not u: return ""
     u = u.strip()
     if u.startswith("http://") or u.startswith("https://"): return u
     if u.startswith("//"): return "https:" + u
     if u.startswith("/"):  return up.urljoin(LAW_PORTAL_BASE, u.lstrip("/"))
     return up.urljoin(LAW_PORTAL_BASE, u)
-    st.markdown('</div>', unsafe_allow_html=True)
 
 def _normalize_text(s: str) -> str:
     s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
@@ -2486,11 +2523,9 @@ body.answering .post-chat-ui{ margin-top: 8px; }
 /* ✅ 기존 chatbar 컴포넌트는 사용하지 않으므로 완전 숨김 */
 #chatbar-fixed { display: none !important; }
 /* 답변 중일 때만 하단 여백 축소 */
-.block-container{
--  padding-top:12px !important;
-+  padding-top: var(--hero-top) !important;
+body.answering .block-container { 
+    padding-bottom: calc(var(--chat-gap) + 24px) !important; 
 }
-
 </style>
 """, unsafe_allow_html=True)
 
