@@ -3,6 +3,17 @@ from __future__ import annotations
 
 import streamlit as st
 
+# [ADD] 공통 히어로 HTML (프리챗/포스트챗에서 재사용)
+HERO_HTML = """
+<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:12px;">⚖️ 법률상담 챗봇</h1>
+<p style="font-size:15px;line-height:1.8;opacity:.92;margin:0 0 6px;">
+  법제처 국가법령정보 DB를 기반으로 최신 법령과 행정규칙, 자치법규, 조약, 법령해석례, 헌재결정례, 법령용어를 신뢰성 있게 제공합니다.
+</p>
+<p style="font-size:15px;line-height:1.8;opacity:.92;margin:0 0 24px;">
+  본 챗봇은 신속하고 정확한 법령 정보를 안내하여, 사용자가 법률적 쟁점을 이해하고 합리적인 판단을 내릴 수 있도록 돕습니다.
+</p>
+"""
+
 # --- per-turn nonce ledger (prevents double appends)
 st.session_state.setdefault('_nonce_done', {})
 # --- cache helpers: suggestions shouldn't jitter on reruns ---
@@ -727,7 +738,7 @@ def _push_user_from_pending() -> str | None:
 def render_pre_chat_center():
     """대화 전: 중앙 히어로 + 중앙 업로더(키: first_files) + 전송 폼"""
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
-    st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
+    st.markdown(HERO_HTML, unsafe_allow_html=True)
 
     # 중앙 업로더 (대화 전 전용)
     st.file_uploader(
@@ -756,7 +767,11 @@ def render_post_chat_simple_ui():
     import time, io
     st.markdown('<section class="post-chat-ui">', unsafe_allow_html=True)
 
-    # 업로더 (프리챗과 동일)
+    
+    # 헤드라인/소개 (프리챗과 동일)
+    st.markdown(HERO_HTML, unsafe_allow_html=True)
+
+# 업로더 (프리챗과 동일)
     post_files = st.file_uploader(
         "Drag and drop files here",
         type=["pdf", "docx", "txt"],
