@@ -2673,3 +2673,13 @@ st.markdown("""
   #ans-anchor, #ans-anchor-live { height:0 !important; margin:0 !important; padding:0 !important; }
 </style>
 """, unsafe_allow_html=True)
+
+
+
+st.markdown("""
+<style>
+  /* force spacer off to remove extra vertical gap */
+  #answer-spacer{ height:0 !important; }
+</style>
+""", unsafe_allow_html=True)
+
