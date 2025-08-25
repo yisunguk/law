@@ -1774,17 +1774,23 @@ def _append_message(role: str, content: str, **extra):
     세션 메시지에 안전하게 추가하는 함수.
     - 빈 문자열 / 공백만 있는 경우 무시
     - 코드블록만 있는 경우 무시 (예: ```python ... ```)
+    - 직전 메시지와 역할/내용이 동일하면 중복 추가 방지
     """
     txt = (content or "").strip()
     is_code_only = (txt.startswith("```") and txt.endswith("```"))
     if not txt or is_code_only:
         return
+    # ✅ 직전 메시지와 동일(역할+내용)하면 스킵 — 레이아웃/기능 영향 없음
+    msgs = st.session_state.get("messages", [])
+    if msgs:
+        last = msgs[-1]
+        if last.get("role") == role and (last.get("content") or "").strip() == txt:
+            return
     st.session_state.messages.append({
         "role": role,
         "content": txt,
         **extra,
     })
-
 
 def format_law_context(law_data: list[dict]) -> str:
     if not law_data: return "관련 법령 검색 결과가 없습니다."
