@@ -4,6 +4,19 @@ from __future__ import annotations
 import streamlit as st
 
 
+
+st.markdown("""
+<style>
+  :root{
+    --center-nudge: -32px;   /* 음수면 전체 중앙 컬럼이 위로, 양수면 아래로 이동 */
+  }
+  .chat-root{ margin-top: var(--center-nudge); }
+  @media (max-width: 992px){
+    .chat-root{ margin-top: 0; } /* 모바일에서는 기본값 */
+  }
+</style>
+""", unsafe_allow_html=True)
+
 # === Shared hero (title + two paragraphs) used in pre-chat and inside chat ===
 HERO_HTML = '''
 <h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:12px;">⚖️ 법률상담 챗봇</h1>
@@ -34,58 +47,6 @@ st.markdown("""
     .block-container{ padding-top: var(--hero-top) !important; }
   </style>
 """, unsafe_allow_html=True)
-st.markdown('''
-<script>
-(function(){
-  function syncHeroMetrics(){
-    try{
-      var bc = document.querySelector('.block-container');
-      var vw = window.innerWidth || document.documentElement.clientWidth;
-      var baseLeft = 24, baseRight = vw - 24;
-      if (bc){
-        var br = bc.getBoundingClientRect();
-        baseLeft = br.left; baseRight = br.right;
-      }
-
-      // Guard left overlays (sidebar/drawers)
-      var selectors = ['#left-flyout', '.left-flyout', '#link-factory', '.link-factory', '.stSidebar', '[data-side=\"left\"]'];
-      var guardRight = 0;
-      for (var i=0;i<selectors.length;i++){
-        var el = document.querySelector(selectors[i]);
-        if(!el) continue;
-        var r = el.getBoundingClientRect();
-        if (r.width > 100 && r.left < vw*0.5) guardRight = Math.max(guardRight, r.right);
-      }
-
-      // Prefer explicit chat column anchor if present
-      var heroLeft = Math.max(baseLeft, guardRight + 8);
-      var anchor = document.querySelector('#chat-col-anchor');
-      if(anchor){
-        var ar = anchor.getBoundingClientRect();
-        // anchor is inside the chat column; use its left edge
-        heroLeft = Math.max(heroLeft, ar.left);
-      }
-
-      var heroRight = baseRight;
-      var heroWidth = Math.max(160, heroRight - heroLeft);
-
-      document.documentElement.style.setProperty('--bc-left', heroLeft + 'px');
-      document.documentElement.style.setProperty('--bc-w', heroWidth + 'px');
-
-      // Update hero height variable
-      var hero = document.querySelector('.global-hero');
-      if (hero){
-        var h = Math.round(hero.getBoundingClientRect().height || 0);
-        if(h>0) document.documentElement.style.setProperty('--hero-h', h + 'px');
-      }
-    }catch(e){}
-  }
-  syncHeroMetrics();
-  addEventListener('resize', syncHeroMetrics);
-  new MutationObserver(syncHeroMetrics).observe(document.body, {subtree:true, childList:true, attributes:true});
-})();
-</script>
-''', unsafe_allow_html=True)
 
 st.markdown("""
 <style>
@@ -826,9 +787,9 @@ def _push_user_from_pending() -> str | None:
     return q
 
 def render_pre_chat_center():
-    # chat column left anchor for hero alignment
-    st.markdown('<div id=\"chat-col-anchor\"></div>', unsafe_allow_html=True)
     """대화 전: 중앙 히어로 + 중앙 업로더(키: first_files) + 전송 폼"""
+    st.markdown('<div class="chat-root">', unsafe_allow_html=True)
+
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
     st.markdown('<div class="global-hero">' + HERO_HTML + '</div>', unsafe_allow_html=True)
 
@@ -854,10 +815,9 @@ def render_pre_chat_center():
 
 # 기존 render_bottom_uploader() 전부 교체
 
-# [ADD] 답변 완료 후에도 프리챗과 동일한 UI 사용
+# [ADD] 답변 완료 후에도 프리챗과 동일한 UI 사용    st.markdown('</div>', unsafe_allow_html=True)
+
 def render_post_chat_simple_ui():
-    # chat column left anchor for hero alignment
-    st.markdown('<div id=\"chat-col-anchor\"></div>', unsafe_allow_html=True)
     import time, io
     st.markdown('<section class="post-chat-ui">', unsafe_allow_html=True)
 
@@ -1032,12 +992,15 @@ def extract_law_names_from_answer(md: str) -> list[str]:
 
 def normalize_law_link(u: str) -> str:
     """상대/스킴누락 링크를 www.law.go.kr 절대 URL로 교정"""
+    st.markdown('<div class="chat-root">', unsafe_allow_html=True)
+
     if not u: return ""
     u = u.strip()
     if u.startswith("http://") or u.startswith("https://"): return u
     if u.startswith("//"): return "https:" + u
     if u.startswith("/"):  return up.urljoin(LAW_PORTAL_BASE, u.lstrip("/"))
     return up.urljoin(LAW_PORTAL_BASE, u)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def _normalize_text(s: str) -> str:
     s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
