@@ -17,6 +17,21 @@ HERO_HTML = '''
 
 
 
+
+
+st.markdown("""
+<style>
+  :root{
+    --hero-top: 12px;            /* 헤드라인 상단 여백: 필요시 조정 */
+    --flyout-top: var(--hero-top);  /* 우측 통합검색 상단과 동기화 */
+  }
+  .global-hero{ position: sticky; top: var(--hero-top); z-index: 10; margin: 0 0 12px; }
+  .global-hero h1{ margin-bottom: 10px !important; }
+  /* 이전 방식 비활성화 */
+  .hero-stick, .hero-in-chat{ display:none !important; }
+</style>
+""", unsafe_allow_html=True)
+
 st.markdown("""
 <style>
   :root{ --ans-nudge: 0px; }
@@ -758,7 +773,7 @@ def _push_user_from_pending() -> str | None:
 def render_pre_chat_center():
     """대화 전: 중앙 히어로 + 중앙 업로더(키: first_files) + 전송 폼"""
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
-    st.markdown(HERO_HTML, unsafe_allow_html=True)
+    st.markdown('<div class="global-hero">' + HERO_HTML + '</div>', unsafe_allow_html=True)
 
     # 중앙 업로더 (대화 전 전용)
     st.file_uploader(
@@ -2643,6 +2658,9 @@ st.markdown('<div id="ans-anchor"></div>', unsafe_allow_html=True)
 
 # --- Sticky hero at the top of the chat area (stays aligned with flyout) ---
 st.markdown('<div class="hero-stick">' + HERO_HTML + '</div>', unsafe_allow_html=True)
+
+# --- Global sticky hero at the very top ---
+st.markdown('<div class="global-hero">' + HERO_HTML + '</div>', unsafe_allow_html=True)
 
 for i, m in enumerate(st.session_state.messages):
         # --- Hero above the most recent user question (shows during loading & after) ---
