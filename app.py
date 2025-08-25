@@ -27,6 +27,46 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# 최상단 스크롤 기준점
+st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
+
+st.markdown("""
+<style>
+:root{
+  --center-col: 980px;   /* 중앙 전체 폭 */
+  --bubble-max: 760px;   /* 말풍선 최대 폭 */
+  --pad-x: 12px;         /* 좌우 여백 */
+}
+
+/* 본문(채팅 전/후 공통) 중앙 폭 고정 */
+.block-container{
+  max-width: var(--center-col) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  padding-left: var(--pad-x) !important;
+  padding-right: var(--pad-x) !important;
+}
+
+/* 업로더/폼/카드류도 같은 폭 */
+.block-container [data-testid="stFileUploader"],
+.block-container form,
+.block-container .stForm,
+.block-container .stMarkdown>div{
+  max-width: var(--center-col) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+/* 채팅 메시지 폭(답변 후) */
+[data-testid="stChatMessage"]{
+  max-width: var(--bubble-max) !important;
+  width: 100% !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.markdown("""
 <style>
 :root{
@@ -2206,30 +2246,75 @@ body.answering .block-container {
 if not chat_started:
     st.markdown("""
     <style>
-      /* 우측 패널 숨김 */
+      /* 프리챗: 우측 패널만 숨기고, 스크롤을 잠가 상단 고정 */
+      #search-flyout{ display:none !important; }
+      html, body{ height:100%; overflow-y:hidden !important; }
+      .main > div:first-child{ height:100vh !important; }
+      .block-container{ min-height:100vh !important; padding-top:12px !important; padding-bottom:0 !important; }
+      /* 전역 가운데 정렬 규칙이 있어도 프리챗에선 히어로를 '위에서부터' 배치 */
+      .center-hero{ min-height:auto !important; display:block !important; }
+    </style>
+    <script>
+    (function(){
+      try{ history.scrollRestoration='manual'; }catch(e){}
+      const up=()=>{ window.scrollTo(0,0); if(document.activeElement) document.activeElement.blur(); };
+      up(); setTimeout(up,0); setTimeout(up,50);
+      document.addEventListener('focusin', up, true);
+      new MutationObserver(up).observe(document.body, {subtree:true, childList:true});
+    })();
+    </script>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <style>
+      /* 우측 패널만 숨김 */
       #search-flyout{ display:none !important; }
 
-      /* 우측/하단 여백 제거 */
-      @media (min-width:1280px){ .block-container{ padding-right:0 !important; } }
-      .block-container{ padding-bottom:0 !important; }
-
-      /* 히어로를 뷰포트 절대 중앙에 고정 */
-      .center-hero{
-        position: fixed !important;
-        left: 50% !important; top: 50% !important;
-        transform: translate(-50%, -50%) !important;
-        width: var(--center-col); max-width: 92vw;
-        margin: 0 !important; padding: 0 !important;
-        display: flex; flex-direction: column; align-items: center;
-        justify-content: center;
-      }
-
-      /* 히어로 내부 위젯 폭 */
-      .center-hero .stFileUploader, .center-hero .stTextInput{
-        width: 720px; max-width: 92vw;
+      /* ⛳️ 프리챗: 스크롤 생기지 않게 잠그고 상단 고정 */
+      html, body{ height:100%; overflow-y:hidden !important; }
+      .main > div:first-child{ height:100vh !important; }              /* Streamlit 루트 */
+      .block-container{
+        min-height:100vh !important;   /* 화면만큼만 */
+        padding-top:12px !important;
+        padding-bottom:0 !important;   /* 바닥 여백 제거 */
+        margin-left:auto !important; margin-right:auto !important;
       }
     </style>
+    <script>
+    (function(){
+      try{ history.scrollRestoration='manual'; }catch(e){}
+      const up=()=>{ window.scrollTo(0,0); if(document.activeElement) document.activeElement.blur(); };
+      up(); setTimeout(up,0); setTimeout(up,50);    // 자동 포커스 대비
+      document.addEventListener('focusin', up, true);
+      new MutationObserver(up).observe(document.body, {subtree:true, childList:true});
+    })();
+    </script>            
+               
     """, unsafe_allow_html=True)
+
+    render_pre_chat_center()
+    st.stop()
+    
+else:
+    st.markdown("""
+    <style>
+      /* 채팅 시작 후: 스크롤 정상 복원 */
+      html, body{ overflow-y:auto !important; }
+      .main > div:first-child{ height:auto !important; }
+      .block-container{ min-height:auto !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <style>
+      /* 📌 채팅 시작 후에는 정상 스크롤 */
+      html, body{ overflow-y:auto !important; }
+      .block-container{ min-height:auto !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ... 기존 렌더링 계속
+
 
 # 🎯 대화 전에는 우측 패널 숨기고, 여백을 0으로 만들어 완전 중앙 정렬
 if not chat_started:
