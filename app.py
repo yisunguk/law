@@ -1155,7 +1155,7 @@ def render_bubble_with_copy(message: str, key: str):
     st.markdown(message)
     safe_raw_json = json.dumps(message)
     html_tpl = '''
-    <div class="copy-row">
+    <div class="copy-row" style="margin-bottom:8px">
       <button id="copy-__KEY__" class="copy-btn">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
           <path d="M9 9h9v12H9z" stroke="currentColor"/>
@@ -2400,7 +2400,7 @@ document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 st.markdown("""
 <style>
 /* ✅ 포스트-챗 UI(업로더+입력폼)는 '답변 생성 중'에만 숨김 */
-body.answering .post-chat-ui { display: none !important; }
+body.answering .post-chat-ui{ margin-top: 8px; }
 
 /* ✅ 기존 chatbar 컴포넌트는 사용하지 않으므로 완전 숨김 */
 #chatbar-fixed { display: none !important; }
