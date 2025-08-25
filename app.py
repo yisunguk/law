@@ -586,6 +586,7 @@ def _push_user_from_pending() -> str | None:
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     })
     st.session_state["_last_user_nonce"] = nonce
+    st.session_state["current_turn_nonce"] = nonce  # ✅ 이 턴의 nonce 확정
     return q
 
 def render_pre_chat_center():
@@ -2208,7 +2209,6 @@ with st.sidebar:
 user_q = _push_user_from_pending()
 
 # capture the nonce associated with this pending input (if any)
-st.session_state['current_turn_nonce'] = st.session_state.get('_pending_user_nonce')
 # === 지금 턴이 '답변을 생성하는 런'인지 여부 (스트리밍 중 표시/숨김에 사용)
 ANSWERING = bool(user_q)
 st.session_state["__answering__"] = ANSWERING
@@ -2499,6 +2499,8 @@ if user_q:
                 if buffer:
                     full_text += buffer
                     buffer = ""
+                if payload and payload.strip() == full_text.strip():
+                    payload = ""
                 if payload:
                     full_text += payload
                 collected_laws = law_list or []
@@ -2522,7 +2524,13 @@ if user_q:
         final_text = apply_final_postprocess(full_text, collected_laws)
 
     # ▶ 답변을 세션에 넣고 rerun
-    if final_text.strip():
+        # --- seatbelt: skip if same answer already stored this turn ---
+    _ans_hash = _hash_text(final_text)
+    if st.session_state.get('_last_ans_hash') == _ans_hash:
+        final_text = ""
+    else:
+        st.session_state['_last_ans_hash'] = _ans_hash
+if final_text.strip():
         # --- per-turn nonce guard: allow only one assistant append per user turn ---
         _nonce = st.session_state.get('current_turn_nonce') or st.session_state.get('_pending_user_nonce')
         _done = st.session_state.get('_nonce_done', {})
@@ -2541,8 +2549,8 @@ if user_q:
     # 프리뷰 컨테이너 비우기 이후 원래 코드 계속...
 
     # 프리뷰 컨테이너 비우기
-    if stream_box is not None:
-        stream_box.empty()
+if stream_box is not None:
+    stream_box.empty()
     
 # ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
 if chat_started and not st.session_state.get("__answering__", False):
@@ -2559,4 +2567,3 @@ if chat_started and not st.session_state.get("__answering__", False):
             st.session_state["_pending_user_nonce"] = time.time_ns()
         st.session_state["_clear_input"] = True
         st.rerun()
-
