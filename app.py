@@ -1073,10 +1073,34 @@ _ART_PAT_BULLET = re.compile(
 _SEC_LAW_TITLES    = re.compile(r'(?mi)^\s*\d+\s*[\.\)]\s*(적용\s*법령\s*/?\s*근거|법적\s*근거)\s*$')
 _SEC_EXPLAIN_TITLE = re.compile(r'(?mi)^\s*(?:#{1,6}\s*)?해설\s*:?\s*$')
 # 다음 상위 섹션(예: "3. 핵심 판단") 시작 라인
-_SEC_NEXT_TITLE    = re.compile(r'(?m)^\s*\d+\s*[\.\)]\s+')
+_SEC_NEXT_TITLE    = re.compile  # (unchanged)
+
+# 해설 섹션 내부의 '맨몸 URL'(순수 문자열 URL)을 <URL> 형태로 감싸서 자동 링크화
+_URL_BARE = re.compile(r'(?<!\()(?<!\])\b(https?://[^\s<>)]+)\b')
+def autolink_bare_urls_in_explain(md: str) -> str:
+    if not md:
+        return md
+    m = _SEC_EXPLAIN_TITLE.search(md)
+    if not m:
+        return md
+    start = m.end()
+    n = _SEC_NEXT_TITLE.search(md, start)
+    end = n.start() if n else len(md)
+    block = md[start:end]
+    # 기존 마크다운 링크([text](url))는 그대로 두고, 맨몸 URL만 <url>로 감싼다
+    def _wrap(match):
+        url = match.group(1)
+        return f'<{url}>'
+    block = _URL_BARE.sub(_wrap, block)
+    return md[:start] + block + md[end:]
+(r'(?m)^\s*\d+\s*[\.\)]\s+')
 
 # 하위 법령 소제목(예: "1) 산업안전보건법")
-_LAW_HEADING_LINE = re.compile(r'(?m)^\s*\d+\s*[\.\)]\s*([가-힣A-Za-z0-9·()\s]{2,40}?법)\s*$')
+# 번호/헤딩/불릿이 있어도 없어도 잡히게 완화
+_LAW_HEADING_LINE = re.compile(
+    r'(?m)^\s*(?:\d+\s*[\.\)]\s*)?(?:#{1,6}\s*)?(?:[*-]\s*)?(?P<law>[가-힣A-Za-z0-9·()\s]{2,40}?법)\s*$'
+)
+
 
 # 불릿에 "법령명 제n조 ..." 패턴(기존 전역의 _ART_PAT_BULLET 재사용)
 # _ART_PAT_BULLET, _deep_article_url 이 이미 정의돼 있어야 합니다.
@@ -1098,7 +1122,7 @@ def _link_block_with_bullets(block: str) -> str:
     for line in block.splitlines():
         mh = _LAW_HEADING_LINE.match(line)
         if mh:
-            cur_law = (mh.group(1) or "").strip() or cur_law
+            cur_law = (mh.groupdict().get('law') or (mh.group(1) if mh.lastindex else "") or "").strip() or cur_law
             out.append(line)
             continue
 
