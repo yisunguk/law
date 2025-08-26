@@ -1,3 +1,7 @@
+
+
+def enforce_memo_layout(md: str, collected_laws: list) -> str:
+    return md
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
@@ -64,9 +68,10 @@ def cached_suggest_for_tab(tab_key: str):
     import streamlit as st
     store = st.session_state.setdefault("__tab_suggest__", {})
     if tab_key not in store:
-        from modules import suggest_keywords_for_tab
-        store[tab_key] = suggest_keywords_for_tab(tab_key)
+        from modules import suggest_keywords_for_tab, route_intent
+        store[tab_key] = cached_suggest_for_tab(tab_key)
     return store[tab_key]
+
 def cached_suggest_for_law(law_name: str):
     import streamlit as st
     store = st.session_state.setdefault("__law_suggest__", {})
@@ -942,6 +947,10 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
             s = _re.sub(r"[ \t]+\n", "\n", s)
             return s
         ft = _normalize_text(full_text)
+
+
+    # --- 메모 레이아웃 강제 ---
+    ft = enforce_memo_layout(ft, collected_laws)
 
     # 2) 불릿 문자 통일: •, * → -  (인라인 링크 치환 누락 방지)
     ft = (
@@ -2808,25 +2817,3 @@ if user_q:
             pass
 
 # (moved) post-chat UI is now rendered inline under the last assistant message.
-
-
-# --- FINAL SAFE-GUARD: ensure route_intent exists even if imports failed at runtime ---
-def __ensure_route_intent_fallback__():
-    g = globals()
-    if 'route_intent' in g and callable(g['route_intent']):
-        return
-    try:
-        from modules import route_intent as _ri  # type: ignore
-    except Exception:
-        try:
-            from legal_modes import route_intent as _ri  # type: ignore
-        except Exception:
-            def _ri(q: str, client=None, model=None):
-                try:
-                    det, conf = classify_intent(q)
-                except Exception:
-                    det, conf = (Intent.QUICK, 0.55)
-                needs = det in (Intent.LAWFINDER, Intent.MEMO)
-                return det, conf, needs
-    g['route_intent'] = _ri
-__ensure_route_intent_fallback__()
