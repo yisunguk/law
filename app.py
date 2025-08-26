@@ -1,6 +1,20 @@
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
+# === Helper: Force "1. 자문요지" and split inline body to next line ===
+import re as _re_patch
+
+_HEAD_CASE_RE = _re_patch.compile(
+    r'(?mi)^\s*(?:\*\*|__)?\s*1[.)]\s*(?:사건\s*요지|사건요지)\s*(?:\*\*|__)?\s*[:：]?\s*(.*)$'
+)
+_HEAD_ADVICE_RE = _re_patch.compile(
+    r'(?mi)^\s*(?:\*\*|__)?\s*1[.)]\s*자문\s*요지\s*(?:\*\*|__)?\s*[:：]?\s+(.*)$'
+)
+def override_first_heading_to_consultation(md: str) -> str:
+    md2 = _HEAD_CASE_RE.sub(lambda m: "1. 자문요지\n" + (m.group(1).strip() if m.group(1) else ""), md, count=1)
+    md3 = _HEAD_ADVICE_RE.sub(lambda m: "1. 자문요지\n" + m.group(1).strip(), md2, count=1)
+    return md3
+
 import streamlit as st
 
 # --- per-turn nonce ledger (prevents double appends)
@@ -10,7 +24,7 @@ def cached_suggest_for_tab(tab_key: str):
     import streamlit as st
     store = st.session_state.setdefault("__tab_suggest__", {})
     if tab_key not in store:
-        from modules import suggest_keywords_for_tab
+        from modules import suggest_keywords_for_tab, route_intent
         store[tab_key] = cached_suggest_for_tab(tab_key)
     return store[tab_key]
 
@@ -854,7 +868,8 @@ def _chat_started() -> bool:
 
 # --- 최종 후처리 유틸: 답변 본문을 정리하고 조문에 인라인 링크를 붙인다 ---
 def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
-     # 1) normalize (fallback 포함)
+    full_text = override_first_heading_to_consultation(full_text)
+    # 1) normalize (fallback 포함)
     try:
         ft = _normalize_text(full_text)
     except NameError:
@@ -867,7 +882,6 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
         ft = _normalize_text(full_text)
 
     # 2) 불릿 문자 통일: •, * → -  (인라인 링크 치환 누락 방지)
-    ft = override_first_heading_to_consultation(ft)
     ft = (
         ft.replace("\u2022 ", "- ")  # 유니코드 불릿
           .replace("• ", "- ")
