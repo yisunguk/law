@@ -33,18 +33,18 @@ st.set_page_config(
 st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
 
 # ==========================
-# 전역 상단 고정 헤드라인 (채팅 전/후 공통)
+# 전역 상단 고정 헤드라인 (채팅 전/후 공통, Cloud 안전판)
 # ==========================
 def render_top_headline():
     import streamlit as st
     st.markdown("""
     <style>
       :root{ --header-h: 64px; --safe-top: env(safe-area-inset-top, 0px); }
-      /* 상단 고정 헤드라인: 뷰포트 기준 고정 */
+      /* 상단 고정 헤드라인 */
       #app-headline{
         position: fixed; left: 0; right: 0; top: var(--safe-top);
         z-index: 1000;
-        background: rgba(13,17,23,.75);
+        background: rgba(13,17,23,.78);
         backdrop-filter: blur(6px);
         border-bottom: 1px solid rgba(255,255,255,.06);
       }
@@ -54,8 +54,10 @@ def render_top_headline():
         display: flex; align-items: center; gap: 10px;
       }
       #app-headline .title{ font-weight: 900; font-size: 22px; letter-spacing: -.3px; }
-      /* 본문 상단 여백을 헤더 높이에 맞춰 자동 보정 */
+      /* 본문 상단 여백 보정 */
       .block-container{ padding-top: calc(var(--header-h) + var(--safe-top) + 8px) !important; }
+      /* 히어로 상단 간격 0으로 */
+      .center-hero{ margin-top: 0 !important; }
     </style>
     <div id="app-headline">
       <div class="inner">
@@ -64,20 +66,27 @@ def render_top_headline():
     </div>
     <script>
     (function(){
+      // 헤더 높이를 계산해 CSS 변수에 반영
       const head = document.getElementById('app-headline');
-      if(!head) return;
       const apply = () => {
+        if(!head) return;
         const h = Math.round(head.getBoundingClientRect().height || 64);
         document.documentElement.style.setProperty('--header-h', h + 'px');
       };
       apply();
       new ResizeObserver(apply).observe(head);
       window.addEventListener('resize', apply);
+
+      // 헤더를 block-container의 첫 자식으로 강제 이동 (디버그 텍스트 위에 오도록)
+      const bc = document.querySelector('.block-container');
+      if (bc && head && head.parentNode !== bc) {
+        bc.insertBefore(head, bc.firstChild);
+        apply();
+      }
       setTimeout(apply, 50);
     })();
     </script>
     """, unsafe_allow_html=True)
-
 
 render_top_headline()
 
@@ -2473,7 +2482,7 @@ if not chat_started:
       #search-flyout{ display:none !important; }
       html, body{ height:100%; overflow-y:hidden !important; }
       .main > div:first-child{ height:100vh !important; }
-      .block-container{ min-height:100vh !important; padding-top: calc(var(--header-h, 72px) + 12px) !important; padding-bottom:0 !important; }
+      .block-container{ min-height:100vh !important; padding-top: calc(var(--header-h, 64px) + 12px) !important; padding-bottom:0 !important; }
       /* 전역 가운데 정렬 규칙이 있어도 프리챗에선 히어로를 '위에서부터' 배치 */
       .center-hero{ min-height:auto !important; display:block !important; }
     </style>
@@ -2498,7 +2507,7 @@ if not chat_started:
       .main > div:first-child{ height:100vh !important; }              /* Streamlit 루트 */
       .block-container{
         min-height:100vh !important;   /* 화면만큼만 */
-        padding-top: calc(var(--header-h, 72px) + 12px) !important;
+        padding-top: calc(var(--header-h, 64px) + 12px) !important;
         padding-bottom:0 !important;   /* 바닥 여백 제거 */
         margin-left:auto !important; margin-right:auto !important;
       }
