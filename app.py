@@ -764,16 +764,14 @@ def _push_user_from_pending() -> str | None:
         content_final = q.strip()
     st.session_state.messages.append({
         "role": "user",
-        "content": q.strip(),
+        "content": content_final.strip(),
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     })
     st.session_state["_last_user_nonce"] = nonce
     st.session_state["current_turn_nonce"] = nonce  # ✅ 이 턴의 nonce 확정
     # reset duplicate-answer guard for a NEW user turn
     st.session_state.pop('_last_ans_hash', None)
-
-    return q
-
+    return content_final
 def render_pre_chat_center():
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
     st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
