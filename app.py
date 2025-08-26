@@ -23,7 +23,7 @@ def cached_suggest_for_law(law_name: str):
     return store[law_name]
 
 st.set_page_config(
-    page_title="인공지능 법무 상담사",
+    page_title="법제처 법무 상담사",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -31,65 +31,6 @@ st.set_page_config(
 
 # 최상단 스크롤 기준점
 st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
-
-# ==========================
-# 전역 상단 고정 헤드라인 (채팅 전/후 공통, Cloud 안전판)
-# ==========================
-def render_top_headline():
-    import streamlit as st
-    st.markdown("""
-    <style>
-      :root{ --header-h: 64px; --safe-top: env(safe-area-inset-top, 0px); }
-      /* 상단 고정 헤드라인 */
-      #app-headline{
-        position: fixed; left: 0; right: 0; top: var(--safe-top);
-        z-index: 1000;
-        background: rgba(13,17,23,.78);
-        backdrop-filter: blur(6px);
-        border-bottom: 1px solid rgba(255,255,255,.06);
-      }
-      #app-headline .inner{
-        max-width: var(--center-col);
-        margin: 0 auto; padding: 12px;
-        display: flex; align-items: center; gap: 10px;
-      }
-      #app-headline .title{ font-weight: 900; font-size: 22px; letter-spacing: -.3px; }
-      /* 본문 상단 여백 보정 */
-      .block-container{ padding-top: calc(var(--header-h) + var(--safe-top) + 8px) !important; }
-      /* 히어로 상단 간격 0으로 */
-      .center-hero{ margin-top: 0 !important; }
-    </style>
-    <div id="app-headline">
-      <div class="inner">
-        <div class="title">⚖️ 법률상담 챗봇</div>
-      </div>
-    </div>
-    <script>
-    (function(){
-      // 헤더 높이를 계산해 CSS 변수에 반영
-      const head = document.getElementById('app-headline');
-      const apply = () => {
-        if(!head) return;
-        const h = Math.round(head.getBoundingClientRect().height || 64);
-        document.documentElement.style.setProperty('--header-h', h + 'px');
-      };
-      apply();
-      new ResizeObserver(apply).observe(head);
-      window.addEventListener('resize', apply);
-
-      // 헤더를 block-container의 첫 자식으로 강제 이동 (디버그 텍스트 위에 오도록)
-      const bc = document.querySelector('.block-container');
-      if (bc && head && head.parentNode !== bc) {
-        bc.insertBefore(head, bc.firstChild);
-        apply();
-      }
-      setTimeout(apply, 50);
-    })();
-    </script>
-    """, unsafe_allow_html=True)
-
-render_top_headline()
-
 
 st.markdown("""
 <style>
@@ -196,15 +137,7 @@ def _init_engine_lazy():
     )
     return st.session_state.engine
 
-# app.py
-# 기존:
-# from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
-# 변경:
-from modules import AdviceEngine, Intent, build_sys_for_mode
-from modules import route_intent, pick_mode
-
-# app.py (교체용)
-
+# 기존 ask_llm_with_tools를 얇은 래퍼로 교체
 from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
 
 def ask_llm_with_tools(
@@ -232,19 +165,10 @@ def ask_llm_with_tools(
         mode = pick_mode(det_intent, conf)
 
     # 2) 프롬프트/툴 사용 여부
-    import re
-    # '민법 제839조', '839조의2' 같은 조문 번호 질의 감지
-    ARTICLE_Q = bool(re.search(r"(제?\s*\d{1,4}\s*조(?:의\d{1,3})?)", (user_q or "")))
-
-    # LAW_FINDER/MEMO 또는 '조문 질의'면 툴 사용
-    use_tools = (mode in (Intent.LAWFINDER, Intent.MEMO)) or ARTICLE_Q
-
-    # QUICK/LAWFINDER는 요약 톤 적용
-    brief = True if mode in (Intent.QUICK, Intent.LAWFINDER) else False
-
+    use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
-    # 3) 엔진 호출
+    # 3) 엔진 호출 (새 시그니처에 맞게)
     yield from engine.generate(
         user_q,
         system_prompt=sys_prompt,
@@ -253,8 +177,6 @@ def ask_llm_with_tools(
         stream=stream,
         primer_enable=True,
     )
-
-
 
 import io, os, re, json, time, html
 
@@ -962,19 +884,17 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
 
     # 6) 중복/빈 줄 정리
     ft = _dedupe_blocks(ft)
-    ft = _patch_section_titles(ft)  
+
     return ft
 
-def _patch_section_titles(text: str) -> str:
-    import re
-    s = (text or "")
-    # 1) 섹션명 치환
-    s = s.replace("사건 요지", "자문 요지")
-    # 2) "1. 자문 요지" 다음 줄 본문을 같은 줄로 병합
-    s = re.sub(r'(?m)^1\.\s*자문 요지\s*\n+\s*(.+)', r"1. 자문 요지: \1", s)
-    # 3) 불릿 끝의 “법령/조문/세부조항 링크” 꼬리 문구 제거
-    s = re.sub(r'[,;·]?\s*(법령|조문|세부\s*조항)\s*링크', '', s)
-    return s
+
+
+# --- 답변(마크다운)에서 '법령명'들을 추출(복수) ---
+
+# [민법 제839조의2](...), [가사소송법 제2조](...) 등
+_LAW_IN_LINK = re.compile(r'\[([^\]\n]+?)\s+제\d+조(의\d+)?\]')
+# 불릿/일반 문장 내: "OO법/령/규칙/조례" (+선택적 '제n조')
+_LAW_INLINE  = re.compile(r'([가-힣A-Za-z0-9·\s]{2,40}?(?:법|령|규칙|조례))(?:\s*제\d+조(의\d+)?)?')
 
 def extract_law_names_from_answer(md: str) -> list[str]:
     if not md:
@@ -1062,33 +982,17 @@ _REF_BLOCK2_PAT = re.compile(r'\n[ \t]*###\s*참고\s*링크\(조문\)[\s\S]*$',
 def _deep_article_url(law: str, art_label: str) -> str:
     return f"https://www.law.go.kr/법령/{quote((law or '').strip())}/{quote(art_label)}"
 
-# 기존 _ART_PAT_BULLET 교체
-_ART_PAT_BULLET = re.compile(
-    r'(?m)^(?P<prefix>\s*[-*•]\s*)'            # 불릿
-    r'(?P<b1>\*{0,2})'                          # 앞쪽 **
-    r'(?P<law>[가-힣A-Za-z0-9·()\s]{2,40})\s*'  # 법령명
-    r'제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})'  # 제N조(의M)
-    r'(?P<b2>\*{0,2})'                          # 뒤쪽 **
-    r'(?P<tail>[^\n]*)$'                        # 꼬리
-)
-
 def link_inline_articles_in_bullets(markdown: str) -> str:
+    """불릿 라인 중 '법령명 제N조(의M)'를 [텍스트](조문URL)로 교체"""
     def repl(m: re.Match) -> str:
         law = m.group("law").strip()
         art = f"제{m.group('num')}조{m.group('ui') or ''}"
         url = _deep_article_url(law, art)
-
-        tail = m.group("tail") or ""
-        # 꼬리에 붙은 '조문 링크' 문구 제거(쉼표·띄어쓰기 포함)
-        import re as _re
-        tail = _re.sub(r'\s*[,;·]*\s*조문\s*링크', '', tail).rstrip()
-
-        b1 = m.group("b1") or ""
-        b2 = m.group("b2") or ""
-        linked = f"{m.group('prefix')}{b1}[{law} {art}]({url}){b2}{tail}"
+        tail = (m.group("tail") or "")
+        # tail이 " (재산분할)" 같은 부가설명일 수 있으므로 보존
+        linked = f"{m.group('prefix')}[{law} {art}]({url}){tail}"
         return linked
     return _ART_PAT_BULLET.sub(repl, markdown or "")
-
 
 def strip_reference_links_block(markdown: str) -> str:
     """맨 아래 '참고 링크' 섹션을 제거(모델/모듈이 생성한 블록 모두 커버)"""
@@ -1146,7 +1050,7 @@ def _summarize_laws_for_primer(law_items: list[dict], max_items: int = 6) -> str
         rows.append(f"{i}) {nm} ({kind}; {dept}; 시행 {eff}, 공포 {pub})")
     body = "\n".join(rows)
     return (
-        "아래는 사용자 자문과 관련도가 높은 법령 후보 목록이다. "
+        "아래는 사용자 사건과 관련도가 높은 법령 후보 목록이다. "
         "답변을 작성할 때 각각의 적용 범위와 책임주체, 구성요건·의무·제재를 교차 검토하라.\n"
         f"{body}\n"
         "가능하면 각 법령을 분리된 소제목으로 정리하고, 핵심 조문(1~2개)만 간단 인용하라."
@@ -1591,13 +1495,13 @@ def rerank_laws_with_llm(user_q: str, law_items: list[dict], top_k: int = 8) -> 
     names_txt = "\n".join(f"- {n}" for n in names[:25])
 
     SYS = (
-        "너는 자문과 관련된 '법령명'만 남기는 필터야. 질문 맥락과 무관하면 제외하고, JSON만 반환해.\n"
+        "너는 사건과 관련된 '법령명'만 남기는 필터야. 질문 맥락과 무관하면 제외하고, JSON만 반환해.\n"
         '형식: {"pick":["형법","산업안전보건법"]}'
     )
     prompt = (
         "사용자 질문:\n" + (user_q or "") + "\n\n"
         "후보 법령 목록:\n" + names_txt + "\n\n"
-        "자문에 직접 관련된 것만 3~8개 고르고 나머지는 제외해."
+        "사건에 직접 관련된 것만 3~8개 고르고 나머지는 제외해."
     )
 
     try:
@@ -1682,7 +1586,7 @@ def extract_law_candidates_llm(q: str) -> list[str]:
     # 1) 일반 프롬프트
     try:
         SYSTEM_EXTRACT1 = (
-            "너는 한국 자문 설명에서 '관련 법령명'만 1~3개 추출하는 도우미다. "
+            "너는 한국 사건 설명에서 '관련 법령명'만 1~3개 추출하는 도우미다. "
             "설명 없이 JSON만 반환하라.\n"
             '형식: {"laws":["형법","산업안전보건법"]}'
         )
@@ -1770,12 +1674,12 @@ def propose_api_queries_llm(user_q: str) -> list[dict]:
         # ★ 핵심 지시
         "- **반드시 `법령명`(예: 형법, 민법, 도로교통법, 교통사고처리 특례법) 또는 "
         "'법령명 + 핵심어(예: 형법 과실치상)` 형태로 질의를 만들 것.**\n"
-        "- **주제 서술(예: 지하 주차장에서 과속…) 자체를 질의로 사용하지 말 것.**\n"
+        "- **사건 서술(예: 지하 주차장에서 과속…) 자체를 질의로 사용하지 말 것.**\n"
         "- must는 1~3개로 간결하게, must_not은 분명히 다른 축일 때만."
           # === 규칙(중요) ===
         "- target=law 인 경우, q에는 **항상 법령명만** 적는다. 예: 민법, 형법, 도로교통법.\n"
         "- 키워드(예: 손해배상, 과실치상, 과속 등)는 q에 붙이지 말고 **must**에만 넣는다.\n"
-        "- 주제 서술(예: 주차장에서 사고…)을 q로 쓰지 말고 반드시 법령명/행정규칙명/조례명 등만 사용한다.\n"
+        "- 사건 서술(예: 주차장에서 사고…)을 q로 쓰지 말고 반드시 법령명/행정규칙명/조례명 등만 사용한다.\n"
         "- 예시1: '민법 손해배상' → {\"target\":\"law\",\"q\":\"민법\",\"must\":[\"손해배상\"]}\n"
         "- 예시2: '형법 과실치상' → {\"target\":\"law\",\"q\":\"형법\",\"must\":[\"과실치상\"]}\n"
         "- 예시3: '주차장에서 사고' → {\"target\":\"law\",\"q\":\"도로교통법\",\"must\":[\"주차장\",\"사고\"]}\n"
@@ -2518,7 +2422,7 @@ if not chat_started:
       #search-flyout{ display:none !important; }
       html, body{ height:100%; overflow-y:hidden !important; }
       .main > div:first-child{ height:100vh !important; }
-      .block-container{ min-height:100vh !important; padding-top: calc(var(--header-h, 64px) + 12px) !important; padding-bottom:0 !important; }
+      .block-container{ min-height:100vh !important; padding-top:12px !important; padding-bottom:0 !important; }
       /* 전역 가운데 정렬 규칙이 있어도 프리챗에선 히어로를 '위에서부터' 배치 */
       .center-hero{ min-height:auto !important; display:block !important; }
     </style>
@@ -2543,7 +2447,7 @@ if not chat_started:
       .main > div:first-child{ height:100vh !important; }              /* Streamlit 루트 */
       .block-container{
         min-height:100vh !important;   /* 화면만큼만 */
-        padding-top: calc(var(--header-h, 64px) + 12px) !important;
+        padding-top:12px !important;
         padding-bottom:0 !important;   /* 바닥 여백 제거 */
         margin-left:auto !important; margin-right:auto !important;
       }
