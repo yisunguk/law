@@ -968,27 +968,12 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
 def _patch_section_titles(text: str) -> str:
     import re
     s = text.replace("사건 요지", "자문 요지")
-    # "1. 자문 요지" 다음 줄 본문을 같은 줄로
-    s = re.sub(r'(?m)^1\.\s*자문 요지\s*\n\s*(.+)', r"1. 자문 요지: \1", s)
-    # 남아있는 '법령 링크' 문구 제거
-    s = re.sub(r"\*?-?\s*조문?\s*링크", "", s)
+    # "1. 자문 요지" 다음 줄(빈 줄 포함) 본문을 같은 줄로 병합
+    s = re.sub(r'(?m)^1\.\s*자문 요지\s*\n+\s*(.+)', r"1. 자문 요지: \1", s)
+    # '조문 링크' 꼬리 제거 (쉼표/마침표/굵게 포함까지)
+    s = re.sub(r'[,;·]?\s*조문\s*링크', '', s)
     return s
 
-
-    # 6) 중복/빈 줄 정리
-    ft = _dedupe_blocks(ft)
-
-    # 7) 사건요지 → 자문요지 패치 & 링크 문구 제거
-    ft = _patch_section_titles(ft)
-
-    return ft
-
-# --- 답변(마크다운)에서 '법령명'들을 추출(복수) ---
-
-# [민법 제839조의2](...), [가사소송법 제2조](...) 등
-_LAW_IN_LINK = re.compile(r'\[([^\]\n]+?)\s+제\d+조(의\d+)?\]')
-# 불릿/일반 문장 내: "OO법/령/규칙/조례" (+선택적 '제n조')
-_LAW_INLINE  = re.compile(r'([가-힣A-Za-z0-9·\s]{2,40}?(?:법|령|규칙|조례))(?:\s*제\d+조(의\d+)?)?')
 
 def extract_law_names_from_answer(md: str) -> list[str]:
     if not md:
