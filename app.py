@@ -968,6 +968,10 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
 
     # 3) 조문 인라인 링크 변환:  - 민법 제839조의2 → [민법 제839조의2](...)
     ft = link_articles_in_law_and_explain_sections(ft)
+    ft = strip_redundant_article_link_words(ft)   # ← 잉여 "제n조 링크" 제거
+# 4) 본문 내 [법령명](URL) 교정 ...
+    ft = fix_links_with_lawdata(ft, collected_laws)
+
 
     # 4) 본문 내 [법령명](URL) 교정(법제처 공식 링크로)
     ft = fix_links_with_lawdata(ft, collected_laws)
@@ -1073,7 +1077,7 @@ _ART_PAT_BULLET = re.compile(
 _SEC_LAW_TITLES    = re.compile(r'(?mi)^\s*\d+\s*[\.\)]\s*(적용\s*법령\s*/?\s*근거|법적\s*근거)\s*$')
 _SEC_EXPLAIN_TITLE = re.compile(r'(?mi)^\s*(?:#{1,6}\s*)?해설\s*:?\s*$')
 # 다음 상위 섹션(예: "3. 핵심 판단") 시작 라인
-_SEC_NEXT_TITLE    = re.compile  # (unchanged)
+_SEC_NEXT_TITLE = re.compile(r'(?m)^\s*\d+\s*[\.\)]\s+')
 
 # 해설 섹션 내부의 '맨몸 URL'(순수 문자열 URL)을 <URL> 형태로 감싸서 자동 링크화
 _URL_BARE = re.compile(r'(?<!\()(?<!\])\b(https?://[^\s<>)]+)\b')
@@ -1142,7 +1146,9 @@ def _link_block_with_bullets(block: str) -> str:
             title = (ms.group('title') or '')
             tail  = (ms.group('tail') or '')
             url   = _deep_article_url(cur_law, art)
-            out.append(f"{ms.group('prefix')}[{cur_law} {art}]({url}){title}{tail}")
+            txt = f"{art}{title or ''}"                      # 예: "제76조(외국에서의 혼인신고)"
+            out.append(f"{ms.group('prefix')}[{txt}]({url}){tail}")
+
             continue
 
         out.append(line)
@@ -1227,6 +1233,13 @@ def strip_reference_links_block(markdown: str) -> str:
     txt = _REF_BLOCK_PAT.sub("", markdown)
     txt = _REF_BLOCK2_PAT.sub("", txt)
     return txt
+
+# 모델이 종종 만들어내는 "제n조 링크" 같은 잉여 단어 제거
+import re as _re_fix
+_WORD_LINK_GHOST = _re_fix.compile(r'(?mi)\s*제\d{1,4}조(?:의\d{1,3}){0,2}\s*링크\b')
+
+def strip_redundant_article_link_words(s: str) -> str:
+    return _WORD_LINK_GHOST.sub('', s)
 
 
 # === 새로 추가: 중복 제거 유틸 ===
