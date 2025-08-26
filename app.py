@@ -168,15 +168,65 @@ def ask_llm_with_tools(
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
-    # 3) 엔진 호출 (새 시그니처에 맞게)
-    yield from engine.generate(
-        user_q,
-        system_prompt=sys_prompt,
-        allow_tools=use_tools,
-        num_rows=num_rows,
-        stream=stream,
-        primer_enable=True,
-    )
+    # 2.5) 최근 N개 대화 히스토리 준비 (user/assistant만)
+    try:
+        msgs = st.session_state.get("messages", [])
+        _hist = []
+        for _m in msgs:
+            if not isinstance(_m, dict):
+                continue
+            _r = _m.get("role")
+            _c = (_m.get("content") or "").strip()
+            if _r in ("user", "assistant") and _c:
+                _hist.append({"role": _r, "content": _c})
+        HISTORY_LIMIT = int(st.session_state.get("__history_limit__", 6))
+        history = _hist[-HISTORY_LIMIT:]
+    except Exception:
+        history = []
+
+    # 3) 엔진 호출 (히스토리 전달 시도 + 안전한 폴백)
+    import inspect
+    try:
+        _sig = inspect.signature(engine.generate)
+        _params = set(_sig.parameters.keys())
+    except Exception:
+        _params = set()
+
+    _called = False
+    for _kw in ("history", "messages", "chat_history", "conversation"):
+        if _kw in _params:
+            yield from engine.generate(
+                user_q,
+                system_prompt=sys_prompt,
+                allow_tools=use_tools,
+                num_rows=num_rows,
+                stream=stream,
+                primer_enable=True,
+                **{_kw: history},
+            )
+            _called = True
+            break
+
+    if not _called:
+        # fallback: 히스토리를 system prompt 앞에 텍스트로 주입
+        def _as_transcript(items):
+            _lines = []
+            for it in items:
+                _lines.append(f"{'사용자' if it['role']=='user' else '어시스턴트'}: {it['content']}")
+            return "\n".join(_lines)
+
+        _hist_text = _as_transcript(history)
+        _uq = user_q
+        if _hist_text:
+            _uq = f"[이전 대화]\n{_hist_text}\n\n[현재 질문]\n{user_q}"
+        yield from engine.generate(
+            _uq,
+            system_prompt=sys_prompt,
+            allow_tools=use_tools,
+            num_rows=num_rows,
+            stream=stream,
+            primer_enable=True,
+        )
 
 import io, os, re, json, time, html
 
