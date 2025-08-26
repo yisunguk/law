@@ -23,9 +23,12 @@ MODE_SYS = {
     Intent.LAWFINDER:
         "관련 법령/조문/행정규칙/자치법규 후보를 제시하고, 조문 번호를 명확히 적어라. "
         "각 법령의 적용 범위와 핵심 키워드를 간단히 요약하라.",
-    Intent.MEMO:
-        "법률 자문 메모 형식으로 정리하라.\n"
-        "1) 자문요지  2) 적용 법령/근거  3) 핵심 판단  4) 권고 조치",
+    # MODE_SYS 딕셔너리 안
+Intent.MEMO: (
+    "법률 자문 메모 형식으로 정리하라.\n"
+    "1. 자문요지\n2. 적용 법령/근거\n3. 핵심 판단\n4. 권고 조치"
+),
+
     Intent.DRAFT:
         "사용자가 요청한 문서/조항 초안을 제시하고, 변수(날짜/당사자/금액 등)는 대괄호로 표시하라.",
 }
@@ -36,8 +39,31 @@ def build_sys_for_mode(mode: Intent, brief: bool = False) -> str:
         base += "\n" + SYS_BRIEF
     return base + "\n" + MODE_SYS[mode]
 
+# --- [추가] MEMO 라우팅 강화: 보험/연금/영향·산정형 질의는 MEMO로 보냄 ---
+import re  # 파일 상단에 없으면 추가
+
 def classify_intent(q: str) -> Tuple[Intent, float]:
     text = (q or "").strip()
+
+    # 1) MEMO 신호어: 자문/판단/영향/보험료/연금/산정/무직 등
+    MEMO_HINTS = [
+        "자문", "판단", "책임", "위험", "벌금", "처벌", "배상", "소송",
+        "가능", "되나요", "되나", "되냐", "조치",
+        "보험료", "건강보험", "국민연금", "연금", "자격", "수급",
+        "산정", "부과", "감면", "영향", "요율",
+        "무직", "소득", "재산"
+    ]
+    # 예: "오르나/내리나요/오를까요" 같은 표현도 트리거
+    if any(k in text for k in MEMO_HINTS) or re.search(r"(오르(나|나요|ㄹ까요)|내리(나|나요|ㄹ까요))", text):
+        return (Intent.MEMO, 0.8)
+
+    # 2) 조건·판단형 길이 휴리스틱: 일정 길이+조건 연결어가 있으면 MEMO
+    if len(text) >= 45 and re.search(r"(이면|하면|경우|때|상태|요건)", text):
+        return (Intent.MEMO, 0.7)
+
+    # ↓↓↓ 이 아래로는 기존의 QUICK/LAWFINDER 등 분류 로직을 그대로 두세요 ↓↓↓
+    # (기존 코드 계속...)
+
     if re.search(r"(제?\s*\d{1,4}\s*조(?:의\d{1,3})?)", text):
         return (Intent.QUICK, 0.85)
     if any(k in text for k in ["간단", "짧게", "요약", "뜻", "정의", "무엇", "뭐야"]):
