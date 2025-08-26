@@ -3,6 +3,36 @@ from __future__ import annotations
 
 import streamlit as st
 
+# === Top banner defaults & CSS ===
+st.session_state.setdefault("banner_enabled", True)
+st.session_state.setdefault("banner_text", "💡 **상담 Tip** : 구체적 사실관계(시점·금액·행위)를 함께 써 주시면 정확도가 올라갑니다.")
+st.session_state.setdefault("banner_show_only_before", True)
+st.session_state.setdefault("banner_style", "카드")        # 카드 / 라인 / 경고
+st.session_state.setdefault("banner_align", "left")        # left / center
+st.session_state.setdefault("banner_bg", "#1f2937")        # 다크 카드 배경
+st.session_state.setdefault("banner_fg", "#e5e7eb")        # 다크 카드 글자색
+
+def _inject_banner_css():
+    bg = st.session_state.get("banner_bg", "#1f2937")
+    fg = st.session_state.get("banner_fg", "#e5e7eb")
+    st.markdown(f\"\"\"
+    <style>
+      .top-banner{{
+        max-width: var(--bubble-max);
+        margin: 20px auto 10px;
+        padding: 14px 16px;
+        border-radius: 14px;
+        background: {bg};
+        color: {fg};
+        box-shadow: 0 2px 8px rgba(0,0,0,.15);
+        font-size: 15px; line-height: 1.55;
+      }}
+      .top-banner.line{{ background: transparent; border: 1px solid {fg}55; }}
+      .top-banner.warn{{ background: #7f1d1d; color:#fff; }}
+    </style>
+    \"\"\", unsafe_allow_html=True)
+
+
 # --- per-turn nonce ledger (prevents double appends)
 st.session_state.setdefault('_nonce_done', {})
 # --- cache helpers: suggestions shouldn't jitter on reruns ---
@@ -23,7 +53,7 @@ def cached_suggest_for_law(law_name: str):
     return store[law_name]
 
 st.set_page_config(
-    page_title="인공지능 법무 상담사",
+    page_title="법제처 법무 상담사",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -31,65 +61,6 @@ st.set_page_config(
 
 # 최상단 스크롤 기준점
 st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
-
-# ==========================
-# 전역 상단 고정 헤드라인 (채팅 전/후 공통, Cloud 안전판)
-# ==========================
-def render_top_headline():
-    import streamlit as st
-    st.markdown("""
-    <style>
-      :root{ --header-h: 64px; --safe-top: env(safe-area-inset-top, 0px); }
-      /* 상단 고정 헤드라인 */
-      #app-headline{
-        position: fixed; left: 0; right: 0; top: var(--safe-top);
-        z-index: 1000;
-        background: rgba(13,17,23,.78);
-        backdrop-filter: blur(6px);
-        border-bottom: 1px solid rgba(255,255,255,.06);
-      }
-      #app-headline .inner{
-        max-width: var(--center-col);
-        margin: 0 auto; padding: 12px;
-        display: flex; align-items: center; gap: 10px;
-      }
-      #app-headline .title{ font-weight: 900; font-size: 22px; letter-spacing: -.3px; }
-      /* 본문 상단 여백 보정 */
-      .block-container{ padding-top: calc(var(--header-h) + var(--safe-top) + 8px) !important; }
-      /* 히어로 상단 간격 0으로 */
-      .center-hero{ margin-top: 0 !important; }
-    </style>
-    <div id="app-headline">
-      <div class="inner">
-        <div class="title">⚖️ 법률상담 챗봇</div>
-      </div>
-    </div>
-    <script>
-    (function(){
-      // 헤더 높이를 계산해 CSS 변수에 반영
-      const head = document.getElementById('app-headline');
-      const apply = () => {
-        if(!head) return;
-        const h = Math.round(head.getBoundingClientRect().height || 64);
-        document.documentElement.style.setProperty('--header-h', h + 'px');
-      };
-      apply();
-      new ResizeObserver(apply).observe(head);
-      window.addEventListener('resize', apply);
-
-      // 헤더를 block-container의 첫 자식으로 강제 이동 (디버그 텍스트 위에 오도록)
-      const bc = document.querySelector('.block-container');
-      if (bc && head && head.parentNode !== bc) {
-        bc.insertBefore(head, bc.firstChild);
-        apply();
-      }
-      setTimeout(apply, 50);
-    })();
-    </script>
-    """, unsafe_allow_html=True)
-
-render_top_headline()
-
 
 st.markdown("""
 <style>
@@ -196,41 +167,38 @@ def _init_engine_lazy():
     )
     return st.session_state.engine
 
-# app.py
-# 기존:
-# from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
-# 변경:
-from modules import AdviceEngine, Intent, build_sys_for_mode
-from modules import route_intent, pick_mode
+# 기존 ask_llm_with_tools를 얇은 래퍼로 교체
+from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
 
 def ask_llm_with_tools(
     user_q: str,
     num_rows: int = 5,
     stream: bool = True,
-    forced_mode: str | None = None,
+    forced_mode: str | None = None,  # 유지해도 됨: 아래에서 직접 처리
     brief: bool = False,
 ):
+    """
+    UI 진입점: 의도→모드 결정, 시스템 프롬프트 합성, 툴 사용 여부 결정 후
+    AdviceEngine.generate()에 맞는 인자(system_prompt, allow_tools)로 호출.
+    """
     engine = _init_engine_lazy() if "_init_engine_lazy" in globals() else globals().get("engine")
     if engine is None:
         yield ("final", "엔진이 아직 초기화되지 않았습니다. (client/AZURE/TOOLS 확인)", [])
         return
 
-    # 1) 모드 결정 (LLM 우선)
-    if forced_mode:
-        mode = Intent(forced_mode)
-        needs_lookup = mode in (Intent.LAWFINDER, Intent.MEMO)
-    else:
-        det_intent, conf, needs_lookup = route_intent(
-            user_q, client=engine.client, model=engine.model
-        )
-        mode = pick_mode(det_intent, conf)  # 자동 상향 제거됨(안전)
+    # 1) 모드 결정
+    det_intent, conf = classify_intent(user_q)
+    try:
+        valid = {m.value for m in Intent}
+        mode = Intent(forced_mode) if forced_mode in valid else pick_mode(det_intent, conf)
+    except Exception:
+        mode = pick_mode(det_intent, conf)
 
     # 2) 프롬프트/툴 사용 여부
-    use_tools = needs_lookup
-    brief = True if mode in (Intent.QUICK, Intent.LAWFINDER) else False
+    use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
-    # 3) 엔진 호출 그대로
+    # 3) 엔진 호출 (새 시그니처에 맞게)
     yield from engine.generate(
         user_q,
         system_prompt=sys_prompt,
@@ -239,7 +207,6 @@ def ask_llm_with_tools(
         stream=stream,
         primer_enable=True,
     )
-
 
 import io, os, re, json, time, html
 
@@ -424,10 +391,6 @@ def inject_sticky_layout_css(mode: str = "wide"):
       .center-hero .stFileUploader, .center-hero .stTextInput {{
         width: 720px; max-width: 92vw;
       }}
-
-.post-chat-ui .stFileUploader, .post-chat-ui .stTextInput {{ width: 720px; max-width: 92vw; }}
-.post-chat-ui {{ margin-top: 8px; }}
-
 
       /* 업로더 고정: 앵커 다음 형제 업로더 */
       #bu-anchor + div[data-testid='stFileUploader'] {{
@@ -674,107 +637,6 @@ def _push_user_from_pending() -> str | None:
         return None
     if nonce and st.session_state.get("_last_user_nonce") == nonce:
         return None
-
-    # === 첨부파일 처리: 업로드된 파일 텍스트를 질문 뒤에 부착 ===
-    try:
-        att_payload = st.session_state.pop("_pending_user_files", None)
-    except Exception:
-        att_payload = None
-
-    # 우선순위: 명시 payload > 포스트-챗 업로더 > 프리챗 업로더 > 하단 업로더
-    files_to_read = []
-    try:
-        if att_payload:
-            for it in att_payload:
-                name = it.get("name") or "uploaded"
-                data = it.get("data", b"")
-                mime = it.get("type") or ""
-                files_to_read.append(("__bytes__", name, data, mime))
-    except Exception:
-        pass
-    # 스트림릿 업로더에서 직접 읽기 (fallback)
-    for key in ("post_files", "first_files", "bottom_files"):
-        try:
-            for f in (st.session_state.get(key) or []):
-                files_to_read.append(("__widget__", getattr(f, "name", "uploaded"), f, getattr(f, "type", "")))
-        except Exception:
-            pass
-
-    def _try_extract(name, src, mime):
-        txt = ""
-        try:
-            # utils_extract 사용 우선
-            if name.lower().endswith(".pdf"):
-                try:
-                    txt = extract_text_from_pdf(src)
-                except Exception:
-                    import io
-                    try:
-                        data = src if isinstance(src, (bytes, bytearray)) else src.read()
-                        txt = extract_text_from_pdf(io.BytesIO(data))
-                    except Exception:
-                        txt = ""
-            elif name.lower().endswith(".docx"):
-                try:
-                    txt = extract_text_from_docx(src)
-                except Exception:
-                    import io
-                    try:
-                        data = src if isinstance(src, (bytes, bytearray)) else src.read()
-                        txt = extract_text_from_docx(io.BytesIO(data))
-                    except Exception:
-                        txt = ""
-            elif name.lower().endswith(".txt"):
-                try:
-                    if hasattr(src, "read"):
-                        data = src.read()
-                        try: src.seek(0)
-                        except Exception: pass
-                    else:
-                        data = src if isinstance(src, (bytes, bytearray)) else b""
-                    txt = read_txt(data)
-                except Exception:
-                    try:
-                        txt = data.decode("utf-8", errors="ignore")
-                    except Exception:
-                        txt = ""
-        except Exception:
-            txt = ""
-        return sanitize(txt) if "sanitize" in globals() else txt
-
-    ATTACH_LIMIT_PER_FILE = 6000   # chars
-    ATTACH_TOTAL_LIMIT    = 16000  # chars
-
-    pieces = []
-    total = 0
-    for kind, name, src, mime in files_to_read[:6]:
-        try:
-            t = _try_extract(name, src if kind=="__widget__" else src, mime) or ""
-        except Exception:
-            t = ""
-        if not t:
-            continue
-        t = t.strip()
-        if not t:
-            continue
-        t = t[:ATTACH_LIMIT_PER_FILE]
-        if total + len(t) > ATTACH_TOTAL_LIMIT:
-            t = t[: max(0, ATTACH_TOTAL_LIMIT - total) ]
-        if not t:
-            break
-        pieces.append(f"### {name}\\n{t}")
-        total += len(t)
-        if total >= ATTACH_TOTAL_LIMIT:
-            break
-
-    attach_block = "\\n\\n".join(pieces) if pieces else ""
-
-    # === 최종 콘텐츠 합성 ===
-    content_final = q.strip()
-    if attach_block:
-        content_final += "\\n\\n[첨부 문서 발췌]\\n" + attach_block + "\\n"
-    else:
-        content_final = q.strip()
     st.session_state.messages.append({
         "role": "user",
         "content": q.strip(),
@@ -788,6 +650,7 @@ def _push_user_from_pending() -> str | None:
     return q
 
 def render_pre_chat_center():
+    """대화 전: 중앙 히어로 + 중앙 업로더(키: first_files) + 전송 폼"""
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
     st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
 
@@ -812,48 +675,6 @@ def render_pre_chat_center():
         st.rerun()
 
 # 기존 render_bottom_uploader() 전부 교체
-
-# [ADD] 답변 완료 후에도 프리챗과 동일한 UI 사용
-def render_post_chat_simple_ui():
-    import time, io
-    st.markdown('<section class="post-chat-ui">', unsafe_allow_html=True)
-
-    # 업로더 (프리챗과 동일)
-    post_files = st.file_uploader(
-        "Drag and drop files here",
-        type=["pdf", "docx", "txt"],
-        accept_multiple_files=True,
-        key="post_files",
-    )
-
-    # 텍스트 입력 + 전송 버튼 (프리챗과 동일)
-    with st.form("next_ask", clear_on_submit=True):
-        q = st.text_input("질문을 입력해 주세요...", key="next_input")
-        sent = st.form_submit_button("전송", use_container_width=True)
-
-    st.markdown("</section>", unsafe_allow_html=True)
-
-    if sent and (q or "").strip():
-        # 업로드된 파일을 안전하게 세션에 보관 (바로 rerun할 것이므로 바이트로 저장)
-        safe_payload = []
-        try:
-            for f in (post_files or []):
-                try:
-                    data = f.read()
-                    f.seek(0)
-                except Exception:
-                    data = None
-                safe_payload.append({
-                    "name": getattr(f, "name", "uploaded"),
-                    "type": getattr(f, "type", ""),
-                    "data": data,
-                })
-        except Exception:
-            pass
-        st.session_state["_pending_user_q"] = (q or "").strip()
-        st.session_state["_pending_user_nonce"] = time.time_ns()
-        st.session_state["_pending_user_files"] = safe_payload
-        st.rerun()
 def render_bottom_uploader():
     # 업로더 바로 앞에 '앵커'만 출력
     st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
@@ -1221,7 +1042,7 @@ def render_bubble_with_copy(message: str, key: str):
     st.markdown(message)
     safe_raw_json = json.dumps(message)
     html_tpl = '''
-    <div class="copy-row" style="margin-bottom:8px">
+    <div class="copy-row">
       <button id="copy-__KEY__" class="copy-btn">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
           <path d="M9 9h9v12H9z" stroke="currentColor"/>
@@ -2465,11 +2286,16 @@ document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 
 st.markdown("""
 <style>
-/* ✅ 포스트-챗 UI(업로더+입력폼)는 '답변 생성 중'에만 숨김 */
-body.answering .post-chat-ui{ margin-top: 8px; }
+/* 🔧 대화 시작 후에는 모든 첨부파일 업로더를 완전히 숨김 */
+body.chat-started #bu-anchor + div[data-testid="stFileUploader"] { 
+    display: none !important; 
+}
+/* 기존: display:none !important;  (X) */
+body.chat-started #chatbar-fixed{
+  visibility: hidden !important;   /* 안 보이지만 자리·좌표는 유지 */
+  pointer-events: none !important; /* 클릭 방지 */
+}
 
-/* ✅ 기존 chatbar 컴포넌트는 사용하지 않으므로 완전 숨김 */
-#chatbar-fixed { display: none !important; }
 /* 답변 중일 때만 하단 여백 축소 */
 body.answering .block-container { 
     padding-bottom: calc(var(--chat-gap) + 24px) !important; 
@@ -2485,7 +2311,7 @@ if not chat_started:
       #search-flyout{ display:none !important; }
       html, body{ height:100%; overflow-y:hidden !important; }
       .main > div:first-child{ height:100vh !important; }
-      .block-container{ min-height:100vh !important; padding-top: calc(var(--header-h, 64px) + 12px) !important; padding-bottom:0 !important; }
+      .block-container{ min-height:100vh !important; padding-top:12px !important; padding-bottom:0 !important; }
       /* 전역 가운데 정렬 규칙이 있어도 프리챗에선 히어로를 '위에서부터' 배치 */
       .center-hero{ min-height:auto !important; display:block !important; }
     </style>
@@ -2510,7 +2336,7 @@ if not chat_started:
       .main > div:first-child{ height:100vh !important; }              /* Streamlit 루트 */
       .block-container{
         min-height:100vh !important;   /* 화면만큼만 */
-        padding-top: calc(var(--header-h, 64px) + 12px) !important;
+        padding-top:12px !important;
         padding-bottom:0 !important;   /* 바닥 여백 제거 */
         margin-left:auto !important; margin-right:auto !important;
       }
@@ -2668,6 +2494,25 @@ st.markdown("""
 
 with st.container():
     st.session_state['_prev_assistant_txt'] = ''  # reset per rerun
+
+    # === Editable top banner (shows above the first user message) ===
+    _inject_banner_css()
+    if st.session_state.get("banner_enabled", True):
+        show = True
+        if st.session_state.get("banner_show_only_before", True):
+            # show only until the first assistant message appears
+            has_assistant = any(
+                (m.get("role")=="assistant") and (m.get("content") or "").strip()
+                for m in st.session_state.get("messages", [])
+            )
+            show = not has_assistant
+        if show:
+            style = st.session_state.get("banner_style", "카드")
+            align = st.session_state.get("banner_align", "left")
+            cls = "top-banner " + ("line" if style=="라인" else "warn" if style=="경고" else "")
+            text = (st.session_state.get("banner_text") or "").replace("\n", "<br>")
+            st.markdown(f'<div class="{cls}" style="text-align:{align};">{text}</div>', unsafe_allow_html=True)
+
     for i, m in enumerate(st.session_state.messages):
         # --- UI dedup guard: skip if same assistant content as previous ---
         if isinstance(m, dict) and m.get('role')=='assistant':
@@ -2693,11 +2538,6 @@ with st.container():
                                 st.write(f"- 링크: {law['법령상세링크']}")
             else:
                 st.markdown(content)
-
-
-# ✅ 답변 말풍선 바로 아래에 입력/업로더 붙이기 (답변 생성 중이 아닐 때만)
-if chat_started and not st.session_state.get("__answering__", False):
-    render_post_chat_simple_ui()
 
 # ✅ 메시지 루프 바로 아래(이미 _inject_right_rail_css() 다음 추천) — 항상 호출
 def _current_q_and_answer():
@@ -2784,4 +2624,31 @@ if user_q:
         except Exception:
             pass
 
-# (moved) post-chat UI is now rendered inline under the last assistant message.
+# ✅ 채팅이 시작되면(첫 입력 이후) 하단 고정 입력/업로더 표시
+if chat_started and not st.session_state.get("__answering__", False):
+    st.markdown('<div id="chatbar-fixed">', unsafe_allow_html=True)  # ← 래퍼 추가
+    submitted, typed_text, files = chatbar(
+        placeholder="법령에 대한 질문을 입력하거나, 인터넷 URL, 관련 문서를 첨부해서 문의해 보세요…",
+        accept=["pdf", "docx", "txt"], max_files=5, max_size_mb=15, key_prefix=KEY_PREFIX,
+    )
+    st.markdown('</div>', unsafe_allow_html=True)                     # ← 래퍼 닫기
+    if submitted:
+        text = (typed_text or "").strip()
+        if text:
+            st.session_state["_pending_user_q"] = text
+            st.session_state["_pending_user_nonce"] = time.time_ns()
+        st.session_state["_clear_input"] = True
+        st.rerun()
+
+
+# === Sidebar editor for the top banner ===
+with st.sidebar:
+    with st.expander("🪧 상단 안내문 설정", expanded=False):
+        st.session_state["banner_enabled"] = st.checkbox("보이기", value=st.session_state.get("banner_enabled", True), help="끄면 상단 안내문을 숨깁니다.")
+        st.session_state["banner_show_only_before"] = st.checkbox("첫 답변 전까지만 보이기", value=st.session_state.get("banner_show_only_before", True))
+        st.session_state["banner_text"] = st.text_area("안내문 내용", value=st.session_state.get("banner_text",""), height=120, help="간단한 텍스트 또는 줄바꿈을 사용할 수 있어요.")
+        st.session_state["banner_style"] = st.selectbox("스타일", ["카드", "라인", "경고"], index=["카드","라인","경고"].index(st.session_state.get("banner_style","카드")))
+        st.session_state["banner_align"] = st.selectbox("정렬", ["left","center"], index=["left","center"].index(st.session_state.get("banner_align","left")))
+        st.session_state["banner_bg"] = st.color_picker("배경색", st.session_state.get("banner_bg","#1f2937"))
+        st.session_state["banner_fg"] = st.color_picker("글자색", st.session_state.get("banner_fg","#e5e7eb"))
+
