@@ -227,9 +227,7 @@ def ask_llm_with_tools(
 
     # 1) 모드 결정
     # app.py — ask_llm_with_tools(...) 안, 모드 결정 구간
-det_intent, conf, needs_lookup = route_intent(
-    user_q, client=client, model=AZURE.get("deployment") if AZURE else None
-)
+    det_intent, conf, needs_lookup = route_intent(user_q)
 
 # 👉 단순화: 라우터가 준 걸 그대로 사용 (LAWFINDER가 아니면 모두 MEMO)
 mode = det_intent if det_intent == Intent.LAWFINDER else Intent.MEMO
