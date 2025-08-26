@@ -226,29 +226,18 @@ def ask_llm_with_tools(
         return
 
     # 1) 모드 결정
-    det_intent, conf, needs_lookup = route_intent(
-    user_q,
-    client=client,                          # 이미 생성된 OpenAI/Azure 클라이언트
-    model=AZURE.get("deployment") if AZURE else None
+    # app.py — ask_llm_with_tools(...) 안, 모드 결정 구간
+det_intent, conf, needs_lookup = route_intent(
+    user_q, client=client, model=AZURE.get("deployment") if AZURE else None
 )
-    valid = {m.value for m in Intent}
-    mode = Intent(forced_mode) if (forced_mode in valid) else pick_mode(det_intent, conf)
-    st.session_state["_final_mode"] = mode.value  # 후처리에서 참고
-    use_tools = bool(needs_lookup) 
 
-    # 2) 프롬프트/툴 사용 여부
-    use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
-    sys_prompt = build_sys_for_mode(mode, brief=brief)
+# 👉 단순화: 라우터가 준 걸 그대로 사용 (LAWFINDER가 아니면 모두 MEMO)
+mode = det_intent if det_intent == Intent.LAWFINDER else Intent.MEMO
+st.session_state["_final_mode"] = mode.value
 
-    # 3) 엔진 호출 (새 시그니처에 맞게)
-    yield from engine.generate(
-        user_q,
-        system_prompt=sys_prompt,
-        allow_tools=use_tools,
-        num_rows=num_rows,
-        stream=stream,
-        primer_enable=True,
-    )
+# 검색/툴 사용: MEMO와 LAWFINDER 둘 다 True
+use_tools = True
+
 
 import io, os, re, json, time, html
 
