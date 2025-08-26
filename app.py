@@ -32,6 +32,40 @@ st.set_page_config(
 # 최상단 스크롤 기준점
 st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
 
+# ==========================
+# 전역 상단 고정 헤드라인 (채팅 전/후 공통)
+# ==========================
+def render_top_headline():
+    import streamlit as st
+    st.markdown("""
+    <style>
+      :root{ --header-h: 72px; }
+      /* 상단 고정 헤드라인 */
+      #app-headline{
+        position: sticky; top: 0; z-index: 80; width: 100%;
+        background: rgba(13,17,23,.72);
+        backdrop-filter: blur(6px);
+        border-bottom: 1px solid rgba(255,255,255,.06);
+      }
+      #app-headline .inner{
+        max-width: var(--center-col);
+        margin: 0 auto; padding: 14px 12px;
+        display: flex; align-items: center; gap: 10px;
+      }
+      #app-headline .title{ font-weight: 900; font-size: 22px; letter-spacing: -.3px; }
+      /* 본문과 겹침 방지 */
+      .block-container{ padding-top: calc(var(--header-h, 72px) + 8px) !important; }
+    </style>
+    <div id="app-headline">
+      <div class="inner">
+        <div class="title">⚖️ 법률상담 챗봇</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+render_top_headline()
+
+
 st.markdown("""
 <style>
 :root{
@@ -2423,7 +2457,7 @@ if not chat_started:
       #search-flyout{ display:none !important; }
       html, body{ height:100%; overflow-y:hidden !important; }
       .main > div:first-child{ height:100vh !important; }
-      .block-container{ min-height:100vh !important; padding-top:12px !important; padding-bottom:0 !important; }
+      .block-container{ min-height:100vh !important; padding-top: calc(var(--header-h, 72px) + 12px) !important; padding-bottom:0 !important; }
       /* 전역 가운데 정렬 규칙이 있어도 프리챗에선 히어로를 '위에서부터' 배치 */
       .center-hero{ min-height:auto !important; display:block !important; }
     </style>
@@ -2448,7 +2482,7 @@ if not chat_started:
       .main > div:first-child{ height:100vh !important; }              /* Streamlit 루트 */
       .block-container{
         min-height:100vh !important;   /* 화면만큼만 */
-        padding-top:12px !important;
+        padding-top: calc(var(--header-h, 72px) + 12px) !important;
         padding-bottom:0 !important;   /* 바닥 여백 제거 */
         margin-left:auto !important; margin-right:auto !important;
       }
