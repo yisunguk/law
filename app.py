@@ -1,7 +1,7 @@
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
-# === Helper: Force "1. 자문요지" and split inline body to next line ===
+# === BEGIN PATCH: 헤더 '1. 사건요지' → '1. 자문요지' 변환 유틸 ===
 import re as _re_patch
 
 _HEAD_CASE_RE = _re_patch.compile(
@@ -10,10 +10,30 @@ _HEAD_CASE_RE = _re_patch.compile(
 _HEAD_ADVICE_RE = _re_patch.compile(
     r'(?mi)^\s*(?:\*\*|__)?\s*1[.)]\s*자문\s*요지\s*(?:\*\*|__)?\s*[:：]?\s+(.*)$'
 )
+
 def override_first_heading_to_consultation(md: str) -> str:
     md2 = _HEAD_CASE_RE.sub(lambda m: "1. 자문요지\n" + (m.group(1).strip() if m.group(1) else ""), md, count=1)
     md3 = _HEAD_ADVICE_RE.sub(lambda m: "1. 자문요지\n" + m.group(1).strip(), md2, count=1)
     return md3
+
+def coerce_consultation_heading(md: str) -> str:
+    try:
+        return override_first_heading_to_consultation(md)
+    except Exception:
+        try:
+            # inline fallback
+            t = _re_patch.sub(
+                r'(?mi)^\s*(?:\*\*|__)?\s*1[.)]\s*(?:사건\s*요지|사건요지)\s*(?:\*\*|__)?\s*[:：]?\s*(.*)$',
+                lambda m: "1. 자문요지\n" + (m.group(1).strip() if m.group(1) else ""), md, count=1
+            )
+            t = _re_patch.sub(
+                r'(?mi)^\s*(?:\*\*|__)?\s*1[.)]\s*자문\s*요지\s*(?:\*\*|__)?\s*[:：]?\s+(.*)$',
+                lambda m: "1. 자문요지\n" + m.group(1).strip(), t, count=1
+            )
+            return t
+        except Exception:
+            return md
+# === END PATCH ===
 
 import streamlit as st
 
@@ -161,6 +181,21 @@ def ask_llm_with_tools(
     forced_mode: str | None = None,  # 유지해도 됨: 아래에서 직접 처리
     brief: bool = False,
 ):
+    # LLM 라우터 우선 → 규칙 폴백
+    g = globals()
+    c = g.get("client")
+    az = g.get("AZURE") if g.get("AZURE") else {}
+    try:
+        det_intent, conf, needs_lookup = route_intent(user_q, client=c, model=az.get("deployment"))
+    except Exception:
+        det_intent, conf, needs_lookup = route_intent(user_q)
+    try:
+        valid = {m.value for m in Intent}
+        mode = Intent(forced_mode) if forced_mode in valid else pick_mode(det_intent, conf)
+    except Exception:
+        mode = pick_mode(det_intent, conf)
+    use_tools = bool(needs_lookup) or (mode in (Intent.LAWFINDER, Intent.MEMO))
+
     """
     UI 진입점: 의도→모드 결정, 시스템 프롬프트 합성, 툴 사용 여부 결정 후
     AdviceEngine.generate()에 맞는 인자(system_prompt, allow_tools)로 호출.
@@ -868,7 +903,15 @@ def _chat_started() -> bool:
 
 # --- 최종 후처리 유틸: 답변 본문을 정리하고 조문에 인라인 링크를 붙인다 ---
 def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
-    full_text = override_first_heading_to_consultation(full_text)
+
+    # --- 자문요지 헤더 강제 통일 ---
+    try:
+        ft = coerce_consultation_heading(ft)
+    except NameError:
+        try:
+            full_text = coerce_consultation_heading(full_text)
+        except NameError:
+            pass
     # 1) normalize (fallback 포함)
     try:
         ft = _normalize_text(full_text)
@@ -901,6 +944,15 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
     ft = _dedupe_blocks(ft)
 
     return ft
+
+
+
+# --- 답변(마크다운)에서 '법령명'들을 추출(복수) ---
+
+# [민법 제839조의2](...), [가사소송법 제2조](...) 등
+_LAW_IN_LINK = re.compile(r'\[([^\]\n]+?)\s+제\d+조(의\d+)?\]')
+# 불릿/일반 문장 내: "OO법/령/규칙/조례" (+선택적 '제n조')
+_LAW_INLINE  = re.compile(r'([가-힣A-Za-z0-9·\s]{2,40}?(?:법|령|규칙|조례))(?:\s*제\d+조(의\d+)?)?')
 
 
 
