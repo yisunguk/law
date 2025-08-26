@@ -226,12 +226,15 @@ def ask_llm_with_tools(
         return
 
     # 1) 모드 결정
-    det_intent, conf = classify_intent(user_q)
-    try:
-        valid = {m.value for m in Intent}
-        mode = Intent(forced_mode) if forced_mode in valid else pick_mode(det_intent, conf)
-    except Exception:
-        mode = pick_mode(det_intent, conf)
+    det_intent, conf, needs_lookup = route_intent(
+    user_q,
+    client=client,                          # 이미 생성된 OpenAI/Azure 클라이언트
+    model=AZURE.get("deployment") if AZURE else None
+)
+    valid = {m.value for m in Intent}
+    mode = Intent(forced_mode) if (forced_mode in valid) else pick_mode(det_intent, conf)
+    st.session_state["_final_mode"] = mode.value  # 후처리에서 참고
+    use_tools = bool(needs_lookup) 
 
     # 2) 프롬프트/툴 사용 여부
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
@@ -935,6 +938,7 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
     # 1) normalize (fallback 포함)
     try:
         ft = _normalize_text(full_text)
+        
     except NameError:
         import re as _re
         def _normalize_text(s: str) -> str:
@@ -943,6 +947,12 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
             s = _re.sub(r"[ \t]+\n", "\n", s)
             return s
         ft = _normalize_text(full_text)
+    try:
+        import streamlit as _st
+        if _st.session_state.get("_final_mode") == Intent.MEMO.value:
+            ft = enforce_memo_layout(ft, collected_laws)  # ← 이미 정의된(또는 제공받은) 헬퍼
+    except Exception:
+        pass
 
     # 2) 불릿 문자 통일: •, * → -  (인라인 링크 치환 누락 방지)
     ft = (
