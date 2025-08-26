@@ -874,7 +874,7 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
     )
 
     # 3) 조문 인라인 링크 변환:  - 민법 제839조의2 → [민법 제839조의2](...)
-    ft = link_inline_articles_in_bullets(ft)
+    ft = link_articles_in_law_and_explain_sections(ft)
 
     # 4) 본문 내 [법령명](URL) 교정(법제처 공식 링크로)
     ft = fix_links_with_lawdata(ft, collected_laws)
@@ -971,12 +971,117 @@ _ART_PAT_BULLET = re.compile(
     r'(?m)^(?P<prefix>\s*[-*•]\s*)(?P<law>[가-힣A-Za-z0-9·()\s]{2,40})\s*제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})(?P<tail>[^\n]*)$'
 )
 
+# --- [NEW] '적용 법령/근거' + '해설' 섹션에서만 조문 링크 활성화 ---
+# 섹션 제목 인식
+_SEC_LAW_TITLES    = re.compile(r'(?mi)^\s*\d+\s*[\.\)]\s*(적용\s*법령\s*/?\s*근거|법적\s*근거)\s*$')
+_SEC_EXPLAIN_TITLE = re.compile(r'(?mi)^\s*(?:#{1,6}\s*)?해설\s*:?\s*$')
+# 다음 상위 섹션(예: "3. 핵심 판단") 시작 라인
+_SEC_NEXT_TITLE    = re.compile(r'(?m)^\s*\d+\s*[\.\)]\s+')
+
+# 하위 법령 소제목(예: "1) 산업안전보건법")
+_LAW_HEADING_LINE = re.compile(r'(?m)^\s*\d+\s*[\.\)]\s*([가-힣A-Za-z0-9·()\s]{2,40}?법)\s*$')
+
+# 불릿에 "법령명 제n조 ..." 패턴(기존 전역의 _ART_PAT_BULLET 재사용)
+# _ART_PAT_BULLET, _deep_article_url 이 이미 정의돼 있어야 합니다.
+
+# 불릿에 "제n조"만 있고 법령명이 생략된 단순형
+_BULLET_ART_SIMPLE = re.compile(
+    r'(?m)^(?P<prefix>\s*[-*•]\s*)제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})?(?P<title>\([^)]+\))?(?P<tail>[^\n]*)$'
+)
+
+# 해설 섹션에서의 인라인 "법령명 제n조" 패턴
+_ART_INLINE_IN_EXPL = re.compile(
+    r'(?P<law>[가-힣A-Za-z0-9·()\s]{1,40}?법)\s*제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})?'
+)
+
+def _link_block_with_bullets(block: str) -> str:
+    """법령/근거 섹션 블록: 소제목의 법령명을 기억해 아래 불릿의 '제n조'에 링크 부여."""
+    cur_law = None
+    out = []
+    for line in block.splitlines():
+        mh = _LAW_HEADING_LINE.match(line)
+        if mh:
+            cur_law = (mh.group(1) or "").strip() or cur_law
+            out.append(line)
+            continue
+
+        mf = _ART_PAT_BULLET.match(line)
+        if mf:
+            law = (mf.group("law") or "").strip() or cur_law
+            if law:
+                art  = f"제{mf.group('num')}조{mf.group('ui') or ''}"
+                url  = _deep_article_url(law, art)
+                tail = (mf.group("tail") or "")
+                out.append(f"{mf.group('prefix')}[{law} {art}]({url}){tail}")
+                continue
+
+        ms = _BULLET_ART_SIMPLE.match(line)
+        if ms and cur_law:
+            art   = f"제{ms.group('num')}조{ms.group('ui') or ''}"
+            title = (ms.group('title') or '')
+            tail  = (ms.group('tail') or '')
+            url   = _deep_article_url(cur_law, art)
+            out.append(f"{ms.group('prefix')}[{cur_law} {art}]({url}){title}{tail}")
+            continue
+
+        out.append(line)
+    return "\n".join(out)
+
+def _link_inline_in_explain(block: str) -> str:
+    """해설 섹션 블록: 인라인 '법령명 제n조'를 링크로 치환."""
+    def repl(m):
+        law = m.group('law').strip()
+        art = f"제{m.group('num')}조{m.group('ui') or ''}"
+        return f"[{law} {art}]({_deep_article_url(law, art)})"
+    return _ART_INLINE_IN_EXPL.sub(repl, block)
+
+def link_articles_in_law_and_explain_sections(md: str) -> str:
+    """
+    '2. 적용 법령/근거'와 '해설' 섹션에서만 조문 링크를 활성화한다.
+    그 외(예: '3. 핵심 판단')에는 링크를 만들지 않는다.
+    """
+    if not md:
+        return md
+
+    ranges = []
+
+    # 적용 법령/근거 섹션(1개 가정)
+    m = _SEC_LAW_TITLES.search(md)
+    if m:
+        n = _SEC_NEXT_TITLE.search(md, m.end())
+        ranges.append(("law", m.start(), n.start() if n else len(md)))
+
+    # 해설 섹션(여러 개일 수 있음)
+    for m in _SEC_EXPLAIN_TITLE.finditer(md):
+        n = _SEC_NEXT_TITLE.search(md, m.end())
+        ranges.append(("explain", m.start(), n.start() if n else len(md)))
+
+    if not ranges:
+        return md
+
+    ranges.sort(key=lambda x: x[1])
+
+    out = []
+    last = 0
+    for kind, s, e in ranges:
+        out.append(md[last:s])
+        block = md[s:e]
+        if kind == "law":
+            out.append(_link_block_with_bullets(block))
+        else:  # explain
+            out.append(_link_inline_in_explain(block))
+        last = e
+    out.append(md[last:])
+    return "".join(out)
+
+
 # 하단 '참고 링크' 제목(모델이 7. 또는 7) 등으로 출력하는 케이스 포함)
 _REF_BLOCK_PAT = re.compile(
     r'(?ms)^\s*\d+\s*[\.\)]\s*참고\s*링크\s*[:：]?\s*\n(?:\s*[-*•].*\n?)+'
 )
 # 앞에 공백이 있어도 매칭되도록 보강
 _REF_BLOCK2_PAT = re.compile(r'\n[ \t]*###\s*참고\s*링크\(조문\)[\s\S]*$', re.M)
+
 
 
 def _deep_article_url(law: str, art_label: str) -> str:
