@@ -785,31 +785,56 @@ def _push_user_from_pending() -> str | None:
 
 def render_pre_chat_center():
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
-    st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
+    st.markdown(
+        '<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>',
+        unsafe_allow_html=True,
+    )
 
-    # ✅ 대화 스타터 (채팅 전 전용)
+    # 업로더 (채팅 전 전용 - 기존 유지)
+    st.file_uploader(
+        "Drag and drop files here",
+        type=["pdf", "docx", "txt"],
+        accept_multiple_files=True,
+        key="first_files",
+    )
+
+    # 입력 폼 (전송 시 pending 저장 - 기존 유지)
+    with st.form("first_ask", clear_on_submit=True):
+        q = st.text_input("질문을 입력해 주세요...", key="first_input")
+        sent = st.form_submit_button("전송", use_container_width=True)
+
+    if sent and (q or "").strip():
+        st.session_state["_pending_user_q"] = q.strip()
+        import time as _t
+        st.session_state["_pending_user_nonce"] = _t.time_ns()
+        st.rerun()
+
+    # ✅ 대화 스타터: 입력창 '아래'에, 1행 1버튼(총 5줄)
     if CHAT_STARTERS:
         st.markdown(
             """
             <style>
-              .starter-row { display:flex; gap:12px; flex-wrap:wrap; justify-content:center; margin:4px 0 16px; }
-              .starter-btn { padding:10px 14px; border:1px solid rgba(255,255,255,0.15); border-radius:14px;
-                             background:rgba(255,255,255,0.06); cursor:pointer; font-size:14px; white-space:nowrap; }
-              .starter-btn:hover { background:rgba(255,255,255,0.12); }
+              .starter-wrap {margin-top:12px;}
+              .starter-note {opacity:.75; font-size:13px; margin:8px 0 6px;}
+              .starter-btn .st-emotion-cache-1vt4y43 {justify-content:flex-start;} /* 텍스트 좌측 정렬 */
             </style>
             """,
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
-        # 한 줄로 보이도록 간단한 버튼 그리드
-        cols = st.columns(len(CHAT_STARTERS), gap="small")
-        for i, txt in enumerate(CHAT_STARTERS):
-            with cols[i]:
-                if st.button(txt, key=f"starter_{i}", use_container_width=True):
-                    # 클릭 즉시 "전송"과 동일하게 처리
+        with st.container():
+            st.markdown('<div class="starter-wrap">', unsafe_allow_html=True)
+            st.markdown('<div class="starter-note">추천 질문</div>', unsafe_allow_html=True)
+            for i, txt in enumerate(CHAT_STARTERS):
+                # 버튼을 세로로 하나씩 렌더 (ChatGPT 스타일)
+                if st.button(txt, key=f"starter_{i}", use_container_width=True, help="클릭하면 바로 전송됩니다."):
                     st.session_state["_pending_user_q"] = txt.strip()
                     import time as _t
                     st.session_state["_pending_user_nonce"] = _t.time_ns()
                     st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown("</section>", unsafe_allow_html=True)
+
 
     # 중앙 업로더 (대화 전 전용 — 기존 그대로)
     st.file_uploader(
