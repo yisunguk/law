@@ -203,34 +203,48 @@ def _init_engine_lazy():
 from modules import AdviceEngine, Intent, build_sys_for_mode
 from modules import route_intent, pick_mode
 
+# app.py (교체용)
+
+from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
+
 def ask_llm_with_tools(
     user_q: str,
     num_rows: int = 5,
     stream: bool = True,
-    forced_mode: str | None = None,
+    forced_mode: str | None = None,  # 유지해도 됨: 아래에서 직접 처리
     brief: bool = False,
 ):
+    """
+    UI 진입점: 의도→모드 결정, 시스템 프롬프트 합성, 툴 사용 여부 결정 후
+    AdviceEngine.generate()에 맞는 인자(system_prompt, allow_tools)로 호출.
+    """
     engine = _init_engine_lazy() if "_init_engine_lazy" in globals() else globals().get("engine")
     if engine is None:
         yield ("final", "엔진이 아직 초기화되지 않았습니다. (client/AZURE/TOOLS 확인)", [])
         return
 
-    # 1) 모드 결정 (LLM 우선)
-    if forced_mode:
-        mode = Intent(forced_mode)
-        needs_lookup = mode in (Intent.LAWFINDER, Intent.MEMO)
-    else:
-        det_intent, conf, needs_lookup = route_intent(
-            user_q, client=engine.client, model=engine.model
-        )
-        mode = pick_mode(det_intent, conf)  # 자동 상향 제거됨(안전)
+    # 1) 모드 결정
+    det_intent, conf = classify_intent(user_q)
+    try:
+        valid = {m.value for m in Intent}
+        mode = Intent(forced_mode) if forced_mode in valid else pick_mode(det_intent, conf)
+    except Exception:
+        mode = pick_mode(det_intent, conf)
 
     # 2) 프롬프트/툴 사용 여부
-    use_tools = needs_lookup
+    import re
+    # '민법 제839조', '839조의2' 같은 조문 번호 질의 감지
+    ARTICLE_Q = bool(re.search(r"(제?\s*\d{1,4}\s*조(?:의\d{1,3})?)", (user_q or "")))
+
+    # LAW_FINDER/MEMO 또는 '조문 질의'면 툴 사용
+    use_tools = (mode in (Intent.LAWFINDER, Intent.MEMO)) or ARTICLE_Q
+
+    # QUICK/LAWFINDER는 요약 톤 적용
     brief = True if mode in (Intent.QUICK, Intent.LAWFINDER) else False
+
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
-    # 3) 엔진 호출 그대로
+    # 3) 엔진 호출
     yield from engine.generate(
         user_q,
         system_prompt=sys_prompt,
@@ -239,6 +253,7 @@ def ask_llm_with_tools(
         stream=stream,
         primer_enable=True,
     )
+
 
 
 import io, os, re, json, time, html
