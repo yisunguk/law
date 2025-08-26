@@ -1,9 +1,5 @@
-
-
-def enforce_memo_layout(md: str, collected_laws: list) -> str:
-    return md
-# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
+# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 
 # === PATCH: route_intent 안전 임포트/대체 ===
 try:
@@ -947,10 +943,6 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
             s = _re.sub(r"[ \t]+\n", "\n", s)
             return s
         ft = _normalize_text(full_text)
-
-
-    # --- 메모 레이아웃 강제 ---
-    ft = enforce_memo_layout(ft, collected_laws)
 
     # 2) 불릿 문자 통일: •, * → -  (인라인 링크 치환 누락 방지)
     ft = (
