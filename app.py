@@ -903,6 +903,45 @@ def _chat_started() -> bool:
     ) or bool(st.session_state.get("_pending_user_q"))
 
 # --- 최종 후처리 유틸: 답변 본문을 정리하고 조문에 인라인 링크를 붙인다 ---
+# === [NEW] MEMO 템플릿 강제 & '핵심 판단' 링크 제거 유틸 ===
+import re as _re_memo
+
+_MEMO_HEADS = [
+    (_re_memo.compile(r'(?mi)^\s*1\s*[\.\)]\s*(사건\s*요지|자문\s*요지)\s*:?.*$', _re_memo.M), "1. 자문요지 :"),
+    (_re_memo.compile(r'(?mi)^\s*2\s*[\.\)]\s*(적용\s*법령\s*/?\s*근거|법적\s*근거)\s*:?.*$', _re_memo.M), "2. 적용 법령/근거"),
+    (_re_memo.compile(r'(?mi)^\s*3\s*[\.\)]\s*(핵심\s*판단)\s*:?.*$', _re_memo.M), "3. 핵심 판단"),
+    (_re_memo.compile(r'(?mi)^\s*4\s*[\.\)]\s*(권고\s*조치)\s*:?.*$', _re_memo.M), "4. 권고 조치"),
+]
+
+def enforce_memo_template(md: str) -> str:
+    if not md:
+        return md
+    out = md
+    for pat, fixed in _MEMO_HEADS:
+        out = pat.sub(fixed, out)
+    # 본문 내 '사건요지' 표기를 '자문요지'로 통일
+    out = _re_memo.sub(r'(?i)사건\s*요지', '자문요지', out)
+    return out
+
+_SEC_CORE_TITLE = _re_memo.compile(r'(?mi)^\s*3\s*[\.\)]\s*핵심\s*판단\s*$', _re_memo.M)
+_SEC_NEXT_TITLE2 = _re_memo.compile(r'(?m)^\s*\d+\s*[\.\)]\s+')
+
+def strip_links_in_core_judgment(md: str) -> str:
+    if not md:
+        return md
+    m = _SEC_CORE_TITLE.search(md)
+    if not m:
+        return md
+    start = m.end()
+    n = _SEC_NEXT_TITLE2.search(md, start)
+    end = n.start() if n else len(md)
+    block = md[start:end]
+    # [텍스트](http...) 형태의 링크 제거
+    block = _re_memo.sub(r'\[([^\]]+)\]\((?:https?:\/\/)[^)]+\)', r'\1', block)
+    return md[:start] + block + md[end:]
+# === [END NEW] ===
+
+
 def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
     # 1) normalize (fallback 포함)
     try:
@@ -923,11 +962,19 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
           .replace("* ", "- ")
     )
 
+    # ✅ (NEW) MEMO 제목/번호/콜론 강제
+    ft = enforce_memo_template(ft)
+
+
     # 3) 조문 인라인 링크 변환:  - 민법 제839조의2 → [민법 제839조의2](...)
     ft = link_articles_in_law_and_explain_sections(ft)
 
     # 4) 본문 내 [법령명](URL) 교정(법제처 공식 링크로)
     ft = fix_links_with_lawdata(ft, collected_laws)
+
+    # ✅ (NEW) '3. 핵심 판단' 섹션의 링크 제거
+    ft = strip_links_in_core_judgment(ft)
+
 
     # 5) 맨 아래 '참고 링크(조문)' 섹션 제거(중복 방지)
     ft = strip_reference_links_block(ft)
