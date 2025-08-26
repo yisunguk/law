@@ -1,6 +1,26 @@
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
+# === PATCH: route_intent 안전 임포트/대체 ===
+try:
+    # 1) 프로젝트 모듈에서 우선
+    from modules import route_intent as _route_intent  # type: ignore
+except Exception:
+    try:
+        # 2) 단일 파일 배포형
+        from legal_modes import route_intent as _route_intent  # type: ignore
+    except Exception:
+        # 3) 최후: 규칙 분류기 기반 간이 라우터
+        def _route_intent(q: str, client=None, model=None):
+            try:
+                det, conf = classify_intent(q)
+            except Exception:
+                det, conf = (Intent.QUICK, 0.55)
+            needs = det in (Intent.LAWFINDER, Intent.MEMO)
+            return det, conf, needs
+route_intent = _route_intent
+# === END PATCH ===
+
 # === BEGIN PATCH: 헤더 '1. 사건요지' → '1. 자문요지' 변환 유틸 ===
 import re as _re_patch
 
