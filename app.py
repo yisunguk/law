@@ -64,10 +64,9 @@ def cached_suggest_for_tab(tab_key: str):
     import streamlit as st
     store = st.session_state.setdefault("__tab_suggest__", {})
     if tab_key not in store:
-        from modules import suggest_keywords_for_tab, route_intent
-        store[tab_key] = cached_suggest_for_tab(tab_key)
+        from modules import suggest_keywords_for_tab
+        store[tab_key] = suggest_keywords_for_tab(tab_key)
     return store[tab_key]
-
 def cached_suggest_for_law(law_name: str):
     import streamlit as st
     store = st.session_state.setdefault("__law_suggest__", {})
@@ -2809,3 +2808,25 @@ if user_q:
             pass
 
 # (moved) post-chat UI is now rendered inline under the last assistant message.
+
+
+# --- FINAL SAFE-GUARD: ensure route_intent exists even if imports failed at runtime ---
+def __ensure_route_intent_fallback__():
+    g = globals()
+    if 'route_intent' in g and callable(g['route_intent']):
+        return
+    try:
+        from modules import route_intent as _ri  # type: ignore
+    except Exception:
+        try:
+            from legal_modes import route_intent as _ri  # type: ignore
+        except Exception:
+            def _ri(q: str, client=None, model=None):
+                try:
+                    det, conf = classify_intent(q)
+                except Exception:
+                    det, conf = (Intent.QUICK, 0.55)
+                needs = det in (Intent.LAWFINDER, Intent.MEMO)
+                return det, conf, needs
+    g['route_intent'] = _ri
+__ensure_route_intent_fallback__()
