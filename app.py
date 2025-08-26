@@ -967,13 +967,14 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
 
 def _patch_section_titles(text: str) -> str:
     import re
-    s = text.replace("사건 요지", "자문 요지")
-    # "1. 자문 요지" 다음 줄(빈 줄 포함) 본문을 같은 줄로 병합
+    s = (text or "")
+    # 1) 섹션명 치환
+    s = s.replace("사건 요지", "자문 요지")
+    # 2) "1. 자문 요지" 다음 줄 본문을 같은 줄로 병합
     s = re.sub(r'(?m)^1\.\s*자문 요지\s*\n+\s*(.+)', r"1. 자문 요지: \1", s)
-    # '조문 링크' 꼬리 제거 (쉼표/마침표/굵게 포함까지)
-    s = re.sub(r'[,;·]?\s*조문\s*링크', '', s)
+    # 3) 불릿 끝의 “법령/조문/세부조항 링크” 꼬리 문구 제거
+    s = re.sub(r'[,;·]?\s*(법령|조문|세부\s*조항)\s*링크', '', s)
     return s
-
 
 def extract_law_names_from_answer(md: str) -> list[str]:
     if not md:
