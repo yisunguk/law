@@ -854,7 +854,7 @@ def _chat_started() -> bool:
 
 # --- 최종 후처리 유틸: 답변 본문을 정리하고 조문에 인라인 링크를 붙인다 ---
 def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
-    # 1) normalize (fallback 포함)
+     # 1) normalize (fallback 포함)
     try:
         ft = _normalize_text(full_text)
     except NameError:
@@ -867,6 +867,7 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
         ft = _normalize_text(full_text)
 
     # 2) 불릿 문자 통일: •, * → -  (인라인 링크 치환 누락 방지)
+    ft = override_first_heading_to_consultation(ft)
     ft = (
         ft.replace("\u2022 ", "- ")  # 유니코드 불릿
           .replace("• ", "- ")
