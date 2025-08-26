@@ -2,6 +2,9 @@
 from __future__ import annotations
 from enum import Enum
 from typing import Tuple
+# ▼ 추가
+from dataclasses import dataclass
+import json, re
 
 class Intent(str, Enum):
     QUICK = "quick"
@@ -9,51 +12,49 @@ class Intent(str, Enum):
     MEMO = "memo"
     DRAFT = "draft"
 
-# 모든 모드에 공통 적용
-SYS_COMMON = (
-    "당신은 대한민국 변호사다. 모든 답변은 한국어로, 과장 없이 간결하게 작성한다. "
-    "불확실하면 ‘추가 확인 필요: 사유’를 명시한다. "
-    "공식 링크는 law.go.kr 또는 glaw.scourt.go.kr만 사용한다. "
-    "모든 목록 불릿은 반드시 하이픈 '-'으로 시작한다. "
-    "조문 표기는 '민법 제750조'처럼 ‘법령명 제N조’ 형식으로 쓴다. "
-    "링크는 2) 적용 법령/규정의 각 불릿 텍스트에 **인라인**으로 포함하고, 별도의 ‘참고 링크’ 섹션은 만들지 않는다."
-)
+# ... (기존 SYS_COMMON, MODE_SYS, SYS_BRIEF 동일)
 
-# 모드별 규칙
-SYS_QUICK = (
-    "출력형식: 3~5개 불릿으로 핵심만 요약. 불필요한 서론 금지. "
-    "가능하면 마지막에 ‘주의/예외’ 1줄만."
-)
-SYS_LAWFINDER = (
-    "출력형식: 관련 법령/행정규칙/자치법규 3~7개 목록. "
-    "각 항목은 ‘명칭(구분, 소관부처) — 요지 1문장 — [원문](절대URL)’ 형태. "
-    "장문 인용·중복 금지."
-)
-SYS_MEMO = (
-     "출력형식(고정): "
-    "1) 사건 요지(2~4문장) "
-    "2) 적용 법령/규정(≤5) — 각 불릿은 '- '으로 시작하고 ‘법령명 제N조(간단 요지)’ 형식으로 쓰며, 각 항목에 **세부조항 링크를 인라인으로 포함** "
-    "3) 핵심 판단(3~6 불릿) "
-    "4) 근거 조문 요지(쟁점당 1~2개, 각 1~2문장) "
-    "5) 리스크/예외(≤4) "
-    "6) 즉시 조치 체크리스트(3~5). "
-    "동일 내용 반복 금지, 한 번만 출력. "
-    "각 섹션 제목과 본문은 반드시 줄바꿈으로 구분한다."
-)
-SYS_DRAFT = (
-    "출력형식: 제목, 목적, 정의(필요시), 본문 조항(번호), 서명 블록. "
-    "가변값은 <각괄호> 변수로 표기(예: <당사자A>, <금액>, <기한>). 문체는 ‘~한다’."
-)
+# 파일 상단에 추가
+def classify_intent(q: str) -> Tuple[Intent, float]:
+    text = (q or "").strip()
 
-MODE_SYS = {
-    Intent.QUICK: SYS_QUICK,
-    Intent.LAWFINDER: SYS_LAWFINDER,
-    Intent.MEMO: SYS_MEMO,
-    Intent.DRAFT: SYS_DRAFT,
-}
+    # ✅ 조문 번호 질의는 '단순 질의(quick)'
+    if re.search(r"(제?\s*\d{1,4}\s*조(?:의\d{1,3})?)", text):
+        return (Intent.QUICK, 0.85)
 
-# (선택) 간단 모드 애드온
-SYS_BRIEF = "가능하면 각 섹션을 1~3줄로 제한하고, 총 분량을 180~280단어로 요약하라."
+    # ✅ 단순 설명·정의형
+    if any(k in text for k in ["간단", "짧게", "요약", "알려줘", "뭐야", "무엇", "뜻", "정의"]):
+        return (Intent.QUICK, 0.8)
+
+    # 🔎 링크/원문 탐색형
+    if any(k in text for k in ["링크", "원문", "찾아", "검색", "근거", "관련 법", "조문"]):
+        return (Intent.LAWFINDER, 0.8)
+
+    # 🧑‍⚖️ 자문/판단형
+    if any(k in text for k in ["가능", "책임", "위험", "벌금", "처벌", "배상", "소송", "해결",
+                               "판단", "조치", "되나요", "되나", "되냐"]):
+        return (Intent.MEMO, 0.8)
+
+    # 📄 서식/계약 작성형
+    if any(k in text for k in ["계약", "통지", "서식", "양식", "조항 작성", "조항 만들어"]):
+        return (Intent.DRAFT, 0.85)
+
+    # ✅ 기본값: 단순 질의
+    return (Intent.QUICK, 0.55)
+
+def pick_mode(intent: Intent, conf: float) -> Intent:
+    # ✅ 상향 금지: 신뢰도 낮으면 QUICK 유지
+    return intent if conf >= 0.55 else Intent.QUICK
+
+
+
+# ▼ LLM 라우터 결과 구조
+@dataclass
+class IntentVote:
+    intent: Intent
+    confidence: float = 0.75
+    needs_lookup: bool = False   # 툴(법령 조회) 필요 여부
+    reason: str = ""
 
 def classify_intent(q: str) -> Tuple[Intent, float]:
     text = (q or "")
@@ -65,16 +66,61 @@ def classify_intent(q: str) -> Tuple[Intent, float]:
         return (Intent.MEMO, 0.75)
     if any(k in text for k in ["조항", "계약", "통지", "서식", "양식"]):
         return (Intent.DRAFT, 0.85)
-    return (Intent.LAWFINDER, 0.6)  # 안전 기본값
+    # 🔁 백업 기본값은 보수적으로 '간단 질의'로
+    return (Intent.QUICK, 0.55)
 
+# ▼ 자동 상향 제거: 분류 결과를 가급적 신뢰
 def pick_mode(intent: Intent, conf: float) -> Intent:
-    if conf >= 0.7:
+    # 신뢰도 0.55 이상이면 그대로 사용
+    if conf >= 0.55:
         return intent
-    if intent == Intent.QUICK:
-        return Intent.LAWFINDER   # 모호하면 상향
-    if intent == Intent.LAWFINDER:
-        return Intent.MEMO
-    return intent
+    # 매우 낮으면 과도한 법률 판단(MEMO) 대신 QUICK로 안전하게
+    return Intent.QUICK
+
+# ▼ 신규: LLM 기반 분류기
+def classify_intent_llm(q: str, *, client=None, model: str | None = None) -> IntentVote | None:
+    if not client or not model or not (q or "").strip():
+        return None
+
+    SYS = (
+        "너는 법률상담 챗봇의 라우터다. 사용자의 질문을 다음 중 하나로 정확히 분류해 JSON만 출력하라.\n"
+        "- quick: 단순 사실/정의/범위 설명, 특정 조문이나 개념 의미를 간단히 묻는 경우(예: '민법 839조가 뭐지?').\n"
+        "- lawfinder: 관련 법령/조문/원문/링크를 찾아달라는 요청(예: '산재 관련 법령 링크 모아줘').\n"
+        "- memo:주제 판단·책임·위험·가능성·조치 등 법률 자문을 요구(예: '이 경우 손해배상 가능?').\n"
+        "- draft: 계약서/통지서/합의서 등 문서 작성.\n"
+        "needs_lookup은 정확한 조문 확인이나 최신 원문 링크가 필요하면 true로 하라.\n"
+        '출력 형식: {"intent":"quick|lawfinder|memo|draft","confidence":0.0~1.0,"needs_lookup":true|false}'
+    )
+    prompt = f"질문:\n{q.strip()}"
+
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role":"system","content":SYS},{"role":"user","content":prompt}],
+            temperature=0.0, max_tokens=80,
+        )
+        txt = (resp.choices[0].message.content or "").strip()
+        m = re.search(r"```(?:json)?\s*([\s\S]*?)```", txt)
+        if m: txt = m.group(1).strip()
+        data = json.loads(txt)
+        return IntentVote(
+            intent=Intent(data["intent"]),
+            confidence=float(data.get("confidence", 0.75)),
+            needs_lookup=bool(data.get("needs_lookup", False)),
+            reason=data.get("reason",""),
+        )
+    except Exception:
+        return None
+
+# ▼ 신규: 앱에서 한 번에 쓰도록 라우팅 헬퍼
+def route_intent(q: str, *, client=None, model: str | None = None) -> tuple[Intent, float, bool]:
+    v = classify_intent_llm(q, client=client, model=model)
+    if v:
+        return (v.intent, v.confidence, v.needs_lookup)
+    # LLM 실패 시 기존 휴리스틱으로 백업
+    intent, conf = classify_intent(q)
+    needs_lookup = intent in (Intent.LAWFINDER, Intent.MEMO)
+    return (intent, conf, needs_lookup)
 
 def build_sys_for_mode(mode: Intent, brief: bool = False) -> str:
     base = SYS_COMMON
