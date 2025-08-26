@@ -39,29 +39,45 @@ def render_top_headline():
     import streamlit as st
     st.markdown("""
     <style>
-      :root{ --header-h: 72px; }
-      /* 상단 고정 헤드라인 */
+      :root{ --header-h: 64px; --safe-top: env(safe-area-inset-top, 0px); }
+      /* 상단 고정 헤드라인: 뷰포트 기준 고정 */
       #app-headline{
-        position: sticky; top: 0; z-index: 80; width: 100%;
-        background: rgba(13,17,23,.72);
+        position: fixed; left: 0; right: 0; top: var(--safe-top);
+        z-index: 1000;
+        background: rgba(13,17,23,.75);
         backdrop-filter: blur(6px);
         border-bottom: 1px solid rgba(255,255,255,.06);
       }
       #app-headline .inner{
         max-width: var(--center-col);
-        margin: 0 auto; padding: 14px 12px;
+        margin: 0 auto; padding: 12px;
         display: flex; align-items: center; gap: 10px;
       }
       #app-headline .title{ font-weight: 900; font-size: 22px; letter-spacing: -.3px; }
-      /* 본문과 겹침 방지 */
-      .block-container{ padding-top: calc(var(--header-h, 72px) + 8px) !important; }
+      /* 본문 상단 여백을 헤더 높이에 맞춰 자동 보정 */
+      .block-container{ padding-top: calc(var(--header-h) + var(--safe-top) + 8px) !important; }
     </style>
     <div id="app-headline">
       <div class="inner">
         <div class="title">⚖️ 법률상담 챗봇</div>
       </div>
     </div>
+    <script>
+    (function(){
+      const head = document.getElementById('app-headline');
+      if(!head) return;
+      const apply = () => {
+        const h = Math.round(head.getBoundingClientRect().height || 64);
+        document.documentElement.style.setProperty('--header-h', h + 'px');
+      };
+      apply();
+      new ResizeObserver(apply).observe(head);
+      window.addEventListener('resize', apply);
+      setTimeout(apply, 50);
+    })();
+    </script>
     """, unsafe_allow_html=True)
+
 
 render_top_headline()
 
