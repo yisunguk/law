@@ -962,29 +962,18 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
 
     # 6) 중복/빈 줄 정리
     ft = _dedupe_blocks(ft)
-
+    ft = _patch_section_titles(ft)  
     return ft
 
 def _patch_section_titles(text: str) -> str:
-    """
-    1. '사건 요지' → '자문 요지'
-    2. '자문 요지' 제목과 내용을 같은 줄에 병합
-    3. '법령 링크' 같은 별도 표시 제거
-    """
     import re
-    s = text
-
-    # 1) 사건 요지 → 자문 요지
-    s = s.replace("사건 요지", "자문 요지")
-
-    # 2) "1. 자문 요지" + 바로 다음 줄 내용을 한 줄로 병합
-    pat = re.compile(r'(?m)^1\.\s*자문 요지\s*\n\s*(.+)')
-    s = pat.sub(r"1. 자문 요지: \1", s)
-
-    # 3) '법령 링크' 문구 제거
-    s = re.sub(r"\*?-?\s*법령 링크", "", s)
-
+    s = text.replace("사건 요지", "자문 요지")
+    # "1. 자문 요지" 다음 줄 본문을 같은 줄로
+    s = re.sub(r'(?m)^1\.\s*자문 요지\s*\n\s*(.+)', r"1. 자문 요지: \1", s)
+    # 남아있는 '법령 링크' 문구 제거
+    s = re.sub(r"\*?-?\s*조문?\s*링크", "", s)
     return s
+
 
     # 6) 중복/빈 줄 정리
     ft = _dedupe_blocks(ft)
@@ -1087,17 +1076,33 @@ _REF_BLOCK2_PAT = re.compile(r'\n[ \t]*###\s*참고\s*링크\(조문\)[\s\S]*$',
 def _deep_article_url(law: str, art_label: str) -> str:
     return f"https://www.law.go.kr/법령/{quote((law or '').strip())}/{quote(art_label)}"
 
+# 기존 _ART_PAT_BULLET 교체
+_ART_PAT_BULLET = re.compile(
+    r'(?m)^(?P<prefix>\s*[-*•]\s*)'            # 불릿
+    r'(?P<b1>\*{0,2})'                          # 앞쪽 **
+    r'(?P<law>[가-힣A-Za-z0-9·()\s]{2,40})\s*'  # 법령명
+    r'제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})'  # 제N조(의M)
+    r'(?P<b2>\*{0,2})'                          # 뒤쪽 **
+    r'(?P<tail>[^\n]*)$'                        # 꼬리
+)
+
 def link_inline_articles_in_bullets(markdown: str) -> str:
-    """불릿 라인 중 '법령명 제N조(의M)'를 [텍스트](조문URL)로 교체"""
     def repl(m: re.Match) -> str:
         law = m.group("law").strip()
         art = f"제{m.group('num')}조{m.group('ui') or ''}"
         url = _deep_article_url(law, art)
-        tail = (m.group("tail") or "")
-        # tail이 " (재산분할)" 같은 부가설명일 수 있으므로 보존
-        linked = f"{m.group('prefix')}[{law} {art}]({url}){tail}"
+
+        tail = m.group("tail") or ""
+        # 꼬리에 붙은 '조문 링크' 문구 제거(쉼표·띄어쓰기 포함)
+        import re as _re
+        tail = _re.sub(r'\s*[,;·]*\s*조문\s*링크', '', tail).rstrip()
+
+        b1 = m.group("b1") or ""
+        b2 = m.group("b2") or ""
+        linked = f"{m.group('prefix')}{b1}[{law} {art}]({url}){b2}{tail}"
         return linked
     return _ART_PAT_BULLET.sub(repl, markdown or "")
+
 
 def strip_reference_links_block(markdown: str) -> str:
     """맨 아래 '참고 링크' 섹션을 제거(모델/모듈이 생성한 블록 모두 커버)"""
