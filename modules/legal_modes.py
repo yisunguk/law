@@ -5,27 +5,24 @@ from dataclasses import dataclass
 from typing import Tuple, Optional
 import re, json
 
-# ── 1) 인텐트 정의 ─────────────────────────────────────────────────────────────
 class Intent(str, Enum):
-    QUICK = "quick"        # 단순 질의/정의/짧은 설명
-    LAWFINDER = "lawfinder" # 관련 법령/조문/링크 탐색
-    MEMO = "memo"          # 법률 자문/판단
-    DRAFT = "draft"        # 문서/조항/서식 작성
+    QUICK = "quick"
+    LAWFINDER = "lawfinder"
+    MEMO = "memo"
+    DRAFT = "draft"
 
-# ── 2) 시스템 프롬프트(공통 + 모드별) ─────────────────────────────────────────
 SYS_COMMON = (
     "너는 한국어로 답하는 법률 상담 보조원이다. "
-    "법제처 국가법령정보(DB) 기반의 정확한 용어를 사용하고, 과도한 단정은 피한다. "
+    "법제처 국가법령정보(DB) 기반의 용어를 사용하고, 과도한 단정은 피한다. "
     "사실관계가 불명확하면 전제와 한계를 명시한다."
 )
-
 SYS_BRIEF = "가능하면 간결하게 핵심만 정리하라."
 
 MODE_SYS = {
     Intent.QUICK:  "요청이 짧은 정의/범위/조문 의미라면 간단 명료하게 설명하라.",
     Intent.LAWFINDER:
         "관련 법령/조문/행정규칙/자치법규 후보를 제시하고, 조문 번호를 명확히 적어라. "
-        "가능하면 각 법령의 적용 범위와 핵심 키워드를 함께 요약하라.",
+        "각 법령의 적용 범위와 핵심 키워드를 간단히 요약하라.",
     Intent.MEMO:
         "법률 자문 메모 형식으로 정리하라.\n"
         "1) 자문요지  2) 적용 법령/근거  3) 핵심 판단  4) 권고 조치",
@@ -39,39 +36,23 @@ def build_sys_for_mode(mode: Intent, brief: bool = False) -> str:
         base += "\n" + SYS_BRIEF
     return base + "\n" + MODE_SYS[mode]
 
-# ── 3) 휴리스틱 분류기(필수) ──────────────────────────────────────────────────
 def classify_intent(q: str) -> Tuple[Intent, float]:
     text = (q or "").strip()
-
-    # 조문 번호가 보이면 단순 질의로
     if re.search(r"(제?\s*\d{1,4}\s*조(?:의\d{1,3})?)", text):
         return (Intent.QUICK, 0.85)
-
-    # 간단/정의형
     if any(k in text for k in ["간단", "짧게", "요약", "뜻", "정의", "무엇", "뭐야"]):
         return (Intent.QUICK, 0.8)
-
-    # 링크/원문/조문 탐색형
     if any(k in text for k in ["링크", "원문", "찾아", "검색", "근거", "관련 법", "조문"]):
         return (Intent.LAWFINDER, 0.8)
-
-    # 자문/판단형
-    if any(k in text for k in ["자문", "판단", "책임", "위험", "벌금", "처벌", "배상",
-                               "소송", "가능", "되나요", "되나", "되냐", "조치"]):
+    if any(k in text for k in ["자문", "판단", "책임", "위험", "벌금", "처벌", "배상", "소송", "가능", "되나요", "되나", "되냐", "조치"]):
         return (Intent.MEMO, 0.8)
-
-    # 작성형
     if any(k in text for k in ["계약", "통지", "서식", "양식", "조항 작성", "조항 만들어"]):
         return (Intent.DRAFT, 0.85)
-
-    # 기본값: 단순 질의
     return (Intent.QUICK, 0.55)
 
 def pick_mode(intent: Intent, conf: float) -> Intent:
-    # 신뢰도가 낮으면 과도한 상향을 막고 QUICK 유지
     return intent if conf >= 0.55 else Intent.QUICK
 
-# ── 4) 선택: LLM 기반 분류기(있으면 사용, 없어도 무방) ─────────────────────────
 @dataclass
 class IntentVote:
     intent: Intent
