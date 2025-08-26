@@ -1,61 +1,5 @@
-# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
-
-# === PATCH: route_intent 안전 임포트/대체 ===
-try:
-    # 1) 프로젝트 모듈에서 우선
-    from modules import route_intent as _route_intent  # type: ignore
-except Exception:
-    pass
-
-    try:
-        # 2) 단일 파일 배포형
-        from legal_modes import route_intent as _route_intent  # type: ignore
-    except Exception:
-        # 3) 최후: 규칙 분류기 기반 간이 라우터
-        def _route_intent(q: str, client=None, model=None):
-            try:
-                det, conf = classify_intent(q)
-            except Exception:
-                det, conf = (Intent.QUICK, 0.55)
-            needs = det in (Intent.LAWFINDER, Intent.MEMO)
-            return det, conf, needs
-route_intent = _route_intent
-# === END PATCH ===
-
-# === BEGIN PATCH: 헤더 '1. 사건요지' → '1. 자문요지' 변환 유틸 ===
-import re as _re_patch
-
-_HEAD_CASE_RE = _re_patch.compile(
-    r'(?mi)^\s*(?:\*\*|__)?\s*1[.)]\s*(?:사건\s*요지|사건요지)\s*(?:\*\*|__)?\s*[:：]?\s*(.*)$'
-)
-_HEAD_ADVICE_RE = _re_patch.compile(
-    r'(?mi)^\s*(?:\*\*|__)?\s*1[.)]\s*자문\s*요지\s*(?:\*\*|__)?\s*[:：]?\s+(.*)$'
-)
-
-def override_first_heading_to_consultation(md: str) -> str:
-    md2 = _HEAD_CASE_RE.sub(lambda m: "1. 자문요지\n" + (m.group(1).strip() if m.group(1) else ""), md, count=1)
-    md3 = _HEAD_ADVICE_RE.sub(lambda m: "1. 자문요지\n" + m.group(1).strip(), md2, count=1)
-    return md3
-
-def coerce_consultation_heading(md: str) -> str:
-    try:
-        return override_first_heading_to_consultation(md)
-    except Exception:
-        try:
-            # inline fallback
-            t = _re_patch.sub(
-                r'(?mi)^\s*(?:\*\*|__)?\s*1[.)]\s*(?:사건\s*요지|사건요지)\s*(?:\*\*|__)?\s*[:：]?\s*(.*)$',
-                lambda m: "1. 자문요지\n" + (m.group(1).strip() if m.group(1) else ""), md, count=1
-            )
-            t = _re_patch.sub(
-                r'(?mi)^\s*(?:\*\*|__)?\s*1[.)]\s*자문\s*요지\s*(?:\*\*|__)?\s*[:：]?\s+(.*)$',
-                lambda m: "1. 자문요지\n" + m.group(1).strip(), t, count=1
-            )
-            return t
-        except Exception:
-            return md
-# === END PATCH ===
+# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 
 import streamlit as st
 
@@ -66,7 +10,7 @@ def cached_suggest_for_tab(tab_key: str):
     import streamlit as st
     store = st.session_state.setdefault("__tab_suggest__", {})
     if tab_key not in store:
-        from modules import suggest_keywords_for_tab, route_intent
+        from modules import suggest_keywords_for_tab
         store[tab_key] = cached_suggest_for_tab(tab_key)
     return store[tab_key]
 
@@ -203,25 +147,6 @@ def ask_llm_with_tools(
     forced_mode: str | None = None,  # 유지해도 됨: 아래에서 직접 처리
     brief: bool = False,
 ):
-    # LLM 라우터 우선 → 규칙 폴백
-    g = globals()
-    c = g.get("client")
-    az = g.get("AZURE") if g.get("AZURE") else {}
-    try:
-        det_intent, conf, needs_lookup = route_intent(user_q, client=c, model=az.get("deployment"))
-    except Exception:
-        det_intent, conf, needs_lookup = route_intent(user_q)
-    # 단순 규칙: 단순 검색만 LAWFINDER, 그 외는 모두 MEMO
-    mode = det_intent if det_intent == Intent.LAWFINDER else Intent.MEMO
-    st.session_state["_final_mode"] = mode.value
-    # MEMO/LAWFINDER는 항상 도구 사용
-    use_tools = True
-    try:
-        valid = {m.value for m in Intent} 
-    except Exception:  
-
-        pass
-
     """
     UI 진입점: 의도→모드 결정, 시스템 프롬프트 합성, 툴 사용 여부 결정 후
     AdviceEngine.generate()에 맞는 인자(system_prompt, allow_tools)로 호출.
@@ -230,13 +155,28 @@ def ask_llm_with_tools(
     if engine is None:
         yield ("final", "엔진이 아직 초기화되지 않았습니다. (client/AZURE/TOOLS 확인)", [])
         return
-# 👉 단순화: 라우터가 준 걸 그대로 사용 (LAWFINDER가 아니면 모두 MEMO)
-mode = det_intent if det_intent == Intent.LAWFINDER else Intent.MEMO
-st.session_state["_final_mode"] = mode.value
 
-# 검색/툴 사용: MEMO와 LAWFINDER 둘 다 True
-use_tools = True
+    # 1) 모드 결정
+    det_intent, conf = classify_intent(user_q)
+    try:
+        valid = {m.value for m in Intent}
+        mode = Intent(forced_mode) if forced_mode in valid else pick_mode(det_intent, conf)
+    except Exception:
+        mode = pick_mode(det_intent, conf)
 
+    # 2) 프롬프트/툴 사용 여부
+    use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
+    sys_prompt = build_sys_for_mode(mode, brief=brief)
+
+    # 3) 엔진 호출 (새 시그니처에 맞게)
+    yield from engine.generate(
+        user_q,
+        system_prompt=sys_prompt,
+        allow_tools=use_tools,
+        num_rows=num_rows,
+        stream=stream,
+        primer_enable=True,
+    )
 
 import io, os, re, json, time, html
 
@@ -914,32 +854,9 @@ def _chat_started() -> bool:
 
 # --- 최종 후처리 유틸: 답변 본문을 정리하고 조문에 인라인 링크를 붙인다 ---
 def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
-
     # 1) normalize (fallback 포함)
     try:
         ft = _normalize_text(full_text)
-    except NameError:
-        import re as _re
-        def _normalize_text(s: str) -> str:
-            s = (s or '').replace('\r\n', '\n').replace('\r', '\n').strip()
-            s = _re.sub(r'\n{3,}', '\n\n', s)
-            s = _re.sub(r'[ \t]+\n', '\n', s)
-            return s
-        ft = _normalize_text(full_text)
-
-    # 2) '1. 자문요지' 헤더 통일
-    try:
-        ft = coerce_consultation_heading(ft)
-    except Exception:
-        pass
-
-    # 3) MEMO 모드일 때만 메모 레이아웃 적용
-    try:
-        import streamlit as _st
-        if _st.session_state.get("_final_mode") == Intent.MEMO.value:
-            ft = enforce_memo_layout(ft, collected_laws)
-    except Exception:
-        pass
     except NameError:
         import re as _re
         def _normalize_text(s: str) -> str:
@@ -948,12 +865,6 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
             s = _re.sub(r"[ \t]+\n", "\n", s)
             return s
         ft = _normalize_text(full_text)
-    try:
-        import streamlit as _st
-        if _st.session_state.get("_final_mode") == Intent.MEMO.value:
-            ft = enforce_memo_layout(ft, collected_laws)  # ← 이미 정의된(또는 제공받은) 헬퍼
-    except Exception:
-        pass
 
     # 2) 불릿 문자 통일: •, * → -  (인라인 링크 치환 누락 방지)
     ft = (
@@ -975,15 +886,6 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
     ft = _dedupe_blocks(ft)
 
     return ft
-
-
-
-# --- 답변(마크다운)에서 '법령명'들을 추출(복수) ---
-
-# [민법 제839조의2](...), [가사소송법 제2조](...) 등
-_LAW_IN_LINK = re.compile(r'\[([^\]\n]+?)\s+제\d+조(의\d+)?\]')
-# 불릿/일반 문장 내: "OO법/령/규칙/조례" (+선택적 '제n조')
-_LAW_INLINE  = re.compile(r'([가-힣A-Za-z0-9·\s]{2,40}?(?:법|령|규칙|조례))(?:\s*제\d+조(의\d+)?)?')
 
 
 
@@ -2166,10 +2068,6 @@ TOOLS = [
 
 # 1) imports
 from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
-
-
-def enforce_memo_layout(md: str, collected_laws: list)->str:
-    return md
 
 # 2) 엔진 생성 (한 번만)
 engine = None
