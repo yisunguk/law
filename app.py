@@ -23,7 +23,7 @@ def cached_suggest_for_law(law_name: str):
     return store[law_name]
 
 st.set_page_config(
-    page_title="법제처 법무 상담사",
+    page_title="인공지능 법무 상담사",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -784,7 +784,6 @@ def _push_user_from_pending() -> str | None:
     return q
 
 def render_pre_chat_center():
-    """대화 전: 중앙 히어로 + 중앙 업로더(키: first_files) + 전송 폼"""
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
     st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
 
