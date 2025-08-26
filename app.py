@@ -1146,7 +1146,7 @@ def _summarize_laws_for_primer(law_items: list[dict], max_items: int = 6) -> str
         rows.append(f"{i}) {nm} ({kind}; {dept}; 시행 {eff}, 공포 {pub})")
     body = "\n".join(rows)
     return (
-        "아래는 사용자 사건과 관련도가 높은 법령 후보 목록이다. "
+        "아래는 사용자 자문과 관련도가 높은 법령 후보 목록이다. "
         "답변을 작성할 때 각각의 적용 범위와 책임주체, 구성요건·의무·제재를 교차 검토하라.\n"
         f"{body}\n"
         "가능하면 각 법령을 분리된 소제목으로 정리하고, 핵심 조문(1~2개)만 간단 인용하라."
@@ -1591,13 +1591,13 @@ def rerank_laws_with_llm(user_q: str, law_items: list[dict], top_k: int = 8) -> 
     names_txt = "\n".join(f"- {n}" for n in names[:25])
 
     SYS = (
-        "너는 사건과 관련된 '법령명'만 남기는 필터야. 질문 맥락과 무관하면 제외하고, JSON만 반환해.\n"
+        "너는 자문과 관련된 '법령명'만 남기는 필터야. 질문 맥락과 무관하면 제외하고, JSON만 반환해.\n"
         '형식: {"pick":["형법","산업안전보건법"]}'
     )
     prompt = (
         "사용자 질문:\n" + (user_q or "") + "\n\n"
         "후보 법령 목록:\n" + names_txt + "\n\n"
-        "사건에 직접 관련된 것만 3~8개 고르고 나머지는 제외해."
+        "자문에 직접 관련된 것만 3~8개 고르고 나머지는 제외해."
     )
 
     try:
@@ -1682,7 +1682,7 @@ def extract_law_candidates_llm(q: str) -> list[str]:
     # 1) 일반 프롬프트
     try:
         SYSTEM_EXTRACT1 = (
-            "너는 한국 사건 설명에서 '관련 법령명'만 1~3개 추출하는 도우미다. "
+            "너는 한국 자문 설명에서 '관련 법령명'만 1~3개 추출하는 도우미다. "
             "설명 없이 JSON만 반환하라.\n"
             '형식: {"laws":["형법","산업안전보건법"]}'
         )
