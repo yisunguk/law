@@ -1,11 +1,13 @@
-from __future__ import annotations
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
+from __future__ import annotations
 
 # === PATCH: route_intent 안전 임포트/대체 ===
 try:
     # 1) 프로젝트 모듈에서 우선
     from modules import route_intent as _route_intent  # type: ignore
 except Exception:
+    pass
+
     try:
         # 2) 단일 파일 배포형
         from legal_modes import route_intent as _route_intent  # type: ignore
@@ -209,12 +211,16 @@ def ask_llm_with_tools(
         det_intent, conf, needs_lookup = route_intent(user_q, client=c, model=az.get("deployment"))
     except Exception:
         det_intent, conf, needs_lookup = route_intent(user_q)
+    # 단순 규칙: 단순 검색만 LAWFINDER, 그 외는 모두 MEMO
+    mode = det_intent if det_intent == Intent.LAWFINDER else Intent.MEMO
+    st.session_state["_final_mode"] = mode.value
+    # MEMO/LAWFINDER는 항상 도구 사용
+    use_tools = True
     try:
-        valid = {m.value for m in Intent}
-        mode = Intent(forced_mode) if forced_mode in valid else pick_mode(det_intent, conf)
-    except Exception:
-        mode = pick_mode(det_intent, conf)
-    use_tools = bool(needs_lookup) or (mode in (Intent.LAWFINDER, Intent.MEMO))
+        valid = {m.value for m in Intent} 
+    except Exception:  
+
+        pass
 
     """
     UI 진입점: 의도→모드 결정, 시스템 프롬프트 합성, 툴 사용 여부 결정 후
@@ -224,11 +230,6 @@ def ask_llm_with_tools(
     if engine is None:
         yield ("final", "엔진이 아직 초기화되지 않았습니다. (client/AZURE/TOOLS 확인)", [])
         return
-
-    # 1) 모드 결정
-    # app.py — ask_llm_with_tools(...) 안, 모드 결정 구간
-    det_intent, conf, needs_lookup = route_intent(user_q)
-
 # 👉 단순화: 라우터가 준 걸 그대로 사용 (LAWFINDER가 아니면 모두 MEMO)
 mode = det_intent if det_intent == Intent.LAWFINDER else Intent.MEMO
 st.session_state["_final_mode"] = mode.value
@@ -914,18 +915,31 @@ def _chat_started() -> bool:
 # --- 최종 후처리 유틸: 답변 본문을 정리하고 조문에 인라인 링크를 붙인다 ---
 def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
 
-    # --- 자문요지 헤더 강제 통일 ---
-    try:
-        ft = coerce_consultation_heading(ft)
-    except NameError:
-        try:
-            full_text = coerce_consultation_heading(full_text)
-        except NameError:
-            pass
     # 1) normalize (fallback 포함)
     try:
         ft = _normalize_text(full_text)
-        
+    except NameError:
+        import re as _re
+        def _normalize_text(s: str) -> str:
+            s = (s or '').replace('\r\n', '\n').replace('\r', '\n').strip()
+            s = _re.sub(r'\n{3,}', '\n\n', s)
+            s = _re.sub(r'[ \t]+\n', '\n', s)
+            return s
+        ft = _normalize_text(full_text)
+
+    # 2) '1. 자문요지' 헤더 통일
+    try:
+        ft = coerce_consultation_heading(ft)
+    except Exception:
+        pass
+
+    # 3) MEMO 모드일 때만 메모 레이아웃 적용
+    try:
+        import streamlit as _st
+        if _st.session_state.get("_final_mode") == Intent.MEMO.value:
+            ft = enforce_memo_layout(ft, collected_laws)
+    except Exception:
+        pass
     except NameError:
         import re as _re
         def _normalize_text(s: str) -> str:
@@ -2152,6 +2166,10 @@ TOOLS = [
 
 # 1) imports
 from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
+
+
+def enforce_memo_layout(md: str, collected_laws: list)->str:
+    return md
 
 # 2) 엔진 생성 (한 번만)
 engine = None
