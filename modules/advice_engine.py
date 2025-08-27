@@ -255,3 +255,19 @@ class AdviceEngine:
             final_text = merge_article_links_block(final_text)
             yield ("final", final_text, law_for_links)
             return
+
+# =========
+# 모드 결정기
+# =========
+try:
+    from .legal_modes import Intent  # type: ignore
+except Exception:  # pragma: no cover
+    class Intent:  # minimal fallback for type hints
+        QUICK="quick"; LAWFINDER="lawfinder"; MEMO="memo"; DRAFT="draft"
+
+def pick_mode(det_intent: "Intent", conf: float) -> "Intent":
+    """
+    app.py에서 classify_intent() 결과를 받아 최종 모드를 결정합니다.
+    현재는 단순 통과(최적화 포인트가 없으면 그대로 반환).
+    """
+    return det_intent
