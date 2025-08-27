@@ -585,11 +585,17 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
         return ""
 
     def _build_law_link(it, eff):
-        link = _pick(it.get("url"), it.get("link"), it.get("detail_url"), it.get("상세링크"))
-        if link: return link
+        link = _pick(
+            it.get("법령상세링크"),
+            it.get("상세링크"),
+            it.get("url"), it.get("link"), it.get("detail_url"),
+        )
+        if link:
+            return normalize_law_link(link)
         mst = _pick(it.get("MST"), it.get("mst"), it.get("LawMST"))
         if mst:
-            return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={eff}"
+            ef = (eff or "").replace("-", "")
+            return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={ef}"
         return ""
 
     def _law_item_li(it):
