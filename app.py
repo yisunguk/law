@@ -644,67 +644,6 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
     html.append("</details></div>")
     st.markdown("\n".join(html), unsafe_allow_html=True)
 
-def _law_item_li(it):
-    title = _pick(
-        it.get("법령명한글"), it.get("법령명"), it.get("title_kr"),
-        it.get("title"), it.get("name_ko"), it.get("name")
-    )
-    dept = _pick(it.get("소관부처"), it.get("부처명"), it.get("dept"), it.get("department"))
-    eff  = _pick(it.get("시행일자"), it.get("eff"), it.get("effective_date"))
-    pub  = _pick(it.get("공포일자"), it.get("pub"), it.get("promulgation_date"))
-    link = _build_law_link(it, eff)
-
-    parts = [f'<span class="title">{title or "(제목 없음)"} </span>']
-    meta = []
-    if dept:
-        meta.append(f"소관부처: {dept}")
-    if eff or pub:
-        meta.append(f"시행일자: {eff} / 공포일자: {pub}")
-    if meta:
-        parts.append(f'<div class="meta">{" / ".join(meta)}</div>')
-    if link:
-        parts.append(f'<a href="{link}" target="_blank" rel="noreferrer">법령 상세보기</a>')
-    return "<li>" + "\n".join(parts) + "</li>"
-
-html = [
-    '<div id="search-flyout">',
-    '<h3>📚 통합 검색 결과</h3>',
-    '<details open><summary>열기/접기</summary>'
-]
-
-# 버킷 렌더
-for label in ["법령", "행정규칙", "자치법규", "조약"]:
-    pack = results.get(label) or {}
-    items = pack.get("items") or []
-    html.append(f'<h4>🔎 {label}</h4>')
-    if not items:
-        html.append('<p>검색 결과 없음</p>')
-    else:
-        html.append('<ol class="law-list">')
-        html += [_law_item_li(it) for it in items]
-        html.append('</ol>')
-
-    if show_debug:
-        tried = (pack.get("debug") or {}).get("tried") or []
-        plans = (pack.get("debug") or {}).get("plans") or []
-        err = pack.get("error")
-        dbg = []
-        if tried:
-            dbg.append("시도: " + " | ".join(tried))
-        if plans:
-            dbg.append("LLM plans: " + " | ".join([f"{p.get('target')}:{p.get('q')}" for p in plans]))
-        if err:
-            dbg.append("오류: " + err)
-        if dbg:
-            html.append("<small class='debug'>" + "<br/>".join(dbg) + "</small>")
-
-html.append("</details></div>")
-st.markdown("\n".join(html), unsafe_allow_html=True)
-
-
-  # ⬇️ 이 블록만 붙여넣으세요 (기존 header st.markdown(...) 블록은 삭제)
-# app.py (하단)
-
 # =========================================
 # 세션에 임시로 담아 둔 첫 질문을 messages로 옮기는 유틸
 # (이 블록을 파일 상단 ‘레이아웃/스타일 주입’ 직후 정도로 올려둡니다)
