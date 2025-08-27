@@ -453,6 +453,18 @@ def inject_sticky_layout_css(mode: str = "wide"):
 # 호출 위치: 파일 맨 아래, 모든 컴포넌트를 그린 뒤
 inject_sticky_layout_css("wide")
 
+
+st.markdown("""
+<style>
+.intro-blurb{
+  margin: 8px 0 12px 2px;
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: rgba(0,0,0,.72);
+}
+</style>
+""", unsafe_allow_html=True)
+
 # ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
 
 # --- Right flyout: 상단 고정 + 하단(채팅창)과 겹치지 않게 ---
@@ -778,7 +790,7 @@ def render_pre_chat_center():
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
     st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
 
-    # 중앙 업로더
+    # 중앙 업로더 (대화 전 전용)
     st.file_uploader(
         "Drag and drop files here",
         type=["pdf", "docx", "txt"],
@@ -786,12 +798,27 @@ def render_pre_chat_center():
         key="first_files",
     )
 
-    # 입력 폼
-    with st.form("first_ask", clear_on_submit=True):
-        q = st.text_input("질문을 입력해 주세요...", key="first_input")
-        sent = st.form_submit_button("전송", use_container_width=True)
 
-    # ✅ 대화 스타터 버튼 (2줄 2줄)
+    # 소개글 (라벨 대체)
+    st.markdown(
+        '''
+        <div class="intro-blurb">
+          법제처 국가법령정보 DB를 기반으로 최신 법령·행정규칙·자치법규·판례를 신속하게 찾아드립니다.
+          간단한 질의부터 전문 법무 자문까지 편하게 물어보세요.
+        </div>
+        ''',
+        unsafe_allow_html=True
+    )
+    # 입력 폼 (전송 시 pending에 저장 후 rerun)
+    with st.form("first_ask", clear_on_submit=True):
+        q = st.text_input(
+            label="",
+            placeholder="여기에 질문을 입력하세요",
+            key="first_input",
+            label_visibility="collapsed"
+        )
+        sent = st.form_submit_button("전송", use_container_width=True)
+    # ✅ 대화 스타터 버튼 (입력창 아래, 2줄 × 2개)
     col1, col2 = st.columns(2)
     with col1:
         if st.button("근로계약 해지 시 절차는?", use_container_width=True):
@@ -816,13 +843,14 @@ def render_pre_chat_center():
             st.session_state["_pending_user_nonce"] = time.time_ns()
             st.rerun()
 
+
+
     st.markdown("</section>", unsafe_allow_html=True)
 
     if sent and (q or "").strip():
         st.session_state["_pending_user_q"] = q.strip()
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
-
 
 # 기존 render_bottom_uploader() 전부 교체
 
@@ -841,7 +869,12 @@ def render_post_chat_simple_ui():
 
     # 텍스트 입력 + 전송 버튼 (프리챗과 동일)
     with st.form("next_ask", clear_on_submit=True):
-        q = st.text_input("질문을 입력해 주세요...", key="next_input")
+        q = st.text_input(
+            label="",
+            placeholder="여기에 질문을 입력하세요",
+            key="next_input",
+            label_visibility="collapsed"
+        )
         sent = st.form_submit_button("전송", use_container_width=True)
 
     st.markdown("</section>", unsafe_allow_html=True)
