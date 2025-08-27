@@ -802,7 +802,7 @@ def render_pre_chat_center():
     # ✅ 대화 스타터 버튼 (2줄 2줄)
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("근로계약 해지 시 절차는?", use_container_width=True):
+        if st.button("건설현장 중대재해 발생시 처리 절차는?", use_container_width=True):
             st.session_state["_pending_user_q"] = "교차로 접촉사고: 과실비율·보험처리 기준?"
             st.session_state["_pending_user_nonce"] = time.time_ns()
             st.rerun()
@@ -814,7 +814,7 @@ def render_pre_chat_center():
 
     col3, col4 = st.columns(2)
     with col3:
-        if st.button("개인정보 유출 시 법적 책임은?", use_container_width=True):
+        if st.button("유료주차장에 주차된 차에서 도난 사건이 났을경우 처리 절차는?", use_container_width=True):
             st.session_state["_pending_user_q"] = "온라인 명예훼손 글: 형사·민사 절차?"
             st.session_state["_pending_user_nonce"] = time.time_ns()
             st.rerun()
@@ -1155,9 +1155,8 @@ st.markdown(
 
 # 본문
 st.markdown("""
-인공지능 법률 상담가 챗봇은 국가법령정보 DB를 직접 접속하여 최신 법령과 행정규칙, 자치법규, 조약, 법령해석례, 헌재결정례, 법령용어를 신뢰성 있게 해석합니다.  
-
-본 챗봇은 내부 DB를 사용하지 않아 채팅 기록, 첨부파일 등 사용자의 기록을 저장하지 않습니다.             
+국가법령정보 DB를 직접 접속하여 최신 법령을 조회하여 답변합니다.  
+저는 내부 DB를 사용하지 않아 채팅 기록, 첨부파일 등 사용자의 기록을 저장하지 않습니다.             
 """)
 
 # 하위 법령 소제목(예: "1) 산업안전보건법")
