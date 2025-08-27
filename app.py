@@ -1,3 +1,4 @@
+from modules.law_fetch import _summarize_laws_for_primer, _fetch_detail_text_from_item
 from __future__ import annotations
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 
