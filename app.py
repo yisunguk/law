@@ -184,13 +184,6 @@ def ask_llm_with_tools(
     except Exception:
         history = []
 
-    # 3) 엔진 호출 (히스토리 전달 시도 + 안전한 폴백)
-    import inspect
-    try:
-        _sig = inspect.signature(engine.generate)
-        _params = set(_sig.parameters.keys())
-    except Exception:
-        _params = set()
 
     _called = False
     for _kw in ("history", "messages", "chat_history", "conversation"):
@@ -585,68 +578,82 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
         return ""
 
     def _build_law_link(it: dict, eff=None) -> str:
-       # 1) 목록 API가 준 공식 링크를 최우선(OR 체인 전체에 strip 1회만)
-       link = (it.get("법령상세링크") or it.get("상세링크") or it.get("detail_url") or "")
-       link = normalize_law_link(link)
-       if link:
-        return link
+        # 1) 목록 API가 준 공식 링크를 최우선
+        link = (it.get("법령상세링크") or it.get("상세링크") or it.get("detail_url") or "")
+        link = normalize_law_link(link)
+        if link:
+            return link
+        
+        # 2) MST만 있을 때 DRF로 폴백 (OC는 시크릿에서)
+        mst = str(it.get("MST") or it.get("mst") or it.get("LawMST") or "").strip()
+        if mst and "LAW_API_OC" in globals() and LAW_API_OC:
+            base = (
+                "https://www.law.go.kr/DRF/lawService.do"
+                f"?OC={_q(LAW_API_OC)}&target=law&MST={_q(mst)}&type=HTML"
+            )
+            if eff:
+                base += f"&efYd={_q(str(eff))}"
+            return base
+        
+        # 3) 만들 수 없으면 빈 문자열
+        return ""
+def _law_item_li(it):
+    title = _pick(
+        it.get("법령명한글"), it.get("법령명"), it.get("title_kr"),
+        it.get("title"), it.get("name_ko"), it.get("name")
+    )
+    dept = _pick(it.get("소관부처"), it.get("부처명"), it.get("dept"), it.get("department"))
+    eff  = _pick(it.get("시행일자"), it.get("eff"), it.get("effective_date"))
+    pub  = _pick(it.get("공포일자"), it.get("pub"), it.get("promulgation_date"))
+    link = _build_law_link(it, eff)
 
-    # 2) MST만 있을 때 DRF로 폴백 (OC는 시크릿에서)
-    mst = str(it.get("MST") or it.get("mst") or it.get("LawMST") or "").strip()
-    if mst and "LAW_API_OC" in globals() and LAW_API_OC:
-        base = (
-            "https://www.law.go.kr/DRF/lawService.do"
-            f"?OC={quote(LAW_API_OC)}&target=law&MST={quote(mst)}&type=HTML"
-        )
-        if eff:
-            base += f"&efYd={quote(str(eff))}"
-        return base
+    parts = [f'<span class="title">{title or "(제목 없음)"} </span>']
+    meta = []
+    if dept:
+        meta.append(f"소관부처: {dept}")
+    if eff or pub:
+        meta.append(f"시행일자: {eff} / 공포일자: {pub}")
+    if meta:
+        parts.append(f'<div class="meta">{" / ".join(meta)}</div>')
+    if link:
+        parts.append(f'<a href="{link}" target="_blank" rel="noreferrer">법령 상세보기</a>')
+    return "<li>" + "\n".join(parts) + "</li>"
 
-    # 3) 만들 수 없으면 빈 문자열
-    return ""
+html = [
+    '<div id="search-flyout">',
+    '<h3>📚 통합 검색 결과</h3>',
+    '<details open><summary>열기/접기</summary>'
+]
 
-    def _law_item_li(it):
-        title = _pick(it.get("법령명한글"), it.get("법령명"), it.get("title_kr"), it.get("title"), it.get("name_ko"), it.get("name"))
-        dept  = _pick(it.get("소관부처"), it.get("부처명"), it.get("dept"), it.get("department"))
-        eff   = _pick(it.get("시행일자"), it.get("eff"), it.get("effective_date"))
-        pub   = _pick(it.get("공포일자"), it.get("pub"), it.get("promulgation_date"))
-        link  = _build_law_link(it, eff)
+# 버킷 렌더
+for label in ["법령", "행정규칙", "자치법규", "조약"]:
+    pack = results.get(label) or {}
+    items = pack.get("items") or []
+    html.append(f'<h4>🔎 {label}</h4>')
+    if not items:
+        html.append('<p>검색 결과 없음</p>')
+    else:
+        html.append('<ol class="law-list">')
+        html += [_law_item_li(it) for it in items]
+        html.append('</ol>')
 
-        parts = [f'<span class="title">{title or "(제목 없음)"} </span>']
-        meta  = []
-        if dept: meta.append(f"소관부처: {dept}")
-        if eff or pub: meta.append(f"시행일자: {eff} / 공포일자: {pub}")
-        if meta: parts.append(f'<div class="meta">{" / ".join(meta)}</div>')
-        if link: parts.append(f'<a href="{link}" target="_blank" rel="noreferrer">법령 상세보기</a>')
-        return "<li>" + "\n".join(parts) + "</li>"
+    if show_debug:
+        tried = (pack.get("debug") or {}).get("tried") or []
+        plans = (pack.get("debug") or {}).get("plans") or []
+        err = pack.get("error")
+        dbg = []
+        if tried:
+            dbg.append("시도: " + " | ".join(tried))
+        if plans:
+            dbg.append("LLM plans: " + " | ".join([f"{p.get('target')}:{p.get('q')}" for p in plans]))
+        if err:
+            dbg.append("오류: " + err)
+        if dbg:
+            html.append("<small class='debug'>" + "<br/>".join(dbg) + "</small>")
 
-    # 헤더
-    html = ['<div id="search-flyout">', '<h3>📚 통합 검색 결과</h3>', '<details open><summary>열기/접기</summary>']
+html.append("</details></div>")
+st.markdown("\n".join(html), unsafe_allow_html=True)
 
-    # 버킷 렌더
-    for label in ["법령", "행정규칙", "자치법규", "조약"]:
-        pack  = results.get(label) or {}
-        items = pack.get("items") or []
-        html.append(f'<h4>🔎 {label}</h4>')
-        if not items:
-            html.append('<p>검색 결과 없음</p>')
-        else:
-            html.append('<ol class="law-list">')
-            html += [_law_item_li(it) for it in items]
-            html.append('</ol>')
-
-        if show_debug:
-            tried = (pack.get("debug") or {}).get("tried") or []
-            plans = (pack.get("debug") or {}).get("plans") or []
-            err   = pack.get("error")
-            dbg = []
-            if tried: dbg.append("시도: " + " | ".join(tried))
-            if plans: dbg.append("LLM plans: " + " | ".join([f"{p.get('target')}:{p.get('q')}" for p in plans]))
-            if err:   dbg.append("오류: " + err)
-            if dbg:   html.append("<small class='debug'>" + "<br/>".join(dbg) + "</small>")
-
-    html.append("</details></div>")
-    st.markdown("\n".join(html), unsafe_allow_html=True)
 
   # ⬇️ 이 블록만 붙여넣으세요 (기존 header st.markdown(...) 블록은 삭제)
 # app.py (하단)
@@ -1190,14 +1197,6 @@ def _link_block_with_bullets(block: str) -> str:
                 out.append(f"{mf.group('prefix')}[{law} {art}]({url}){tail}")
                 continue
 
-        ms = _BULLET_ART_SIMPLE.match(line)
-        if ms and cur_law:
-            art   = f"제{ms.group('num')}조{ms.group('ui') or ''}"
-            title = (ms.group('title') or '')
-            tail  = (ms.group('tail') or '')
-            url   = _deep_article_url(cur_law, art)
-            txt = f"{art}{title or ''}"                      # 예: "제76조(외국에서의 혼인신고)"
-            out.append(f"{ms.group('prefix')}[{txt}]({url}){tail}")
 
             continue
 
