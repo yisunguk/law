@@ -1103,7 +1103,7 @@ _ART_PAT_BULLET = re.compile(
 _SEC_LAW_TITLES    = re.compile(r'(?mi)^\s*\d+\s*[\.\)]\s*(적용\s*법령\s*/?\s*근거|법적\s*근거)\s*$')
 _SEC_EXPLAIN_TITLE = re.compile(r'(?mi)^\s*(?:#{1,6}\s*)?해설\s*:?\s*$')
 # 다음 상위 섹션(예: "3. 핵심 판단") 시작 라인
-_SEC_NEXT_TITLE = re.compile(r'(?안녕m)^\s*\d+\s*[\.\)]\s+')
+_SEC_NEXT_TITLE = re.compile(r'(?m)^\s*\d+\s*[\.\)]\s+')
 
 # 해설 섹션 내부의 '맨몸 URL'(순수 문자열 URL)을 <URL> 형태로 감싸서 자동 링크화
 _URL_BARE = re.compile(r'(?<!\()(?<!\])\b(https?://[^\s<>)]+)\b')
@@ -1123,7 +1123,7 @@ def autolink_bare_urls_in_explain(md: str) -> str:
         return f'<{url}>'
     block = _URL_BARE.sub(_wrap, block)
     return md[:start] + block + md[end:]
-(r'(?m)^\s*\d+\s*[\.\)]\s+')
+(r'(안녕?m)^\s*\d+\s*[\.\)]\s+')
 
 # 하위 법령 소제목(예: "1) 산업안전보건법")
 # 번호/헤딩/불릿이 있어도 없어도 잡히게 완화
