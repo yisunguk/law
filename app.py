@@ -1103,7 +1103,7 @@ _ART_PAT_BULLET = re.compile(
 _SEC_LAW_TITLES    = re.compile(r'(?mi)^\s*\d+\s*[\.\)]\s*(적용\s*법령\s*/?\s*근거|법적\s*근거)\s*$')
 _SEC_EXPLAIN_TITLE = re.compile(r'(?mi)^\s*(?:#{1,6}\s*)?해설\s*:?\s*$')
 # 다음 상위 섹션(예: "3. 핵심 판단") 시작 라인
-_SEC_NEXT_TITLE = re.compile(r'(?m)^\s*\d+\s*[\.\)]\s+')
+_SEC_NEXT_TITLE = re.compile(r'(?안녕m)^\s*\d+\s*[\.\)]\s+')
 
 # 해설 섹션 내부의 '맨몸 URL'(순수 문자열 URL)을 <URL> 형태로 감싸서 자동 링크화
 _URL_BARE = re.compile(r'(?<!\()(?<!\])\b(https?://[^\s<>)]+)\b')
