@@ -3010,12 +3010,25 @@ def _current_q_and_answer():
 
 # 🔽 대화가 시작된 뒤에만 우측 패널 노출
 # ✅ 로딩(스트리밍) 중에는 패널을 렌더링하지 않음
+# 🔽 대화가 시작된 뒤에만 우측 패널 노출
+# ✅ 로딩(스트리밍) 중에는 패널을 렌더링하지 않음
 if chat_started and not st.session_state.get("__answering__", False):
     q_for_panel, ans_for_panel = _current_q_and_answer()
-hints = extract_law_names_from_answer(ans_for_panel) if ans_for_panel else None
-arts  = extract_article_pairs_from_answer(ans_for_panel) if ans_for_panel else None  # ← NEW
-render_search_flyout(q_for_panel or user_q, num_rows=8,
-                     hint_laws=hints, hint_articles=arts, show_debug=SHOW_SEARCH_DEBUG)
+
+    # 함수들이 파일의 더 아래에서 정의되어 있을 수 있으므로 안전 가드
+    _ext_names = globals().get("extract_law_names_from_answer")
+    _ext_arts  = globals().get("extract_article_pairs_from_answer")
+
+    hints = _ext_names(ans_for_panel) if (_ext_names and ans_for_panel) else None
+    arts  = _ext_arts(ans_for_panel)  if (_ext_arts  and ans_for_panel) else None
+
+    render_search_flyout(
+        q_for_panel or user_q,
+        num_rows=8,
+        hint_laws=hints,
+        hint_articles=arts,   # ← 조문 힌트도 함께 전달
+        show_debug=SHOW_SEARCH_DEBUG,
+    )
 
 
 # ===============================
