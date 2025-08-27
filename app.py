@@ -587,9 +587,10 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
     def _build_law_link(it, eff):
         link = _pick(it.get("url"), it.get("link"), it.get("detail_url"), it.get("상세링크"))
         if link: return link
-        mst = _pick(it.get("MST"), it.get("mst"), it.get("LawMST"))
+        mst = _pick(it.get("법령일련번호"), it.get("법령ID"), it.get("MST"), it.get("mst"), it.get("LawMST"))
         if mst:
-            return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={eff}"
+            OC = (st.secrets.get("LAW_API_OC") or "").split("@")[0].strip() or "test"
+            return f"https://www.law.go.kr/DRF/lawService.do?OC={up.quote(OC)}&target=law&MST={mst}&type=HTML&efYd={eff}"
         return ""
 
     def _law_item_li(it):
@@ -1708,6 +1709,7 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
         return [], None, "빈 질의어로 호출되어 무시함"
 
     params = {
+        "ServiceKey": api_key,
         "serviceKey": api_key,
         "target": target,
         "query": q,  # <-- 기존의 (query or "*") 를 q 로 교체
@@ -2077,7 +2079,13 @@ def find_all_law_data(query: str, num_rows: int = 3, hint_laws: list[str] | None
                     tmp.append({"target":"law","q":f"{kw[i]} {kw[j]}","must":[kw[i],kw[j]],"must_not":[]})
             plans = tmp[:8]
 
-    # (이하 실행/리랭크/패킹은 기존과 동일):contentReference[oaicite:7]{index=7}
+        # 이하 실행/리랭크/패킹은 기존과 동일
+    # ✅ Ensure at least one plan even if LLM/rule pipeline produced nothing
+    if not plans:
+        cleaned = _clean_query_for_api(query)
+        if cleaned:
+            plans = [{"target":"law","q": cleaned, "must":[cleaned], "must_not": []}]
+
     tried, err = [], []
     buckets = {"법령":("law",[]), "행정규칙":("admrul",[]), "자치법규":("ordin",[]), "조약":("trty",[])}
     for plan in plans:
