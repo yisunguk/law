@@ -1,11 +1,17 @@
-streamlit>=1.28.0
-openai>=1.0.0
+# requirements.txt (정리본)
+
+# UI / LLM
+streamlit>=1.34
+openai>=1.30.0
+
+# HTTP & 파싱
 requests>=2.31.0
-lxml>=4.9.0
+beautifulsoup4>=4.12.3
+lxml>=5.2.2           # (선택) bs4 성능·정확도 향상용
+
+# 파일 처리
+pymupdf>=1.24.9       # PDF 텍스트/이미지 추출
+docx2txt>=0.8
+
+# 백엔드
 firebase-admin>=6.2.0
-pymupdf
-docx2txt
-requests
-beautifulsoup4
-lxml 
-beautifulsoup4

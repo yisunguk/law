@@ -2,25 +2,8 @@
 from __future__ import annotations
 
 import streamlit as st
-# app.py
-from law_fetch import _summarize_laws_for_primer as summarize_with_capsules
-
-# 엔진 생성부
-engine = AdviceEngine(
-    client=client,
-    model=AZURE["deployment"],
-    tools=TOOLS,
-    safe_chat_completion=safe_chat_completion,
-    tool_search_one=tool_search_one,
-    tool_search_multi=tool_search_multi,
-    prefetch_law_context=prefetch_law_context,
-    summarize_laws_for_primer=summarize_with_capsules,  # ✅ 본문 포함 버전
-    temperature=0.2,
-)
 
 from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
-
-
 
 import streamlit as st
 
