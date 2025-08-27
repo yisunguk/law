@@ -2747,10 +2747,7 @@ if not chat_started:
     </script>            
                
     """, unsafe_allow_html=True)
-
-    render_pre_chat_center()
-    st.stop()
-    
+   
 else:
     st.markdown("""
     <style>
