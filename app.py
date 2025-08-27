@@ -2422,8 +2422,13 @@ TOOLS = [
 #               사이드바/레이아웃 렌더링이 시작되기 "위"
 # ============================
 
-# 1) imports
-from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
+# 1) imports  — optional import (safe)
+try:
+    from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
+except Exception:
+    # 위쪽에 이미 정의해둔 폴백(shim)을 그대로 사용
+    pass
+
 
 # 2) 엔진 생성 (한 번만)
 engine = None
