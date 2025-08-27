@@ -3,26 +3,6 @@ from __future__ import annotations
 
 import streamlit as st
 
-# ---- Safe import guard for optional internal modules (primary) ----
-try:
-    from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
-except Exception:
-    class Intent:
-        GENERIC = "GENERIC"
-    def classify_intent(*args, **kwargs):
-        return Intent.GENERIC
-    def pick_mode(*args, **kwargs):
-        return "search"
-    def build_sys_for_mode(*args, **kwargs):
-        return ""
-    class AdviceEngine:
-        def __init__(self, *args, **kwargs):
-            pass
-        def generate(self, *args, **kwargs):
-            yield {"role": "assistant", "content": "⚠️ 내부 엔진 모듈이 비활성화 상태입니다. 검색 기능만 사용 가능합니다."}
-# ------------------------------------------------------------------
-
-
 # --- per-turn nonce ledger (prevents double appends)
 st.session_state.setdefault('_nonce_done', {})
 # --- cache helpers: suggestions shouldn't jitter on reruns ---
@@ -121,27 +101,7 @@ if "_last_user_nonce" not in st.session_state:
 
 KEY_PREFIX = "main"
 
-
-try:
-    from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
-
-except Exception as _e:
-    # --- Fallback shims when 'modules' package is unavailable ---
-    class Intent:
-        GENERIC = "GENERIC"
-    def classify_intent(*args, **kwargs):
-        return Intent.GENERIC
-    def pick_mode(*args, **kwargs):
-        return "search"
-    def build_sys_for_mode(*args, **kwargs):
-        return ""
-    class AdviceEngine:
-        def __init__(self, *args, **kwargs):
-            pass
-        def generate(self, *args, **kwargs):
-            # Minimal generator to keep app running without full engine
-            yield {"role": "assistant", "content": "⚠️ 내부 엔진 모듈이 비활성화 상태입니다. 검색 기능만 사용 가능합니다."}
-
+from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
 
 # 지연 초기화: 필요한 전역들이 준비된 뒤에 한 번만 엔진 생성
 def _init_engine_lazy():
@@ -178,12 +138,7 @@ def _init_engine_lazy():
     return st.session_state.engine
 
 # 기존 ask_llm_with_tools를 얇은 래퍼로 교체
-
-# (safe) optional import — okay if it fails
-try:
-    from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
-except Exception:
-    pass
+from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
 
 def ask_llm_with_tools(
     user_q: str,
@@ -632,11 +587,9 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
     def _build_law_link(it, eff):
         link = _pick(it.get("url"), it.get("link"), it.get("detail_url"), it.get("상세링크"))
         if link: return link
-        mst = _pick(it.get("법령일련번호"), it.get("법령ID"), it.get("MST"), it.get("mst"), it.get("LawMST"))
+        mst = _pick(it.get("MST"), it.get("mst"), it.get("LawMST"))
         if mst:
-            OC = (st.secrets.get("LAW_API_OC") or "").split("@")[0].strip() or "test"
-            OC = (st.secrets.get("LAW_API_OC") or "").split("@")[0].strip() or "test"
-            return f"https://www.law.go.kr/DRF/lawService.do?OC={up.quote(OC)}&target=law&MST={mst}&type=HTML&efYd={eff}"
+            return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={eff}"
         return ""
 
     def _law_item_li(it):
@@ -1755,7 +1708,6 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
         return [], None, "빈 질의어로 호출되어 무시함"
 
     params = {
-        "ServiceKey": api_key,
         "serviceKey": api_key,
         "target": target,
         "query": q,  # <-- 기존의 (query or "*") 를 q 로 교체
@@ -2125,14 +2077,7 @@ def find_all_law_data(query: str, num_rows: int = 3, hint_laws: list[str] | None
                     tmp.append({"target":"law","q":f"{kw[i]} {kw[j]}","must":[kw[i],kw[j]],"must_not":[]})
             plans = tmp[:8]
 
-        # 이하 실행/리랭크/패킹은 기존과 동일
-    # ✅ Ensure at least one plan even if LLM/rule pipeline produced nothing
-    if not plans:
-        cleaned = _clean_query_for_api(query)
-        if cleaned:
-            plans = [{"target":"law","q": cleaned, "must":[cleaned], "must_not": []}]
-
-
+    # (이하 실행/리랭크/패킹은 기존과 동일):contentReference[oaicite:7]{index=7}
     tried, err = [], []
     buckets = {"법령":("law",[]), "행정규칙":("admrul",[]), "자치법규":("ordin",[]), "조약":("trty",[])}
     for plan in plans:
@@ -2422,13 +2367,8 @@ TOOLS = [
 #               사이드바/레이아웃 렌더링이 시작되기 "위"
 # ============================
 
-# 1) imports  — optional import (safe)
-try:
-    from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
-except Exception:
-    # 위쪽에 이미 정의해둔 폴백(shim)을 그대로 사용
-    pass
-
+# 1) imports
+from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
 
 # 2) 엔진 생성 (한 번만)
 engine = None
