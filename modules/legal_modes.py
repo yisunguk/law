@@ -31,9 +31,20 @@ MODE_SYS = {
     ),
 
     Intent.MEMO: (
-        "법률 자문 메모 형식으로 정리하라.\n"
-        "1) 자문요지  2) 적용 법령/근거  3) 핵심 판단  4) 권고 조치\n"
-        "반드시 '2. 적용 법령/근거'에 나오는 조문에 링크를 만들고, 그 조문을 클릭하면 링크가 활성화되어야 한다."
+        "법률 자문 메모 형식으로 **아래 양식/제목을 그대로** 사용하라.\n"
+        "1. 자문요지 : [두세 문장 요지]\n"
+        "2. 적용 법령/근거\n"
+        "- [법령명 제n조 -링크생성] — 요지(한 줄)\n"
+        "3. 핵심 판단\n"
+        "- 쟁점별 판단 요지(링크 금지)\n"
+        "4. 권고 조치\n"
+        "- 실행 가능한 조치 리스트\n"
+        "\n"
+        "규칙:\n"
+        "- 제목은 반드시 위의 한글표기와 번호를 그대로 쓰고, \"1. 자문요지 :\" 처럼 콜론까지 붙인다.\n"
+        "- \"2. 적용 법령/근거\"에서만 조문 링크를 넣는다. \"3. 핵심 판단\"에는 링크를 넣지 않는다.\n"
+        "- \"참고 링크\" 같은 추가 섹션을 만들지 않는다.\n"
+        "- 필요 시 \"해설\" 소제목은 선택적으로 사용할 수 있으며, 그 안의 \"법령명 제n조\"는 인라인 링크 허용."
     ),
 
     Intent.DRAFT: (
@@ -112,8 +123,14 @@ def route_intent(q: str, *, client=None, model: Optional[str] = None) -> tuple[I
 import re as _re_simple
 from typing import Tuple as _TupleSimple
 
+# URL 인식: http(s):// 또는 도메인형 입력도 검색 모드로
+_URL_PAT = _re_simple.compile(r'(https?://\S+|(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/\S*)?)', _re_simple.I)
+
 def classify_intent(q: str) -> _TupleSimple[Intent, float]:
     t = (q or "").strip()
+    # 1) URL이면 무조건 검색 모드로
+    if _URL_PAT.search(t):
+        return (Intent.LAWFINDER, 0.96)
     SEARCH_HINTS = ["링크", "원문", "검색", "찾아", "상세보기", "열람", "조문", "법령", "법 이름"]
     has_article_num = bool(_re_simple.search(r"제\s*\d+\s*조(의\s*\d+)?", t))
     if any(k in t for k in SEARCH_HINTS) or has_article_num:
