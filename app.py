@@ -1,6 +1,11 @@
-from modules.law_fetch import _summarize_laws_for_primer, _fetch_detail_text_from_item
+# app.py — fixed header
 from __future__ import annotations
-# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
+
+import streamlit as st
+from modules.law_fetch import _summarize_laws_for_primer
+from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
+
+
 
 import streamlit as st
 
