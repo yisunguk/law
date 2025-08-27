@@ -6,21 +6,21 @@ import streamlit as st
 # --- per-turn nonce ledger (prevents double appends)
 st.session_state.setdefault('_nonce_done', {})
 # --- cache helpers: suggestions shouldn't jitter on reruns ---
+# --- cache helpers: suggestions shouldn't jitter on reruns ---
 def cached_suggest_for_tab(tab_key: str):
-    import streamlit as st
     store = st.session_state.setdefault("__tab_suggest__", {})
     if tab_key not in store:
         from modules import suggest_keywords_for_tab
-        store[tab_key] = cached_suggest_for_tab(tab_key)
+        store[tab_key] = suggest_keywords_for_tab(tab_key)  # ✅ fix
     return store[tab_key]
 
 def cached_suggest_for_law(law_name: str):
-    import streamlit as st
     store = st.session_state.setdefault("__law_suggest__", {})
     if law_name not in store:
         from modules import suggest_keywords_for_law
-        store[law_name] = cached_suggest_for_law(law_name)
+        store[law_name] = suggest_keywords_for_law(law_name)  # ✅ fix
     return store[law_name]
+
 
 st.set_page_config(
     page_title="인공지능 법률상담 전문가",
@@ -584,13 +584,26 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
                 return c.strip()
         return ""
 
-    def _build_law_link(it, eff):
-        link = _pick(it.get("url"), it.get("link"), it.get("detail_url"), it.get("상세링크"))
-        if link: return link
-        mst = _pick(it.get("MST"), it.get("mst"), it.get("LawMST"))
-        if mst:
-            return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={eff}"
-        return ""
+    def _build_law_link(it: dict, eff=None) -> str:
+       # 1) 목록 API가 준 공식 링크를 최우선(OR 체인 전체에 strip 1회만)
+       link = (it.get("법령상세링크") or it.get("상세링크") or it.get("detail_url") or "")
+       link = normalize_law_link(link)
+       if link:
+        return link
+
+    # 2) MST만 있을 때 DRF로 폴백 (OC는 시크릿에서)
+    mst = str(it.get("MST") or it.get("mst") or it.get("LawMST") or "").strip()
+    if mst and "LAW_API_OC" in globals() and LAW_API_OC:
+        base = (
+            "https://www.law.go.kr/DRF/lawService.do"
+            f"?OC={quote(LAW_API_OC)}&target=law&MST={quote(mst)}&type=HTML"
+        )
+        if eff:
+            base += f"&efYd={quote(str(eff))}"
+        return base
+
+    # 3) 만들 수 없으면 빈 문자열
+    return ""
 
     def _law_item_li(it):
         title = _pick(it.get("법령명한글"), it.get("법령명"), it.get("title_kr"), it.get("title"), it.get("name_ko"), it.get("name"))
@@ -1051,14 +1064,16 @@ def extract_law_names_from_answer(md: str) -> list[str]:
     return out[:6]
 
 
-def normalize_law_link(u: str) -> str:
-    """상대/스킴누락 링크를 www.law.go.kr 절대 URL로 교정"""
-    if not u: return ""
-    u = u.strip()
-    if u.startswith("http://") or u.startswith("https://"): return u
-    if u.startswith("//"): return "https:" + u
-    if u.startswith("/"):  return up.urljoin(LAW_PORTAL_BASE, u.lstrip("/"))
-    return up.urljoin(LAW_PORTAL_BASE, u)
+def normalize_law_link(url: str) -> str:
+    """목록 API가 준 상대경로/프로토콜-상대 링크를 정규화."""
+    u = (url or "").strip()
+    if not u:
+        return ""
+    if u.startswith("//"):
+        u = "https:" + u
+    if u.startswith("/"):
+        u = "https://www.law.go.kr" + u
+    return u
 
 def _normalize_text(s: str) -> str:
     s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
