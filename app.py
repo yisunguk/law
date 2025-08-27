@@ -814,7 +814,7 @@ def render_pre_chat_center():
 
     col3, col4 = st.columns(2)
     with col3:
-        if st.button("유료주차장에 주차된 차에서 도난 사건이 났을경우 처리 절차는?", use_container_width=True):
+        if st.button("유료주차장에 주차된 차에서 도난 사건이 났어", use_container_width=True):
             st.session_state["_pending_user_q"] = "온라인 명예훼손 글: 형사·민사 절차?"
             st.session_state["_pending_user_nonce"] = time.time_ns()
             st.rerun()
