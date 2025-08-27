@@ -1,38 +1,26 @@
 from __future__ import annotations
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 
-import os
-from urllib.parse import urlencode, quote
-
-def _q(x) -> str:
-    return quote(str(x), safe="")
-
-def _params(d: dict) -> str:
-    # None이나 빈 문자열은 제거
-    clean = {k: v for k, v in d.items() if v not in (None, "")}
-    # URL 인코딩
-    return urlencode(clean, doseq=True, safe=":/?&=#,+-_.!~*'()")
-
 import streamlit as st
 
 # --- per-turn nonce ledger (prevents double appends)
 st.session_state.setdefault('_nonce_done', {})
 # --- cache helpers: suggestions shouldn't jitter on reruns ---
-# --- cache helpers: suggestions shouldn't jitter on reruns ---
 def cached_suggest_for_tab(tab_key: str):
+    import streamlit as st
     store = st.session_state.setdefault("__tab_suggest__", {})
     if tab_key not in store:
         from modules import suggest_keywords_for_tab
-        store[tab_key] = suggest_keywords_for_tab(tab_key)  # ✅ fix
+        store[tab_key] = cached_suggest_for_tab(tab_key)
     return store[tab_key]
 
 def cached_suggest_for_law(law_name: str):
+    import streamlit as st
     store = st.session_state.setdefault("__law_suggest__", {})
     if law_name not in store:
         from modules import suggest_keywords_for_law
-        store[law_name] = suggest_keywords_for_law(law_name)  # ✅ fix
+        store[law_name] = cached_suggest_for_law(law_name)
     return store[law_name]
-
 
 st.set_page_config(
     page_title="인공지능 법률상담 전문가",
@@ -196,46 +184,49 @@ def ask_llm_with_tools(
     except Exception:
         history = []
 
-
-    
-    _called = False
+    # 3) 엔진 호출 (히스토리 전달 시도 + 안전한 폴백)
     import inspect
     try:
-        gen_param_names = set(inspect.signature(engine.generate).parameters.keys())
+        _sig = inspect.signature(engine.generate)
+        _params = set(_sig.parameters.keys())
     except Exception:
-        gen_param_names = set()
+        _params = set()
+
+    _called = False
     for _kw in ("history", "messages", "chat_history", "conversation"):
-        if _kw in gen_param_names:
+        if _kw in _params:
             yield from engine.generate(
                 user_q,
                 system_prompt=sys_prompt,
                 allow_tools=use_tools,
                 num_rows=num_rows,
                 stream=stream,
-            primer_enable=True,
-            **{_kw: history},
-        )
-        _called = True
-        break
+                primer_enable=True,
+                **{_kw: history},
+            )
+            _called = True
+            break
+
     if not _called:
-                def _as_transcript(items):
-                    _lines = []
-                    for it in items:
-                        _lines.append(f"{'사용자' if it['role']=='user' else '어시스턴트'}: {it['content']}")
-                    return "\n".join(_lines)
-        
-                _hist_text = _as_transcript(history)
-                _uq = user_q
-                if _hist_text:
-                    _uq = f"[이전 대화]\n{_hist_text}\n\n[현재 질문]\n{user_q}"
-                yield from engine.generate(
-                    _uq,
-                    system_prompt=sys_prompt,
-                    allow_tools=use_tools,
-                    num_rows=num_rows,
-                    stream=stream,
-                    primer_enable=True,
-                )
+        # fallback: 히스토리를 system prompt 앞에 텍스트로 주입
+        def _as_transcript(items):
+            _lines = []
+            for it in items:
+                _lines.append(f"{'사용자' if it['role']=='user' else '어시스턴트'}: {it['content']}")
+            return "\n".join(_lines)
+
+        _hist_text = _as_transcript(history)
+        _uq = user_q
+        if _hist_text:
+            _uq = f"[이전 대화]\n{_hist_text}\n\n[현재 질문]\n{user_q}"
+        yield from engine.generate(
+            _uq,
+            system_prompt=sys_prompt,
+            allow_tools=use_tools,
+            num_rows=num_rows,
+            stream=stream,
+            primer_enable=True,
+        )
 
 import io, os, re, json, time, html
 
@@ -583,38 +574,9 @@ def _sanitize_plan_q(user_q: str, q: str) -> str:
         q = q.replace(a, b)
     return q
 
-# --- DRF 링크 빌더: 전역(top-level)에 둡니다 ---
-def _build_law_link(it: dict, eff: str | None = None) -> str:
-    # 1) 목록 API가 준 링크 우선
-    link = (it.get("법령상세링크") or it.get("상세링크") or it.get("detail_url") or "")
-    if 'normalize_law_link' in globals():
-        link = normalize_law_link(link)
-    if link:
-        return link
-
-    # 2) DRF 폴백 (MST + OC 필요)
-    mst = str(it.get("MST") or it.get("mst") or it.get("LawMST") or "").strip()
-    oc  = globals().get("LAW_API_OC") or os.getenv("LAW_API_OC")
-    if not (mst and oc):
-        return ""
-
-    params = {"OC": oc, "target": "law", "MST": mst, "type": "HTML"}
-    if eff:
-        params["efYd"] = str(eff)
-    return "https://www.law.go.kr/DRF/lawService.do?" + urlencode(params, doseq=True)
-
-
 # ---- 오른쪽 플로팅 패널 렌더러 ----
-def render_search_flyout(
-    user_q: str,
-    num_rows: int = 8,
-    hint_laws: list[str] | None = None,
-    show_debug: bool = False,
-) -> None:
-    try:
-        search_results = find_all_law_data(user_q, num_rows=num_rows, hint_laws=hint_laws)
-    except Exception:
-        search_results = {}
+def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | None = None, show_debug: bool = False):
+    results = find_all_law_data(user_q, num_rows=num_rows, hint_laws=hint_laws)
 
     def _pick(*cands):
         for c in cands:
@@ -622,31 +584,35 @@ def render_search_flyout(
                 return c.strip()
         return ""
 
-    def _law_item_li(it: dict) -> str:
-        title = _pick(it.get("법령명한글"), it.get("법령명"), it.get("title_kr"),
-                      it.get("title"), it.get("name_ko"), it.get("name"))
-        dept = _pick(it.get("소관부처"), it.get("부처명"), it.get("dept"), it.get("department"))
-        eff  = _pick(it.get("시행일자"), it.get("eff"), it.get("effective_date"))
-        pub  = _pick(it.get("공포일자"), it.get("pub"), it.get("promulgation_date"))
-        link = _build_law_link(it, eff)
+    def _build_law_link(it, eff):
+        link = _pick(it.get("url"), it.get("link"), it.get("detail_url"), it.get("상세링크"))
+        if link: return link
+        mst = _pick(it.get("MST"), it.get("mst"), it.get("LawMST"))
+        if mst:
+            return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={eff}"
+        return ""
+
+    def _law_item_li(it):
+        title = _pick(it.get("법령명한글"), it.get("법령명"), it.get("title_kr"), it.get("title"), it.get("name_ko"), it.get("name"))
+        dept  = _pick(it.get("소관부처"), it.get("부처명"), it.get("dept"), it.get("department"))
+        eff   = _pick(it.get("시행일자"), it.get("eff"), it.get("effective_date"))
+        pub   = _pick(it.get("공포일자"), it.get("pub"), it.get("promulgation_date"))
+        link  = _build_law_link(it, eff)
 
         parts = [f'<span class="title">{title or "(제목 없음)"} </span>']
-        meta = []
+        meta  = []
         if dept: meta.append(f"소관부처: {dept}")
         if eff or pub: meta.append(f"시행일자: {eff} / 공포일자: {pub}")
         if meta: parts.append(f'<div class="meta">{" / ".join(meta)}</div>')
         if link: parts.append(f'<a href="{link}" target="_blank" rel="noreferrer">법령 상세보기</a>')
         return "<li>" + "\n".join(parts) + "</li>"
 
-    html = [
-        '<div id="search-flyout">',
-        '<h3>📚 통합 검색 결과</h3>',
-        '<details open><summary>열기/접기</summary>',
-    ]
+    # 헤더
+    html = ['<div id="search-flyout">', '<h3>📚 통합 검색 결과</h3>', '<details open><summary>열기/접기</summary>']
 
     # 버킷 렌더
     for label in ["법령", "행정규칙", "자치법규", "조약"]:
-        pack  = search_results.get(label) or {}
+        pack  = results.get(label) or {}
         items = pack.get("items") or []
         html.append(f'<h4>🔎 {label}</h4>')
         if not items:
@@ -657,28 +623,20 @@ def render_search_flyout(
             html.append('</ol>')
 
         if show_debug:
-            dbg_lines = []
-            dbg = pack.get("debug") or {}
-            tried = dbg.get("tried") or []
-            plans = dbg.get("plans") or []
+            tried = (pack.get("debug") or {}).get("tried") or []
+            plans = (pack.get("debug") or {}).get("plans") or []
             err   = pack.get("error")
-            if tried: dbg_lines.append("시도: " + " | ".join(tried))
-            if plans:
-                safe_plans = []
-                for p in plans:
-                    if isinstance(p, dict):
-                        safe_plans.append(f"{p.get('target')}:{p.get('q')}")
-                    else:
-                        safe_plans.append(str(p))
-                if safe_plans:
-                    dbg_lines.append("LLM plans: " + " | ".join(safe_plans))
-            if err: dbg_lines.append("오류: " + str(err))
-            if dbg_lines:
-                html.append("<small class='debug'>" + "<br/>".join(dbg_lines) + "</small>")
+            dbg = []
+            if tried: dbg.append("시도: " + " | ".join(tried))
+            if plans: dbg.append("LLM plans: " + " | ".join([f"{p.get('target')}:{p.get('q')}" for p in plans]))
+            if err:   dbg.append("오류: " + err)
+            if dbg:   html.append("<small class='debug'>" + "<br/>".join(dbg) + "</small>")
 
     html.append("</details></div>")
     st.markdown("\n".join(html), unsafe_allow_html=True)
 
+  # ⬇️ 이 블록만 붙여넣으세요 (기존 header st.markdown(...) 블록은 삭제)
+# app.py (하단)
 
 # =========================================
 # 세션에 임시로 담아 둔 첫 질문을 messages로 옮기는 유틸
@@ -1093,16 +1051,14 @@ def extract_law_names_from_answer(md: str) -> list[str]:
     return out[:6]
 
 
-def normalize_law_link(url: str) -> str:
-    """목록 API가 준 상대경로/프로토콜-상대 링크를 정규화."""
-    u = (url or "").strip()
-    if not u:
-        return ""
-    if u.startswith("//"):
-        u = "https:" + u
-    if u.startswith("/"):
-        u = "https://www.law.go.kr" + u
-    return u
+def normalize_law_link(u: str) -> str:
+    """상대/스킴누락 링크를 www.law.go.kr 절대 URL로 교정"""
+    if not u: return ""
+    u = u.strip()
+    if u.startswith("http://") or u.startswith("https://"): return u
+    if u.startswith("//"): return "https:" + u
+    if u.startswith("/"):  return up.urljoin(LAW_PORTAL_BASE, u.lstrip("/"))
+    return up.urljoin(LAW_PORTAL_BASE, u)
 
 def _normalize_text(s: str) -> str:
     s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
@@ -1219,6 +1175,14 @@ def _link_block_with_bullets(block: str) -> str:
                 out.append(f"{mf.group('prefix')}[{law} {art}]({url}){tail}")
                 continue
 
+        ms = _BULLET_ART_SIMPLE.match(line)
+        if ms and cur_law:
+            art   = f"제{ms.group('num')}조{ms.group('ui') or ''}"
+            title = (ms.group('title') or '')
+            tail  = (ms.group('tail') or '')
+            url   = _deep_article_url(cur_law, art)
+            txt = f"{art}{title or ''}"                      # 예: "제76조(외국에서의 혼인신고)"
+            out.append(f"{ms.group('prefix')}[{txt}]({url}){tail}")
 
             continue
 
