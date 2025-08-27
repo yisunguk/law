@@ -1094,9 +1094,14 @@ import re
 from urllib.parse import quote
 
 # 조문 패턴: 민법 제839조의2, 민사소송법 제163조 등
+# app.py — [PATCH] 조문 패턴: 불릿(*)이 '선택'이 되도록
 _ART_PAT_BULLET = re.compile(
-    r'(?m)^(?P<prefix>\s*[-*•]\s*)(?P<law>[가-힣A-Za-z0-9·()\s]{2,40})\s*제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})(?P<tail>[^\n]*)$'
+    r'(?m)^(?P<prefix>\s*(?:[-*•]\s*)?)'                  # 불릿 기호를 옵션으로
+    r'(?P<law>[가-힣A-Za-z0-9·()\s]{2,40})\s*'
+    r'제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})'
+    r'(?P<tail>[^\n]*)$'
 )
+
 
 # --- [NEW] '적용 법령/근거' + '해설' 섹션에서만 조문 링크 활성화 ---
 # 섹션 제목 인식
@@ -1239,12 +1244,20 @@ _REF_BLOCK_PAT = re.compile(
 # 앞에 공백이 있어도 매칭되도록 보강
 _REF_BLOCK2_PAT = re.compile(r'\n[ \t]*###\s*참고\s*링크\(조문\)[\s\S]*$', re.M)
 
-
-
-# app.py
 def _deep_article_url(law: str, art_label: str) -> str:
-    # 🚫 quote() 제거 → 한글 경로 유지
-    return f"https://www.law.go.kr/법령/{(law or '').strip()}/{(art_label or '').strip()}"
+    # 1) 1차 시도: 조문 ‘직접’ 링크
+    #    (URL 인코딩 여부는 정책에 맞춰 _q 적용/미적용 선택)
+    primary = f"https://www.law.go.kr/법령/{(law or '').strip()}/{(art_label or '').strip()}"
+    # primary = f"https://www.law.go.kr/법령/{_q((law or '').strip())}/{_q((art_label or '').strip())}"
+
+    # 2) 열리는지 확인
+    if is_reachable(primary):  # 이미 있는 함수
+        return primary
+
+    # 3) 실패 시: 해당 문구로 포털 검색 링크로 폴백
+    #    (MOLEG 포털 검색: https://www.law.go.kr/LSW/lsSc.do?query=...)
+    return build_fallback_search("law", f"{law} {art_label}")
+
 
 
 def link_inline_articles_in_bullets(markdown: str) -> str:
@@ -1266,6 +1279,28 @@ def strip_reference_links_block(markdown: str) -> str:
     txt = _REF_BLOCK_PAT.sub("", markdown)
     txt = _REF_BLOCK2_PAT.sub("", txt)
     return txt
+
+# app.py — 안전 링크 헬퍼 (기존 _deep_article_url 대체)
+def _article_url_or_main(law: str, art_label: str, verify: bool = True, timeout: float = 2.0) -> str:
+    """
+    조문 딥링크를 우선 시도하되, 검증 실패(요청 실패/삭제 등) 시
+    해당 법령 메인 페이지로 폴백하여 '삭제 페이지' 노출을 원천 차단.
+    """
+    base = "https://www.law.go.kr/법령"
+    law = (law or "").strip()
+    art = (art_label or "").strip()
+    deep = f"{base}/{law}/{art}"
+    if not verify:
+        return deep
+    try:
+        import requests
+        r = requests.get(deep, timeout=timeout)
+        ok = (r.status_code == 200) and ("삭제" not in r.text[:2000])
+        return deep if ok else f"{base}/{law}"
+    except Exception:
+        # 네트워크/시간초과 등 모든 예외는 안전 폴백
+        return f"{base}/{law}"
+
 
 # 모델이 종종 만들어내는 "제n조 링크" 같은 잉여 단어 제거
 import re as _re_fix
