@@ -1,6 +1,18 @@
 from __future__ import annotations
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 
+import os
+from urllib.parse import urlencode, quote
+
+def _q(x) -> str:
+    return quote(str(x), safe="")
+
+def _params(d: dict) -> str:
+    # None이나 빈 문자열은 제거
+    clean = {k: v for k, v in d.items() if v not in (None, "")}
+    # URL 인코딩
+    return urlencode(clean, doseq=True, safe=":/?&=#,+-_.!~*'()")
+
 import streamlit as st
 
 # --- per-turn nonce ledger (prevents double appends)
@@ -567,34 +579,40 @@ def _sanitize_plan_q(user_q: str, q: str) -> str:
         q = q.replace(a, b)
     return q
 
+# --- DRF 링크 빌더: 전역(top-level)에 둡니다 ---
+def _build_law_link(it: dict, eff: str | None = None) -> str:
+    # 1) 목록 API가 준 링크 우선
+    link = (it.get("법령상세링크") or it.get("상세링크") or it.get("detail_url") or "")
+    if 'normalize_law_link' in globals():
+        link = normalize_law_link(link)
+    if link:
+        return link
+
+    # 2) DRF 폴백 (MST + OC 필요)
+    mst = str(it.get("MST") or it.get("mst") or it.get("LawMST") or "").strip()
+    oc  = globals().get("LAW_API_OC") or os.getenv("LAW_API_OC")
+    if not (mst and oc):
+        return ""
+
+    params = {"OC": oc, "target": "law", "MST": mst, "type": "HTML"}
+    if eff:
+        params["efYd"] = str(eff)
+    return "https://www.law.go.kr/DRF/lawService.do?" + urlencode(params, doseq=True)
+
+
 # ---- 오른쪽 플로팅 패널 렌더러 ----
-# ---- 오른쪽 플로팅 패널 렌더러 ----
-def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | None = None, show_debug: bool = False):
+def render_search_flyout(
+    user_q: str,
+    num_rows: int = 8,
+    hint_laws: list[str] | None = None,
+    show_debug: bool = False,
+) -> None:
     results = find_all_law_data(user_q, num_rows=num_rows, hint_laws=hint_laws)
 
     def _pick(*cands):
         for c in cands:
             if isinstance(c, str) and c.strip():
                 return c.strip()
-        return ""
-
-    def _build_law_link(it: dict, eff=None) -> str:
-        # 1) 목록 API가 준 공식 링크
-        link = (it.get("법령상세링크") or it.get("상세링크") or it.get("detail_url") or "")
-        link = normalize_law_link(link)
-        if link:
-            return link
-        # 2) MST만 있을 때 DRF 폴백
-        mst = str(it.get("MST") or it.get("mst") or it.get("LawMST") or "").strip()
-        if mst and "LAW_API_OC" in globals() and LAW_API_OC:
-            base = (
-                "https://www.law.go.kr/DRF/lawService.do"
-                f"?OC={_q(LAW_API_OC)}&target=law&MST={_q(mst)}&type=HTML"
-            )
-            if eff:
-                base += f"&efYd={_q(str(eff))}"
-            return base
-        # 3) 없으면 빈 문자열
         return ""
 
     def _law_item_li(it: dict) -> str:
@@ -616,12 +634,12 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
     html = [
         '<div id="search-flyout">',
         '<h3>📚 통합 검색 결과</h3>',
-        '<details open><summary>열기/접기</summary>'
+        '<details open><summary>열기/접기</summary>',
     ]
 
     # 버킷 렌더
     for label in ["법령", "행정규칙", "자치법규", "조약"]:
-        pack = results.get(label) or {}
+        pack  = results.get(label) or {}
         items = pack.get("items") or []
         html.append(f'<h4>🔎 {label}</h4>')
         if not items:
@@ -632,17 +650,28 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
             html.append('</ol>')
 
         if show_debug:
-            tried = (pack.get("debug") or {}).get("tried") or []
-            plans = (pack.get("debug") or {}).get("plans") or []
-            err = pack.get("error")
-            dbg = []
-            if tried: dbg.append("시도: " + " | ".join(tried))
-            if plans: dbg.append("LLM plans: " + " | ".join([f"{p.get('target')}:{p.get('q')}" for p in plans]))
-            if err: dbg.append("오류: " + err)
-            if dbg: html.append("<small class='debug'>" + "<br/>".join(dbg) + "</small>")
+            dbg_lines = []
+            dbg = pack.get("debug") or {}
+            tried = dbg.get("tried") or []
+            plans = dbg.get("plans") or []
+            err   = pack.get("error")
+            if tried: dbg_lines.append("시도: " + " | ".join(tried))
+            if plans:
+                safe_plans = []
+                for p in plans:
+                    if isinstance(p, dict):
+                        safe_plans.append(f"{p.get('target')}:{p.get('q')}")
+                    else:
+                        safe_plans.append(str(p))
+                if safe_plans:
+                    dbg_lines.append("LLM plans: " + " | ".join(safe_plans))
+            if err: dbg_lines.append("오류: " + str(err))
+            if dbg_lines:
+                html.append("<small class='debug'>" + "<br/>".join(dbg_lines) + "</small>")
 
     html.append("</details></div>")
     st.markdown("\n".join(html), unsafe_allow_html=True)
+
 
 # =========================================
 # 세션에 임시로 담아 둔 첫 질문을 messages로 옮기는 유틸
