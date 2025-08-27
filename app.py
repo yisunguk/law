@@ -2,7 +2,22 @@
 from __future__ import annotations
 
 import streamlit as st
-from modules.law_fetch import _summarize_laws_for_primer
+# app.py
+from law_fetch import _summarize_laws_for_primer as summarize_with_capsules
+
+# 엔진 생성부
+engine = AdviceEngine(
+    client=client,
+    model=AZURE["deployment"],
+    tools=TOOLS,
+    safe_chat_completion=safe_chat_completion,
+    tool_search_one=tool_search_one,
+    tool_search_multi=tool_search_multi,
+    prefetch_law_context=prefetch_law_context,
+    summarize_laws_for_primer=summarize_with_capsules,  # ✅ 본문 포함 버전
+    temperature=0.2,
+)
+
 from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
 
 
@@ -593,19 +608,40 @@ def render_search_flyout(user_q: str, num_rows: int = 8,
                 return c.strip()
         return ""
     
-    def _build_law_link(it, eff):
-        link = _pick(
-            it.get("법령상세링크"),
-            it.get("상세링크"),
-            it.get("url"), it.get("link"), it.get("detail_url"),
-        )
-        if link:
-            return normalize_law_link(link)
-        mst = _pick(it.get("MST"), it.get("mst"), it.get("LawMST"))
-        if mst:
-            ef = (eff or "").replace("-", "")
-            return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={ef}"
+    from urllib.parse import urlencode, quote
+
+def _build_law_link(it: dict, eff: str | None = None, out_type: str = "HTML") -> str:
+    # 1) API가 준 상세 링크가 있으면 그걸 우선 사용
+    link = _pick(
+        it.get("법령상세링크"),
+        it.get("상세링크"),
+        it.get("url"), it.get("link"), it.get("detail_url"),
+    )
+    if link:
+        return normalize_law_link(link)
+
+    # 2) DRF로 직접 구성 (MST 필요)
+    mst = _pick(it.get("MST"), it.get("mst"), it.get("LawMST"))
+    if not mst:
         return ""
+
+    oc = (globals().get("LAW_API_OC") or "").strip()
+    if not oc:
+        # OC가 비어 있으면 DRF 호출이 안 되므로 안전하게 빈 문자열 반환
+        return ""
+
+    qs = {
+        "OC": oc,              # ✅ 하드코딩 금지, 시크릿에서 읽은 값 사용
+        "target": "law",
+        "MST": str(mst),
+        "type": out_type,      # "HTML" 또는 "JSON"
+    }
+    ef_clean = (eff or "").replace("-", "")
+    if ef_clean:
+        qs["efYd"] = ef_clean  # 시행일자 있으면 포함
+
+    return "https://www.law.go.kr/DRF/lawService.do?" + urlencode(qs, quote_via=quote)
+
 
     # ── 여기부터는 기존 HTML 조립부 ─────────────────────────────
     html: list[str] = []
@@ -1589,20 +1625,6 @@ def copy_url_button(url: str, key: str, label: str = "링크 복사"):
                 .replace("__LABEL__", html.escape(label)))
     components.html(html_out, height=40)
 
-def load_secrets():
-    try:
-        law_key = st.secrets["LAW_API_KEY"]
-    except Exception:
-        law_key = None
-        st.error("`LAW_API_KEY`가 없습니다. Streamlit → App settings → Secrets에 추가하세요.")
-    try:
-        az = st.secrets["azure_openai"]
-        _ = (az["api_key"], az["endpoint"], az["deployment"], az["api_version"])
-    except Exception:
-        az = None
-        st.warning("Azure OpenAI 설정이 없으므로 기본 안내만 제공합니다.")
-    return law_key, az
-
 def _henc(s: str) -> str: return up.quote((s or "").strip())
 def hangul_by_name(domain: str, name: str) -> str: return f"{_HBASE}/{_henc(domain)}/{_henc(name)}"
 
@@ -1728,10 +1750,39 @@ def fix_links_with_lawdata(markdown: str, law_data: list[dict]) -> str:
 # =============================
 # Secrets / Clients / Session
 # =============================
-LAW_API_KEY, AZURE = load_secrets()
+# --- secrets & config ---------------------------------------------------------
+from dataclasses import dataclass
+import streamlit as st
+
+@dataclass
+class Secrets:
+    law_api_key: str        # 목록/검색 serviceKey
+    law_api_oc: str         # DRF 상세 OC (이메일 @ 앞부분)
+    az: dict | None         # azure_openai 블록(없으면 None)
+
+def load_secrets() -> Secrets:
+    s = st.secrets
+    law_api_key = s.get("LAW_API_KEY", "")
+    law_api_oc  = s.get("LAW_API_OC", "")
+    az          = s.get("azure_openai", None)
+
+    if not law_api_key:
+        st.error("`LAW_API_KEY`가 없습니다. Streamlit → App settings → Secrets에 추가하세요.")
+    if not law_api_oc:
+        st.warning("`LAW_API_OC`가 비어 있습니다. DRF 상세(조문 본문) 호출이 실패할 수 있어요.")
+
+    return Secrets(law_api_key, law_api_oc, az)
+
+SECRETS    = load_secrets()
+LAW_API_KEY = SECRETS.law_api_key
+LAW_API_OC  = SECRETS.law_api_oc
+AZURE       = SECRETS.az
+
+# Azure OpenAI 클라이언트 초기화 (기존 로직 유지)
 client = None
 if AZURE:
     try:
+        from openai import AzureOpenAI
         client = AzureOpenAI(
             api_key=AZURE["api_key"],
             api_version=AZURE["api_version"],
