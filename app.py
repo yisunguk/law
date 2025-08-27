@@ -762,9 +762,11 @@ def _push_user_from_pending() -> str | None:
         content_final += "\\n\\n[첨부 문서 발췌]\\n" + attach_block + "\\n"
     else:
         content_final = q.strip()
+    # (NEW) content_final이 없으면 질문만으로 초기화
+    content_final = locals().get('content_final', (q or "").strip())
     st.session_state.messages.append({
         "role": "user",
-        "content": q.strip(),
+        "content": content_final,
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     })
     st.session_state["_last_user_nonce"] = nonce
@@ -772,7 +774,7 @@ def _push_user_from_pending() -> str | None:
     # reset duplicate-answer guard for a NEW user turn
     st.session_state.pop('_last_ans_hash', None)
 
-    return q
+    return content_final
 
 def render_pre_chat_center():
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
