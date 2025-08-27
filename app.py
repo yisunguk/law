@@ -3,25 +3,43 @@ from __future__ import annotations
 
 import streamlit as st
 
+# ---- Safe import guard for optional internal modules (primary) ----
+try:
+    from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
+except Exception:
+    class Intent:
+        GENERIC = "GENERIC"
+    def classify_intent(*args, **kwargs):
+        return Intent.GENERIC
+    def pick_mode(*args, **kwargs):
+        return "search"
+    def build_sys_for_mode(*args, **kwargs):
+        return ""
+    class AdviceEngine:
+        def __init__(self, *args, **kwargs):
+            pass
+        def generate(self, *args, **kwargs):
+            yield {"role": "assistant", "content": "⚠️ 내부 엔진 모듈이 비활성화 상태입니다. 검색 기능만 사용 가능합니다."}
+# ------------------------------------------------------------------
+
+
 # --- per-turn nonce ledger (prevents double appends)
 st.session_state.setdefault('_nonce_done', {})
 # --- cache helpers: suggestions shouldn't jitter on reruns ---
-
 def cached_suggest_for_tab(tab_key: str):
     import streamlit as st
     store = st.session_state.setdefault("__tab_suggest__", {})
     if tab_key not in store:
-        # safe fallback (will be overwritten by later definitive version)
-        store[tab_key] = []
+        from modules import suggest_keywords_for_tab
+        store[tab_key] = cached_suggest_for_tab(tab_key)
     return store[tab_key]
-
 
 def cached_suggest_for_law(law_name: str):
     import streamlit as st
     store = st.session_state.setdefault("__law_suggest__", {})
     if law_name not in store:
-        # safe fallback (will be overwritten by later definitive version)
-        store[law_name] = []
+        from modules import suggest_keywords_for_law
+        store[law_name] = cached_suggest_for_law(law_name)
     return store[law_name]
 
 st.set_page_config(
@@ -106,6 +124,7 @@ KEY_PREFIX = "main"
 
 try:
     from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
+
 except Exception as _e:
     # --- Fallback shims when 'modules' package is unavailable ---
     class Intent:
@@ -160,12 +179,11 @@ def _init_engine_lazy():
 
 # 기존 ask_llm_with_tools를 얇은 래퍼로 교체
 
-# (safe) optional import — okay if it fails (we already have shims above)
+# (safe) optional import — okay if it fails
 try:
     from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
 except Exception:
     pass
-
 
 def ask_llm_with_tools(
     user_q: str,
@@ -616,6 +634,7 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
         if link: return link
         mst = _pick(it.get("법령일련번호"), it.get("법령ID"), it.get("MST"), it.get("mst"), it.get("LawMST"))
         if mst:
+            OC = (st.secrets.get("LAW_API_OC") or "").split("@")[0].strip() or "test"
             OC = (st.secrets.get("LAW_API_OC") or "").split("@")[0].strip() or "test"
             return f"https://www.law.go.kr/DRF/lawService.do?OC={up.quote(OC)}&target=law&MST={mst}&type=HTML&efYd={eff}"
         return ""
@@ -2112,6 +2131,7 @@ def find_all_law_data(query: str, num_rows: int = 3, hint_laws: list[str] | None
         cleaned = _clean_query_for_api(query)
         if cleaned:
             plans = [{"target":"law","q": cleaned, "must":[cleaned], "must_not": []}]
+
 
     tried, err = [], []
     buckets = {"법령":("law",[]), "행정규칙":("admrul",[]), "자치법규":("ordin",[]), "조약":("trty",[])}
