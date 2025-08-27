@@ -575,7 +575,10 @@ def _sanitize_plan_q(user_q: str, q: str) -> str:
     return q
 
 # ---- 오른쪽 플로팅 패널 렌더러 ----
-def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | None = None, show_debug: bool = False):
+def render_search_flyout(user_q: str, num_rows: int = 8,
+                         hint_laws: list[str] | None = None,
+                         hint_articles: list[tuple[str,str]] | None = None,
+                         show_debug: bool = False):
     results = find_all_law_data(user_q, num_rows=num_rows, hint_laws=hint_laws)
 
     def _pick(*cands):
@@ -583,7 +586,7 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
             if isinstance(c, str) and c.strip():
                 return c.strip()
         return ""
-
+    
     def _build_law_link(it, eff):
         link = _pick(
             it.get("법령상세링크"),
@@ -598,6 +601,23 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
             return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={ef}"
         return ""
 
+    # ── 여기부터는 기존 HTML 조립부 ─────────────────────────────
+    html: list[str] = []
+    html.append('<div class="flyout">')
+    html.append('<h3>🧠 통합 검색 결과</h3>')
+
+    # ▼▼▼ (NEW) 조문 바로가기: '카테고리 렌더' 들어가기 직전에 삽입 ▼▼▼
+    if hint_articles:
+        html.append('<h4>🔗 조문 바로가기</h4>')
+        html.append('<ol class="law-list">')
+        for law, art in hint_articles:
+            # 예: law="주택임대차보호법", art="제6조" 또는 "제6조의2"
+            url = _deep_article_url(law, art)  # 실패 시 법령 메인으로 폴백하는 기존 함수
+            html.append(
+                f'<li><a href="{url}" target="_blank" rel="noreferrer">{law} {art}</a></li>'
+            )
+        html.append('</ol>')
+ 
     def _law_item_li(it):
         title = _pick(it.get("법령명한글"), it.get("법령명"), it.get("title_kr"), it.get("title"), it.get("name_ko"), it.get("name"))
         dept  = _pick(it.get("소관부처"), it.get("부처명"), it.get("dept"), it.get("department"))
@@ -803,7 +823,7 @@ def render_pre_chat_center():
     col1, col2 = st.columns(2)
     with col1:
         if st.button("건설현장 중대재해 발생시 처리 절차는?", use_container_width=True):
-            st.session_state["_pending_user_q"] = "교차로 접촉사고: 과실비율·보험처리 기준?"
+            st.session_state["_pending_user_q"] = "건설현장 중대재해 발생시 처리 절차는?"
             st.session_state["_pending_user_nonce"] = time.time_ns()
             st.rerun()
     with col2:
@@ -815,7 +835,7 @@ def render_pre_chat_center():
     col3, col4 = st.columns(2)
     with col3:
         if st.button("유료주차장에 주차된 차에서 도난 사건이 났어", use_container_width=True):
-            st.session_state["_pending_user_q"] = "온라인 명예훼손 글: 형사·민사 절차?"
+            st.session_state["_pending_user_q"] = "유료주차장에 주차된 차에서 도난 사건이 났어?"
             st.session_state["_pending_user_nonce"] = time.time_ns()
             st.rerun()
     with col4:
@@ -1058,6 +1078,27 @@ def extract_law_names_from_answer(md: str) -> list[str]:
             out.append(n2)
     return out[:6]
 
+# ===== 조문 추출: 답변에서 (법령명, 제n조[의m]) 페어 추출 =====
+import re as _re_art
+
+_ART_INLINE = _re_art.compile(
+    r'(?P<law>[가-힣A-Za-z0-9·\s]{2,40}?(?:법|령|규칙|조례))\s*제(?P<num>\d{1,4})조(?P<ui>의\d{1,3})?'
+)
+
+def extract_article_pairs_from_answer(md: str) -> list[tuple[str, str]]:
+    pairs = []
+    for m in _ART_INLINE.finditer(md or ""):
+        law = (m.group("law") or "").strip()
+        art = f"제{m.group('num')}조{m.group('ui') or ''}"
+        if law:
+            pairs.append((law, art))
+    # 순서 유지 중복 제거
+    seen = set(); out = []
+    for p in pairs:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out[:8]
 
 def normalize_law_link(u: str) -> str:
     """상대/스킴누락 링크를 www.law.go.kr 절대 URL로 교정"""
@@ -2971,8 +3012,11 @@ def _current_q_and_answer():
 # ✅ 로딩(스트리밍) 중에는 패널을 렌더링하지 않음
 if chat_started and not st.session_state.get("__answering__", False):
     q_for_panel, ans_for_panel = _current_q_and_answer()
-    hints = extract_law_names_from_answer(ans_for_panel) if ans_for_panel else None
-    render_search_flyout(q_for_panel or user_q, num_rows=8, hint_laws=hints, show_debug=SHOW_SEARCH_DEBUG)
+hints = extract_law_names_from_answer(ans_for_panel) if ans_for_panel else None
+arts  = extract_article_pairs_from_answer(ans_for_panel) if ans_for_panel else None  # ← NEW
+render_search_flyout(q_for_panel or user_q, num_rows=8,
+                     hint_laws=hints, hint_articles=arts, show_debug=SHOW_SEARCH_DEBUG)
+
 
 # ===============================
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
