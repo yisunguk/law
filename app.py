@@ -1241,8 +1241,11 @@ _REF_BLOCK2_PAT = re.compile(r'\n[ \t]*###\s*참고\s*링크\(조문\)[\s\S]*$',
 
 
 
+# app.py
 def _deep_article_url(law: str, art_label: str) -> str:
-    return f"https://www.law.go.kr/법령/{quote((law or '').strip())}/{quote(art_label)}"
+    # 🚫 quote() 제거 → 한글 경로 유지
+    return f"https://www.law.go.kr/법령/{(law or '').strip()}/{(art_label or '').strip()}"
+
 
 def link_inline_articles_in_bullets(markdown: str) -> str:
     """불릿 라인 중 '법령명 제N조(의M)'를 [텍스트](조문URL)로 교체"""
