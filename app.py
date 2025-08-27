@@ -611,7 +611,10 @@ def render_search_flyout(
     hint_laws: list[str] | None = None,
     show_debug: bool = False,
 ) -> None:
-    results = find_all_law_data(user_q, num_rows=num_rows, hint_laws=hint_laws)
+    try:
+        search_results = find_all_law_data(user_q, num_rows=num_rows, hint_laws=hint_laws)
+    except Exception:
+        search_results = {}
 
     def _pick(*cands):
         for c in cands:
@@ -643,7 +646,7 @@ def render_search_flyout(
 
     # 버킷 렌더
     for label in ["법령", "행정규칙", "자치법규", "조약"]:
-        pack  = results.get(label) or {}
+        pack  = search_results.get(label) or {}
         items = pack.get("items") or []
         html.append(f'<h4>🔎 {label}</h4>')
         if not items:
