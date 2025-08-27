@@ -101,7 +101,26 @@ if "_last_user_nonce" not in st.session_state:
 
 KEY_PREFIX = "main"
 
-from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
+
+try:
+    from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
+except Exception as _e:
+    # --- Fallback shims when 'modules' package is unavailable ---
+    class Intent:
+        GENERIC = "GENERIC"
+    def classify_intent(*args, **kwargs):
+        return Intent.GENERIC
+    def pick_mode(*args, **kwargs):
+        return "search"
+    def build_sys_for_mode(*args, **kwargs):
+        return ""
+    class AdviceEngine:
+        def __init__(self, *args, **kwargs):
+            pass
+        def generate(self, *args, **kwargs):
+            # Minimal generator to keep app running without full engine
+            yield {"role": "assistant", "content": "⚠️ 내부 엔진 모듈이 비활성화 상태입니다. 검색 기능만 사용 가능합니다."}
+
 
 # 지연 초기화: 필요한 전역들이 준비된 뒤에 한 번만 엔진 생성
 def _init_engine_lazy():
