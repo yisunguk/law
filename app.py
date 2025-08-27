@@ -6,21 +6,21 @@ import streamlit as st
 # --- per-turn nonce ledger (prevents double appends)
 st.session_state.setdefault('_nonce_done', {})
 # --- cache helpers: suggestions shouldn't jitter on reruns ---
+# --- cache helpers: suggestions shouldn't jitter on reruns ---
 def cached_suggest_for_tab(tab_key: str):
-    import streamlit as st
     store = st.session_state.setdefault("__tab_suggest__", {})
     if tab_key not in store:
         from modules import suggest_keywords_for_tab
-        store[tab_key] = cached_suggest_for_tab(tab_key)
+        store[tab_key] = suggest_keywords_for_tab(tab_key)  # ✅ fix
     return store[tab_key]
 
 def cached_suggest_for_law(law_name: str):
-    import streamlit as st
     store = st.session_state.setdefault("__law_suggest__", {})
     if law_name not in store:
         from modules import suggest_keywords_for_law
-        store[law_name] = cached_suggest_for_law(law_name)
+        store[law_name] = suggest_keywords_for_law(law_name)  # ✅ fix
     return store[law_name]
+
 
 st.set_page_config(
     page_title="인공지능 법률상담 전문가",
