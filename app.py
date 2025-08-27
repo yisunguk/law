@@ -777,14 +777,29 @@ def _push_user_from_pending() -> str | None:
 def render_pre_chat_center():
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
     st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
-        # ⭐ 대화 스타터 (프리챗 전용 | 2줄 × 2개)
-    st.markdown("### 📌 대화 스타터")
+       # 입력 폼 (전송 시 pending에 저장 후 rerun)
+    
+    with st.form("first_ask", clear_on_submit=True):
+        q = st.text_input("질문을 입력해 주세요...", key="first_input")
+        sent = st.form_submit_button("전송", use_container_width=True)
+
+    # 👉 폼 닫힌 뒤, 질문 입력창 바로 아래에 버튼 배치
     starters = [
         "주택임대차보호법 보증금 우선변제권 요건은?",
         "개인정보 보호법 유출 통지의무와 과징금은?",
         "교통사고처리 특례법 적용 대상과 처벌 수위는?",
         "근로기준법 연차휴가 미사용수당 계산 방법은?",
     ]
+    for row in range(0, len(starters), 2):
+        cols = st.columns(2)
+        for i, qtext in enumerate(starters[row:row+2]):
+            if cols[i].button(qtext, key=f"starter_pre_{row+i}", use_container_width=True):
+                st.session_state["_pending_user_q"] = qtext
+                st.session_state["_pending_user_nonce"] = time.time_ns()
+                st.rerun()
+
+    st.markdown("</section>", unsafe_allow_html=True)
+    
     for row in range(0, len(starters), 2):
         cols = st.columns(2)
         for i, qtext in enumerate(starters[row:row+2]):
