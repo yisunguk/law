@@ -197,41 +197,45 @@ def ask_llm_with_tools(
         history = []
 
 
+    
     _called = False
+    import inspect
+    try:
+        gen_param_names = set(inspect.signature(engine.generate).parameters.keys())
+    except Exception:
+        gen_param_names = set()
     for _kw in ("history", "messages", "chat_history", "conversation"):
-        if _kw in _params:
+        if _kw in gen_param_names:
             yield from engine.generate(
                 user_q,
                 system_prompt=sys_prompt,
                 allow_tools=use_tools,
                 num_rows=num_rows,
                 stream=stream,
-                primer_enable=True,
-                **{_kw: history},
-            )
-            _called = True
-            break
-
-    if not _called:
-        # fallback: 히스토리를 system prompt 앞에 텍스트로 주입
-        def _as_transcript(items):
-            _lines = []
-            for it in items:
-                _lines.append(f"{'사용자' if it['role']=='user' else '어시스턴트'}: {it['content']}")
-            return "\n".join(_lines)
-
-        _hist_text = _as_transcript(history)
-        _uq = user_q
-        if _hist_text:
-            _uq = f"[이전 대화]\n{_hist_text}\n\n[현재 질문]\n{user_q}"
-        yield from engine.generate(
-            _uq,
-            system_prompt=sys_prompt,
-            allow_tools=use_tools,
-            num_rows=num_rows,
-            stream=stream,
             primer_enable=True,
+            **{_kw: history},
         )
+        _called = True
+        break
+    if not _called:
+                def _as_transcript(items):
+                    _lines = []
+                    for it in items:
+                        _lines.append(f"{'사용자' if it['role']=='user' else '어시스턴트'}: {it['content']}")
+                    return "\n".join(_lines)
+        
+                _hist_text = _as_transcript(history)
+                _uq = user_q
+                if _hist_text:
+                    _uq = f"[이전 대화]\n{_hist_text}\n\n[현재 질문]\n{user_q}"
+                yield from engine.generate(
+                    _uq,
+                    system_prompt=sys_prompt,
+                    allow_tools=use_tools,
+                    num_rows=num_rows,
+                    stream=stream,
+                    primer_enable=True,
+                )
 
 import io, os, re, json, time, html
 
