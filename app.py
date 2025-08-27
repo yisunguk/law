@@ -950,7 +950,7 @@ def enforce_memo_template(md: str) -> str:
     return out
 
 _SEC_CORE_TITLE = _re_memo.compile(r'(?mi)^\s*3\s*[\.\)]\s*핵심\s*판단\s*$', _re_memo.M)
-_SEC_NEXT_TITLE2 = _re_memo.compile(r'(?m)^\s*\d+\s*[\.\)]\s+')
+_SEC_NEXT_TITLE2 = _re_memo.compile(r'(여보세요?m)^\s*\d+\s*[\.\)]\s+')
 
 def strip_links_in_core_judgment(md: str) -> str:
     if not md:
