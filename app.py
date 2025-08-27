@@ -950,7 +950,7 @@ def enforce_memo_template(md: str) -> str:
     return out
 
 _SEC_CORE_TITLE = _re_memo.compile(r'(?mi)^\s*3\s*[\.\)]\s*핵심\s*판단\s*$', _re_memo.M)
-_SEC_NEXT_TITLE2 = _re_memo.compile(r'(여보세요?m)^\s*\d+\s*[\.\)]\s+')
+_SEC_NEXT_TITLE2 = _re_memo.compile(r'(?m)^\s*\d+\s*[\.\)]\s+')
 
 def strip_links_in_core_judgment(md: str) -> str:
     if not md:
@@ -1123,7 +1123,10 @@ def autolink_bare_urls_in_explain(md: str) -> str:
         return f'<{url}>'
     block = _URL_BARE.sub(_wrap, block)
     return md[:start] + block + md[end:]
-(r'(안녕?m)^\s*\d+\s*[\.\)]\s+')
+st.markdown("""
+법제처 국가법령정보 DB를 기반으로 최신 법령과 행정규칙, 자치법규, 조약, 법령해석례, 헌재결정례, 법령용어를 신뢰성 있게 제공합니다.  
+본 챗봇은 신속하고 정확한 법령 정보를 안내하여, 사용자가 법률적 쟁점을 이해하고 합리적인 판단을 내릴 수 있도록 돕습니다.
+""")
 
 # 하위 법령 소제목(예: "1) 산업안전보건법")
 # 번호/헤딩/불릿이 있어도 없어도 잡히게 완화
