@@ -6,20 +6,22 @@ import streamlit as st
 # --- per-turn nonce ledger (prevents double appends)
 st.session_state.setdefault('_nonce_done', {})
 # --- cache helpers: suggestions shouldn't jitter on reruns ---
+
 def cached_suggest_for_tab(tab_key: str):
     import streamlit as st
     store = st.session_state.setdefault("__tab_suggest__", {})
     if tab_key not in store:
-        from modules import suggest_keywords_for_tab
-        store[tab_key] = cached_suggest_for_tab(tab_key)
+        # safe fallback (will be overwritten by later definitive version)
+        store[tab_key] = []
     return store[tab_key]
+
 
 def cached_suggest_for_law(law_name: str):
     import streamlit as st
     store = st.session_state.setdefault("__law_suggest__", {})
     if law_name not in store:
-        from modules import suggest_keywords_for_law
-        store[law_name] = cached_suggest_for_law(law_name)
+        # safe fallback (will be overwritten by later definitive version)
+        store[law_name] = []
     return store[law_name]
 
 st.set_page_config(
@@ -157,7 +159,13 @@ def _init_engine_lazy():
     return st.session_state.engine
 
 # 기존 ask_llm_with_tools를 얇은 래퍼로 교체
-from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
+
+# (safe) optional import — okay if it fails (we already have shims above)
+try:
+    from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
+except Exception:
+    pass
+
 
 def ask_llm_with_tools(
     user_q: str,
