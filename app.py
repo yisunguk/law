@@ -803,7 +803,7 @@ def render_pre_chat_center():
     col1, col2 = st.columns(2)
     with col1:
         if st.button("근로계약 해지 시 절차는?", use_container_width=True):
-            st.session_state["_pending_user_q"] = "근로계약 해지 시 절차는?"
+            st.session_state["_pending_user_q"] = "교차로 접촉사고: 과실비율·보험처리 기준?"
             st.session_state["_pending_user_nonce"] = time.time_ns()
             st.rerun()
     with col2:
@@ -815,7 +815,7 @@ def render_pre_chat_center():
     col3, col4 = st.columns(2)
     with col3:
         if st.button("개인정보 유출 시 법적 책임은?", use_container_width=True):
-            st.session_state["_pending_user_q"] = "개인정보 유출 시 법적 책임은?"
+            st.session_state["_pending_user_q"] = "온라인 명예훼손 글: 형사·민사 절차?"
             st.session_state["_pending_user_nonce"] = time.time_ns()
             st.rerun()
     with col4:
@@ -1136,6 +1136,24 @@ def autolink_bare_urls_in_explain(md: str) -> str:
         return f'<{url}>'
     block = _URL_BARE.sub(_wrap, block)
     return md[:start] + block + md[end:]
+st.markdown(
+    """
+    <div style="text-align:center; padding: 6px 0 2px;">
+      <h1 style="
+          margin:0;
+          font-size:48px;
+          font-weight:800;
+          line-height:1.1;
+          letter-spacing:-0.5px;">
+        인공지능 <span style="color:#2F80ED">법률 상담가</span>
+      </h1>
+    </div>
+    <hr style="margin: 12px 0 20px; border: 0; height: 1px; background: #eee;">
+    """,
+    unsafe_allow_html=True
+)
+
+# 본문
 st.markdown("""
 인공지능 법률 상담가 챗봇은 국가법령정보 DB를 직접 접속하여 최신 법령과 행정규칙, 자치법규, 조약, 법령해석례, 헌재결정례, 법령용어를 신뢰성 있게 해석합니다.  
 
