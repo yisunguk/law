@@ -8,3 +8,4 @@ docx2txt
 requests
 beautifulsoup4
 lxml 
+beautifulsoup4
