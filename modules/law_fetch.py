@@ -2,6 +2,25 @@
 import os, json, re, requests
 from bs4 import BeautifulSoup
 from lxml import etree
+# --- API trace helper (LLM 디버깅용) ---
+from datetime import datetime
+
+def _trace_api(kind: str, url: str, params=None, status=None, ctype=None, sample: str | None = None):
+    """Streamlit 세션에 API 호출 정보 누적"""
+    try:
+        import streamlit as st
+        bag = st.session_state.setdefault("_api_trace", [])
+        bag.append({
+            "t": datetime.now().strftime("%H:%M:%S"),
+            "kind": kind, "url": url, "params": params or {},
+            "status": status, "ctype": ctype, "sample": (sample or "")[:400]
+        })
+        # 너무 길어지지 않게 최근 50건만 유지
+        if len(bag) > 50:
+            del bag[:-50]
+    except Exception:
+        pass
+
 
 HEADERS_DRF = {
     "User-Agent": "Mozilla/5.0",
@@ -19,9 +38,30 @@ def _drf_params(mst: str, typ: str, efYd: str | None = None) -> dict:
         p["efYd"] = efYd.replace("-", "")
     return p
 
+# (기존) drf_fetch(...) 내부에서 requests.get(...) 직후에 1줄 추가
 def drf_fetch(mst: str, typ: str = "JSON", timeout: float = 10.0) -> requests.Response:
     url = "https://www.law.go.kr/DRF/lawService.do"
-    return requests.get(url, params=_drf_params(mst, typ), headers=HEADERS_DRF, timeout=timeout)
+    r = requests.get(url, params=_drf_params(mst, typ), headers=HEADERS_DRF, timeout=timeout)
+    # ✅ 트레이스(스트림릿 없을 때는 조용히 패스)
+    try:
+        import streamlit as st
+        import urllib.parse as up, time
+        rows = st.session_state.setdefault("_api_trace", [])
+        full = f"{url}?{up.urlencode(_drf_params(mst, typ), quote_via=up.quote)}"
+        rows.append({
+            "t": time.strftime("%H:%M:%S"),
+            "kind": "drf",
+            "url": full,
+            "params": _drf_params(mst, typ),
+            "status": getattr(r, "status_code", None),
+            "ctype": (getattr(r, "headers", {}) or {}).get("content-type", ""),
+            "sample": (getattr(r, "text", "") or "")[:500],
+        })
+        st.session_state["_api_trace"] = rows[-12:]
+    except Exception:
+        pass
+    return r
+
 
 def _extract_text_from_json(text: str) -> tuple[str, dict]:
     try:
@@ -65,7 +105,13 @@ def _extract_text_from_html(text: str) -> str:
     return (main.get_text("\n", strip=True) if main else soup.get_text("\n", strip=True))[:3000]
 
 def fetch_law_detail_text(mst: str, prefer: str = "JSON") -> tuple[str, str, dict]:
-    order = ["JSON","XML","HTML"] if prefer.upper()=="JSON" else ["XML","JSON","HTML"]
+    p = (prefer or "JSON").upper()
+    if p == "HTML":
+        order = ["HTML", "JSON", "XML"]         # ✅ HTML 우선
+    elif p == "XML":
+        order = ["XML", "JSON", "HTML"]
+    else:
+        order = ["JSON", "XML", "HTML"]         # 기본값
     for typ in order:
         r = drf_fetch(mst, typ=typ)
         ctype = (r.headers.get("content-type") or "").lower()
@@ -80,6 +126,7 @@ def fetch_law_detail_text(mst: str, prefer: str = "JSON") -> tuple[str, str, dic
             s = _extract_text_from_html(text)
             if s: return s, "HTML", {}
     return "", "", {}
+
 
 def _build_drf_link(mst: str, typ: str = "HTML", efYd: str | None = None) -> str:
     from urllib.parse import urlencode, quote
@@ -109,25 +156,6 @@ def _summarize_laws_for_primer(law_items: list[dict], max_items: int = 6) -> str
 import re as _re
 
 _ART_HDR = _re.compile(r'^\s*제\d{1,4}조(의\d{1,3})?\s*', _re.M)
-
-def extract_article_block(full_text: str, art_label: str, max_chars: int = 4000) -> str:
-    """
-    DRF에서 받은 전체 텍스트에서 '제83조(…)' 같은 조문 블록만 잘라 반환.
-    다음 조문 헤더(제n조) 직전까지를 포함.
-    """
-    if not full_text or not art_label:
-        return ""
-    m = _re.search(rf'^\s*{_re.escape(art_label)}[^\n]*$', full_text, _re.M)
-    if not m:
-        # 괄호 제목 없이 '제83조'만 있는 경우까지 커버
-        m = _re.search(rf'^\s*{_re.escape(art_label)}\s*', full_text, _re.M)
-    if not m:
-        return ""
-    start = m.start()
-    n = _ART_HDR.search(full_text, m.end())
-    end = n.start() if n else len(full_text)
-    block = full_text[start:end].strip()
-    return block[:max_chars]
 
 def fetch_article_block_by_mst(mst: str, art_label: str, prefer: str = "JSON") -> tuple[str, str]:
     """
@@ -166,15 +194,14 @@ def extract_article_block(full_text: str, art_label: str, max_chars: int = 4000)
     block = full_text[start:end].strip()
     return block[:max_chars]
 
-def fetch_article_block_by_mst(mst: str, art_label: str, prefer: str = "JSON", timeout: float = 8.0) -> tuple[str, str]:
-    """
-    MST를 DRF로 조회해 해당 '제n조' 조문만 잘라 반환.
-    return: (조문텍스트, HTML원문링크)
-    """
-    # 이 파일에 이미 있는 함수들을 재사용합니다.
+def fetch_article_block_by_mst(mst: str, art_label: str | None, prefer: str = "JSON", timeout: float = 8.0) -> tuple[str, str]:
     txt, used, _ = fetch_law_detail_text(mst, prefer=prefer)
     if not txt:
         return "", ""
-    block = extract_article_block(txt, art_label)
+    if art_label:
+        block = extract_article_block(txt, art_label)
+    else:
+        block = txt[:2000]  # 라벨이 없으면 앞부분(안전 길이) 반환
     link = _build_drf_link(mst, typ="HTML")
     return (block or "").strip(), link
+
