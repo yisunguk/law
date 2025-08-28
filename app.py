@@ -3266,25 +3266,25 @@ with st.container():
             if role == "assistant":
                 render_bubble_with_copy(content, key=f"past-{i}")
 
+        # 안전하게 꺼내기
                 laws = (m.get("law") or []) if isinstance(m, dict) else []
-            if laws:
-                with st.expander("📋 이 턴에서 참고한 법령 요약"):
-                    for j, law in enumerate(laws, 1):
-                        if not isinstance(law, dict):
-                            continue
+                if laws:
+                    with st.expander("📋 이 턴에서 참고한 법령 요약"):
+                        for j, law in enumerate(laws, 1):
+                            if not isinstance(law, dict):
+                                continue
+                            name = law.get('법령명') or law.get('법령명한글') or law.get('title') or '(제목 없음)'
+                            kind = law.get('법령구분') or law.get('kind') or '-'
+                            eff  = law.get('시행일자') or law.get('effective_date') or '-'
+                            pub  = law.get('공포일자') or law.get('promulgation_date') or '-'
+                            st.write(f"**{j}. {name}** ({kind})  | 시행 {eff}  | 공포 {pub}")
 
-                    name = law.get('법령명') or law.get('법령명한글') or law.get('title') or '(제목 없음)'
-                    kind = law.get('법령구분') or law.get('kind') or '-'
-                    eff  = law.get('시행일자') or law.get('effective_date') or '-'
-                    pub  = law.get('공포일자') or law.get('promulgation_date') or '-'
+                            link = law.get('법령상세링크') or law.get('상세링크') or law.get('detail_url') or ''
+                            if link:
+                                st.write(f"- 링크: {link}")
+            else:
+                st.markdown(content)
 
-                    st.write(f"**{j}. {name}** ({kind})  | 시행 {eff}  | 공포 {pub}")
-
-                    link = law.get('법령상세링크') or law.get('상세링크') or law.get('detail_url') or ''
-                    if link:
-                        st.write(f"- 링크: {link}")
-    else:
-        st.markdown(content)
 
 
 # ✅ 답변 말풍선 바로 아래에 입력/업로더 붙이기 (답변 생성 중이 아닐 때만)
