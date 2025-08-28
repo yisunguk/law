@@ -2,6 +2,11 @@
 from __future__ import annotations
 
 import streamlit as st
+import re
+
+# 모듈 전역에 미리 컴파일
+_NEED_TOOLS = re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API)', re.I)
+
 
 from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
 
@@ -15,7 +20,7 @@ def cached_suggest_for_tab(tab_key: str):
     store = st.session_state.setdefault("__tab_suggest__", {})
     if tab_key not in store:
         from modules import suggest_keywords_for_tab
-        store[tab_key] = cached_suggest_for_tab(tab_key)
+        store[tab_key] = suggest_keywords_for_tab(tab_key)  # ← 여기!
     return store[tab_key]
 
 def cached_suggest_for_law(law_name: str):
@@ -23,8 +28,9 @@ def cached_suggest_for_law(law_name: str):
     store = st.session_state.setdefault("__law_suggest__", {})
     if law_name not in store:
         from modules import suggest_keywords_for_law
-        store[law_name] = cached_suggest_for_law(law_name)
+        store[law_name] = suggest_keywords_for_law(law_name)  # ← 여기!
     return store[law_name]
+
 
 st.set_page_config(
     page_title="인공지능 법률상담 전문가",
@@ -105,23 +111,30 @@ if "_last_user_nonce" not in st.session_state:
 
 KEY_PREFIX = "main"
 
+# --- imports (파일 상단에 한 번만) ---
 from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
+import streamlit as st
+import inspect
+import re
+
+# 법/조문/DRF/API 키워드가 보이면 도구 강제 ON
+_NEED_TOOLS = re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API)', re.I)
+
 
 # 지연 초기화: 필요한 전역들이 준비된 뒤에 한 번만 엔진 생성
 def _init_engine_lazy():
-    import streamlit as st
     if "engine" in st.session_state and st.session_state.engine is not None:
         return st.session_state.engine
 
     g = globals()
-    c      = g.get("client")
-    az     = g.get("AZURE")
-    tools  = g.get("TOOLS")
-    scc    = g.get("safe_chat_completion")
-    t_one  = g.get("tool_search_one")
-    t_multi= g.get("tool_search_multi")
-    pre    = g.get("prefetch_law_context")
-    summar = g.get("_summarize_laws_for_primer")
+    c       = g.get("client")
+    az      = g.get("AZURE")
+    tools   = g.get("TOOLS")
+    scc     = g.get("safe_chat_completion")
+    t_one   = g.get("tool_search_one")
+    t_multi = g.get("tool_search_multi")
+    pre     = g.get("prefetch_law_context")
+    summar  = g.get("_summarize_laws_for_primer")
 
     # 필수 구성요소가 아직 준비 안 되었으면 None을 캐시하고 리턴
     if not (c and az and tools and scc and t_one and t_multi):
@@ -135,41 +148,40 @@ def _init_engine_lazy():
         safe_chat_completion=scc,
         tool_search_one=t_one,
         tool_search_multi=t_multi,
-        prefetch_law_context=pre,             # 있으면 그대로
-        summarize_laws_for_primer=summar,     # 있으면 그대로
+        prefetch_law_context=pre,
+        summarize_laws_for_primer=summar,
         temperature=0.2,
     )
     return st.session_state.engine
 
-# 기존 ask_llm_with_tools를 얇은 래퍼로 교체
-from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
 
+# 기존 ask_llm_with_tools를 얇은 래퍼로 교체 (제너레이터)
 def ask_llm_with_tools(
     user_q: str,
-    num_rows: int = 5,
-    stream: bool = True,
-    forced_mode: str | None = None,  # 유지해도 됨: 아래에서 직접 처리
     brief: bool = False,
+    forced_mode: str | None = None,
+    num_rows: int = 8,
+    stream: bool = True,
 ):
-    """
-    UI 진입점: 의도→모드 결정, 시스템 프롬프트 합성, 툴 사용 여부 결정 후
-    AdviceEngine.generate()에 맞는 인자(system_prompt, allow_tools)로 호출.
-    """
-    engine = _init_engine_lazy() if "_init_engine_lazy" in globals() else globals().get("engine")
+    engine = _init_engine_lazy()
     if engine is None:
-        yield ("final", "엔진이 아직 초기화되지 않았습니다. (client/AZURE/TOOLS 확인)", [])
-        return
+        return  # 초기화 전이면 종료
 
     # 1) 모드 결정
     det_intent, conf = classify_intent(user_q)
     try:
         valid = {m.value for m in Intent}
-        mode = Intent(forced_mode) if forced_mode in valid else pick_mode(det_intent, conf)
+        mode = Intent(forced_mode) if (forced_mode in valid) else pick_mode(det_intent, conf)
     except Exception:
         mode = pick_mode(det_intent, conf)
 
-    # 2) 프롬프트/툴 사용 여부
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
+
+    # 🔧 법/조문/DRF/API 키워드가 보이면 도구 강제 사용
+    if not use_tools and _NEED_TOOLS.search(user_q or ""):
+        use_tools = True
+
+    # 2) 프롬프트/툴 사용 여부
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
     # 2.5) 최근 N개 대화 히스토리 준비 (user/assistant만)
@@ -189,16 +201,16 @@ def ask_llm_with_tools(
         history = []
 
     # 3) 엔진 호출 (히스토리 전달 시도 + 안전한 폴백)
-    import inspect
     try:
-        _sig = inspect.signature(engine.generate)
-        _params = set(_sig.parameters.keys())
+        sig = inspect.signature(engine.generate)
+        params = set(sig.parameters.keys())
     except Exception:
-        _params = set()
+        params = set()
 
-    _called = False
-    for _kw in ("history", "messages", "chat_history", "conversation"):
-        if _kw in _params:
+    called = False
+    for kw in ("history", "messages", "chat_history", "conversation"):
+        if kw in params:
+            # 히스토리를 지원하는 서명인 경우
             yield from engine.generate(
                 user_q,
                 system_prompt=sys_prompt,
@@ -206,31 +218,31 @@ def ask_llm_with_tools(
                 num_rows=num_rows,
                 stream=stream,
                 primer_enable=True,
-                **{_kw: history},
+                **{kw: history},
             )
-            _called = True
+            called = True
             break
 
-    if not _called:
+    if not called:
         # fallback: 히스토리를 system prompt 앞에 텍스트로 주입
         def _as_transcript(items):
-            _lines = []
+            lines = []
             for it in items:
-                _lines.append(f"{'사용자' if it['role']=='user' else '어시스턴트'}: {it['content']}")
-            return "\n".join(_lines)
+                role = "사용자" if it.get("role") == "user" else "어시스턴트"
+                lines.append(f"{role}: {it.get('content','')}")
+            return "\n".join(lines)
 
-        _hist_text = _as_transcript(history)
-        _uq = user_q
-        if _hist_text:
-            _uq = f"[이전 대화]\n{_hist_text}\n\n[현재 질문]\n{user_q}"
+        hist_text = _as_transcript(history or [])
+        uq = user_q if not hist_text else f"[이전 대화]\n{hist_text}\n\n[현재 질문]\n{user_q}"
         yield from engine.generate(
-            _uq,
+            uq,
             system_prompt=sys_prompt,
             allow_tools=use_tools,
             num_rows=num_rows,
             stream=stream,
             primer_enable=True,
         )
+
 
 import io, os, re, json, time, html
 
@@ -593,56 +605,37 @@ def render_search_flyout(user_q: str, num_rows: int = 8,
     
     from urllib.parse import urlencode, quote
 
-def _build_law_link(it: dict, eff: str | None = None, out_type: str = "HTML") -> str:
-    # 1) API가 준 상세 링크가 있으면 그걸 우선 사용
-    link = _pick(
-        it.get("법령상세링크"),
-        it.get("상세링크"),
-        it.get("url"), it.get("link"), it.get("detail_url"),
-    )
-    if link:
-        return normalize_law_link(link)
-
-    # 2) DRF로 직접 구성 (MST 필요)
-    mst = _pick(it.get("MST"), it.get("mst"), it.get("LawMST"))
-    if not mst:
+    def _pick(*cands):
+        for c in cands:
+            if isinstance(c, str) and c.strip():
+                return c.strip()
         return ""
 
-    oc = (globals().get("LAW_API_OC") or "").strip()
-    if not oc:
-        # OC가 비어 있으면 DRF 호출이 안 되므로 안전하게 빈 문자열 반환
-        return ""
+    from urllib.parse import urlencode, quote
 
-    qs = {
-        "OC": oc,              # ✅ 하드코딩 금지, 시크릿에서 읽은 값 사용
-        "target": "law",
-        "MST": str(mst),
-        "type": out_type,      # "HTML" 또는 "JSON"
-    }
-    ef_clean = (eff or "").replace("-", "")
-    if ef_clean:
-        qs["efYd"] = ef_clean  # 시행일자 있으면 포함
+    def _build_law_link(it: dict, eff: str | None = None, out_type: str = "HTML") -> str:
+        link = _pick(
+            it.get("법령상세링크"),
+            it.get("상세링크"),
+            it.get("url"), it.get("link"), it.get("detail_url"),
+        )
+        if link:
+            return normalize_law_link(link)
+        mst = _pick(it.get("MST"), it.get("mst"), it.get("LawMST"))
+        if not mst:
+            return ""
+        oc = (globals().get("LAW_API_OC") or "").strip()
+        if not oc:
+            return ""
+        qs = {"OC": oc, "target": "law", "MST": str(mst), "type": out_type}
+        ef_clean = (eff or "").replace("-", "")
+        if ef_clean:
+            qs["efYd"] = ef_clean
+        return "https://www.law.go.kr/DRF/lawService.do?" + urlencode(qs, quote_via=quote)
 
-    return "https://www.law.go.kr/DRF/lawService.do?" + urlencode(qs, quote_via=quote)
-
-
-    # ── 여기부터는 기존 HTML 조립부 ─────────────────────────────
+    # ── 여기부터 HTML 조립부 ...
     html: list[str] = []
-    html.append('<div class="flyout">')
-    html.append('<h3>🧠 통합 검색 결과</h3>')
-
-    # ▼▼▼ (NEW) 조문 바로가기: '카테고리 렌더' 들어가기 직전에 삽입 ▼▼▼
-    if hint_articles:
-        html.append('<h4>🔗 조문 바로가기</h4>')
-        html.append('<ol class="law-list">')
-        for law, art in hint_articles:
-            # 예: law="주택임대차보호법", art="제6조" 또는 "제6조의2"
-            url = _deep_article_url(law, art)  # 실패 시 법령 메인으로 폴백하는 기존 함수
-            html.append(
-                f'<li><a href="{url}" target="_blank" rel="noreferrer">{law} {art}</a></li>'
-            )
-        html.append('</ol>')
- 
+     
     def _law_item_li(it):
         title = _pick(it.get("법령명한글"), it.get("법령명"), it.get("title_kr"), it.get("title"), it.get("name_ko"), it.get("name"))
         dept  = _pick(it.get("소관부처"), it.get("부처명"), it.get("dept"), it.get("department"))
