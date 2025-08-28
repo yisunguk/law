@@ -2294,6 +2294,101 @@ def find_all_law_data(query: str, num_rows: int = 3, hint_laws: list[str] | None
 
 # 캐시된 단일 법령 검색
 @st.cache_data(show_spinner=False, ttl=300)
+
+def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float = 8.0):
+    """
+    MOLEG(법제처) 목록/검색 API 호출
+    1순위: DRF(law.go.kr/DRF) - OC 필요
+    2순위: 공공데이터포털(apis.data.go.kr/1170000) - serviceKey 필요
+    반환: (items:list[dict], endpoint:str|None, err:str|None)
+    """
+    import requests, urllib.parse as up
+
+    target = (target or "law").strip().lower()
+    assert target in ("law", "admrul", "ordin", "trty")
+
+    oc  = (globals().get("LAW_API_OC")   or "").strip()
+    key = (globals().get("LAW_API_KEY")  or "").strip()
+
+    s = requests.Session()
+    try:
+        s.mount("https://", TLS12HttpAdapter2())
+        s.mount("http://",  TLS12HttpAdapter2())
+    except Exception:
+        pass
+
+    # DRF 목록 검색
+    def call_drf():
+        if not oc:
+            return [], None, "DRF-OC-미설정"
+        base = "https://www.law.go.kr/DRF/lawSearch.do"
+        params = {"OC": oc, "target": target, "type": "JSON",
+                  "query": (query or "").strip(),
+                  "numOfRows": max(1, min(int(num_rows or 5), 10))}
+        try:
+            r = s.get(base, params=params, timeout=timeout, headers={
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+                "Referer": "https://www.law.go.kr/DRF/index.do",
+                "X-Requested-With": "XMLHttpRequest",
+            })
+            try:
+                _trace_api("list", base, params, r)
+            except Exception:
+                pass
+            if r.ok and "json" in (r.headers.get("content-type","").lower()):
+                data = r.json()
+                if isinstance(data, list):
+                    items = data
+                else:
+                    items = data.get("law") or data.get("admrul") or data.get("ordin") or data.get("trty") or []
+                return (items or []), r.url, None
+            return [], r.url, f"DRF-{r.status_code}"
+        except Exception as e:
+            return [], base + "?" + up.urlencode(params), f"DRF-EXC:{e}"
+
+    # 공공데이터포털 목록 검색
+    def call_ods():
+        if not key:
+            return [], None, "ODS-KEY-미설정"
+        base = "https://apis.data.go.kr/1170000/lawSearch"
+        params = {"serviceKey": key, "pageNo": 1,
+                  "numOfRows": max(1, min(int(num_rows or 5), 10)),
+                  "query": (query or "").strip(),
+                  "type": "json"}
+        try:
+            r = s.get(base, params=params, timeout=timeout)
+            try:
+                _trace_api("list", base, params, r)
+            except Exception:
+                pass
+            txt = (r.text or "")[:2000]
+            if "Policy Falsified" in txt:
+                return [], r.url, "ODS-PolicyFalsified(승인/정책/파라미터 문제)"
+            if r.ok:
+                try:
+                    data = r.json()
+                except Exception:
+                    return [], r.url, "ODS-UNPARSEABLE"
+                if isinstance(data, list):
+                    items = data
+                else:
+                    items = (data.get("law")
+                             or data.get("response", {}).get("body", {}).get("items", [])
+                             or data.get("items", []))
+                return (items or []), r.url, None
+            return [], r.url, f"ODS-{r.status_code}"
+        except Exception as e:
+            return [], base + "?" + up.urlencode(params), f"ODS-EXC:{e}"
+
+    items, url, err = call_drf()
+    if not items:
+        items2, url2, err2 = call_ods()
+        if items2 or (err and not err2):
+            return items2, url2, err2
+    return items, url, err
+
+
 def search_law_data(query: str, num_rows: int = 10):
     return _call_moleg_list("law", query, num_rows=num_rows)
 
@@ -3275,95 +3370,3 @@ if re.search(r'(본문|원문|요약\s*하지\s*말)', user_q or '', re.I):
             pass
 
 # --- 목록 API 통합 호출 함수 (DRF 우선, ODS 폴백) ---
-def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float = 8.0):
-    """
-    MOLEG(법제처) 목록/검색 API 호출
-    1순위: DRF(law.go.kr/DRF) - OC 필요
-    2순위: 공공데이터포털(apis.data.go.kr/1170000) - serviceKey 필요
-    반환: (items:list[dict], endpoint:str|None, err:str|None)
-    """
-    import requests, urllib.parse as up
-
-    target = (target or "law").strip().lower()
-    assert target in ("law", "admrul", "ordin", "trty")
-
-    oc  = (globals().get("LAW_API_OC")   or "").strip()
-    key = (globals().get("LAW_API_KEY")  or "").strip()
-
-    s = requests.Session()
-    try:
-        s.mount("https://", TLS12HttpAdapter2())
-        s.mount("http://",  TLS12HttpAdapter2())
-    except Exception:
-        pass
-
-    # DRF 목록 검색
-    def call_drf():
-        if not oc:
-            return [], None, "DRF-OC-미설정"
-        base = "https://www.law.go.kr/DRF/lawSearch.do"
-        params = {"OC": oc, "target": target, "type": "JSON",
-                  "query": (query or "").strip(),
-                  "numOfRows": max(1, min(int(num_rows or 5), 10))}
-        try:
-            r = s.get(base, params=params, timeout=timeout, headers={
-                "User-Agent": "Mozilla/5.0",
-                "Accept": "application/json, text/javascript, */*; q=0.01",
-                "Referer": "https://www.law.go.kr/DRF/index.do",
-                "X-Requested-With": "XMLHttpRequest",
-            })
-            try:
-                _trace_api("list", base, params, r)
-            except Exception:
-                pass
-            if r.ok and "json" in (r.headers.get("content-type","").lower()):
-                data = r.json()
-                if isinstance(data, list):
-                    items = data
-                else:
-                    items = data.get("law") or data.get("admrul") or data.get("ordin") or data.get("trty") or []
-                return (items or []), r.url, None
-            return [], r.url, f"DRF-{r.status_code}"
-        except Exception as e:
-            return [], base + "?" + up.urlencode(params), f"DRF-EXC:{e}"
-
-    # 공공데이터포털 목록 검색
-    def call_ods():
-        if not key:
-            return [], None, "ODS-KEY-미설정"
-        base = "https://apis.data.go.kr/1170000/lawSearch"
-        params = {"serviceKey": key, "pageNo": 1,
-                  "numOfRows": max(1, min(int(num_rows or 5), 10)),
-                  "query": (query or "").strip(),
-                  "type": "json"}
-        try:
-            r = s.get(base, params=params, timeout=timeout)
-            try:
-                _trace_api("list", base, params, r)
-            except Exception:
-                pass
-            txt = (r.text or "")[:2000]
-            if "Policy Falsified" in txt:
-                return [], r.url, "ODS-PolicyFalsified(승인/정책/파라미터 문제)"
-            if r.ok:
-                try:
-                    data = r.json()
-                except Exception:
-                    return [], r.url, "ODS-UNPARSEABLE"
-                if isinstance(data, list):
-                    items = data
-                else:
-                    items = (data.get("law")
-                             or data.get("response", {}).get("body", {}).get("items", [])
-                             or data.get("items", []))
-                return (items or []), r.url, None
-            return [], r.url, f"ODS-{r.status_code}"
-        except Exception as e:
-            return [], base + "?" + up.urlencode(params), f"ODS-EXC:{e}"
-
-    items, url, err = call_drf()
-    if not items:
-        items2, url2, err2 = call_ods()
-        if items2 or (err and not err2):
-            return items2, url2, err2
-    return items, url, err
