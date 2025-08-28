@@ -1445,6 +1445,11 @@ def _summarize_laws_for_primer(law_items: list[dict], max_items: int = 6) -> str
         f"{body}\n"
         "가능하면 각 법령을 분리된 소제목으로 정리하고, 핵심 조문(1~2개)만 간단 인용하라."
     )
+# --- 조문 본문 캡슐 버전으로 덮어쓰기 ---
+try:
+    from law_fetch import _summarize_laws_for_primer as _summarize_laws_for_primer
+except Exception:
+    pass  # law_fetch가 없으면 기본 요약 버전 그대로 사용
 
 # === add: LLM-우선 후보 → 각 후보로 MOLEG API 다건 조회/누적 ===
 def prefetch_law_context(user_q: str, num_rows_per_law: int = 3) -> list[dict]:
