@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import streamlit as st
 import re
+# app.py
+from modules import law_fetch as LF
+LF.LAW_API_OC = LAW_API_OC  # ← OC를 law_fetch 모듈 전역에 주입
 
 # 모듈 전역에 미리 컴파일
 _NEED_TOOLS = re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API)', re.I)
@@ -3517,7 +3520,7 @@ if user_q:
 
     try:
         if stream_box is not None:
-            stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
+            stream_box.markdown("_AI가 질의를 해석하고, 국가법령정보 DB를 검색 중입니다._")
 
         for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
             if kind == "delta":
