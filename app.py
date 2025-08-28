@@ -195,6 +195,171 @@ def render_prompt_inspector():
             if e.get("sample"):
                 st.text("…응답 미리보기:")
                 st.code(e["sample"], language="text")
+# --- 목록 API 통합 호출 함수 (DRF 우선, ODS 폴백) ---
+def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float = 8.0):
+    """
+    MOLEG(법제처) 목록/검색 API 호출
+    1순위: DRF(law.go.kr/DRF) - OC 필요
+    2순위: 공공데이터포털(apis.data.go.kr/1170000) - serviceKey 필요
+    반환: (items:list[dict], endpoint:str|None, err:str|None)
+    """
+    import requests, urllib.parse as up
+
+    target = (target or "law").strip().lower()
+    assert target in ("law", "admrul", "ordin", "trty")
+
+    oc  = (globals().get("LAW_API_OC")   or "").strip()
+    key = (globals().get("LAW_API_KEY")  or "").strip()
+
+    s = requests.Session()
+    try:
+        s.mount("https://", TLS12HttpAdapter2())
+        s.mount("http://",  TLS12HttpAdapter2())
+    except Exception:
+        pass
+
+    # DRF 목록 검색
+    # 수정본 (LawSearch 래퍼 처리 + 스키마 가변 대응)
+def call_drf():
+    if not oc:
+        return [], None, "DRF-OC-미설정"
+
+    base = "https://www.law.go.kr/DRF/lawSearch.do"
+    params = {
+        "OC": oc,
+        "target": target,
+        "type": "JSON",
+        "query": (query or "").strip(),
+        "numOfRows": max(1, min(int(num_rows or 5), 10)),
+    }
+
+    try:
+        r = s.get(
+            base,
+            params=params,
+            timeout=timeout,
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+                "Referer": "https://www.law.go.kr/DRF/index.do",
+                "X-Requested-With": "XMLHttpRequest",
+            },
+        )
+        try:
+            _trace_api("list", r.url, params, r)  # 실제 호출 URL 기록
+        except Exception:
+            pass
+
+        if not r.ok:
+            return [], r.url, f"DRF-{r.status_code}"
+
+        ctype = (r.headers.get("Content-Type") or r.headers.get("content-type", "")).lower()
+        if "json" not in ctype:
+            return [], r.url, "DRF-UNEXPECTED-CONTENT"
+
+        data = r.json()
+
+        # 래퍼 키(LawSearch 등) 안에 들어있는 경우 펼치기
+        if isinstance(data, dict):
+            for wrapper in ("LawSearch", "AdmrulSearch", "OrdinSearch", "TrtySearch"):
+                if wrapper in data:
+                    data = data[wrapper]
+                    break
+
+        # 항목 배열 뽑기 (스키마 가변 대응)
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict):
+            items = (
+                data.get("law")
+                or data.get("admrul")
+                or data.get("ordin")
+                or data.get("trty")
+                or data.get("response", {}).get("body", {}).get("items", [])
+                or data.get("items", [])
+                or []
+            )
+        else:
+            items = []
+
+        # (선택) 이름 필드 통일
+        norm = []
+        for it in items:
+            if isinstance(it, dict):
+                row = dict(it)
+                row.setdefault(
+                    "name",
+                    row.get("법령명한글") or row.get("법령명") or row.get("title") or "",
+                )
+                norm.append(row)
+            else:
+                norm.append(it)
+        items = norm
+
+        return items, r.url, None
+
+    except Exception as e:
+        return [], base + "?" + up.urlencode(params), f"DRF-EXC:{e}"
+
+
+    # 공공데이터포털 목록 검색
+    # 공공데이터포털 목록 검색
+def call_ods():
+    if not key:
+        return [], None, "ODS-KEY-미설정"
+
+    # serviceKey가 이미 % 인코딩되어 들어온 경우 이중 인코딩 방지
+    from urllib.parse import unquote
+    _key = key
+    if "%" in _key:
+        try:
+            _key = unquote(_key)
+        except Exception:
+            pass
+
+    base = "https://apis.data.go.kr/1170000/lawSearch"
+    params = {
+        "serviceKey": _key,
+        "pageNo": 1,
+        "numOfRows": max(1, min(int(num_rows or 5), 10)),
+        "query": (query or "").strip(),
+        "type": "json",            # 엔드포인트에 따라 'returnType'을 쓰는 경우도 있어요
+        # "returnType": "json",    # 필요시 이 줄을 켜서 A/B 테스트 가능
+    }
+    try:
+        r = s.get(base, params=params, timeout=timeout)
+        try:
+            _trace_api("list", r.url, params, r)   # ← 실제 호출 URL을 기록
+        except Exception:
+            pass
+
+        txt = (r.text or "")[:2000]
+        if "Policy Falsified" in txt:
+            return [], r.url, "ODS-PolicyFalsified(승인/정책/파라미터 문제)"
+
+        if r.ok:
+            # json 파싱 (스키마가 꽤 들쭉날쭉합니다)
+            try:
+                data = r.json()
+            except Exception:
+                return [], r.url, "ODS-UNPARSEABLE"
+
+            if isinstance(data, list):
+                items = data
+            else:
+                items = (
+                    data.get("law")
+                    or data.get("response", {}).get("body", {}).get("items", [])
+                    or data.get("items", [])
+                    or []
+                )
+            return items, r.url, None
+
+        return [], r.url, f"ODS-{r.status_code}"
+
+    except Exception as e:
+        from urllib.parse import urlencode, quote
+        return [], base + "?" + urlencode(params, quote_via=quote), f"ODS-EXC:{e}"
 
 
 def render_api_diagnostics():
@@ -3274,168 +3439,3 @@ if re.search(r'(본문|원문|요약\s*하지\s*말)', user_q or '', re.I):
         except Exception:
             pass
 
-# --- 목록 API 통합 호출 함수 (DRF 우선, ODS 폴백) ---
-def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float = 8.0):
-    """
-    MOLEG(법제처) 목록/검색 API 호출
-    1순위: DRF(law.go.kr/DRF) - OC 필요
-    2순위: 공공데이터포털(apis.data.go.kr/1170000) - serviceKey 필요
-    반환: (items:list[dict], endpoint:str|None, err:str|None)
-    """
-    import requests, urllib.parse as up
-
-    target = (target or "law").strip().lower()
-    assert target in ("law", "admrul", "ordin", "trty")
-
-    oc  = (globals().get("LAW_API_OC")   or "").strip()
-    key = (globals().get("LAW_API_KEY")  or "").strip()
-
-    s = requests.Session()
-    try:
-        s.mount("https://", TLS12HttpAdapter2())
-        s.mount("http://",  TLS12HttpAdapter2())
-    except Exception:
-        pass
-
-    # DRF 목록 검색
-    # 수정본 (LawSearch 래퍼 처리 + 스키마 가변 대응)
-def call_drf():
-    if not oc:
-        return [], None, "DRF-OC-미설정"
-
-    base = "https://www.law.go.kr/DRF/lawSearch.do"
-    params = {
-        "OC": oc,
-        "target": target,
-        "type": "JSON",
-        "query": (query or "").strip(),
-        "numOfRows": max(1, min(int(num_rows or 5), 10)),
-    }
-
-    try:
-        r = s.get(
-            base,
-            params=params,
-            timeout=timeout,
-            headers={
-                "User-Agent": "Mozilla/5.0",
-                "Accept": "application/json, text/javascript, */*; q=0.01",
-                "Referer": "https://www.law.go.kr/DRF/index.do",
-                "X-Requested-With": "XMLHttpRequest",
-            },
-        )
-        try:
-            _trace_api("list", r.url, params, r)  # 실제 호출 URL 기록
-        except Exception:
-            pass
-
-        if not r.ok:
-            return [], r.url, f"DRF-{r.status_code}"
-
-        ctype = (r.headers.get("Content-Type") or r.headers.get("content-type", "")).lower()
-        if "json" not in ctype:
-            return [], r.url, "DRF-UNEXPECTED-CONTENT"
-
-        data = r.json()
-
-        # 래퍼 키(LawSearch 등) 안에 들어있는 경우 펼치기
-        if isinstance(data, dict):
-            for wrapper in ("LawSearch", "AdmrulSearch", "OrdinSearch", "TrtySearch"):
-                if wrapper in data:
-                    data = data[wrapper]
-                    break
-
-        # 항목 배열 뽑기 (스키마 가변 대응)
-        if isinstance(data, list):
-            items = data
-        elif isinstance(data, dict):
-            items = (
-                data.get("law")
-                or data.get("admrul")
-                or data.get("ordin")
-                or data.get("trty")
-                or data.get("response", {}).get("body", {}).get("items", [])
-                or data.get("items", [])
-                or []
-            )
-        else:
-            items = []
-
-        # (선택) 이름 필드 통일
-        norm = []
-        for it in items:
-            if isinstance(it, dict):
-                row = dict(it)
-                row.setdefault(
-                    "name",
-                    row.get("법령명한글") or row.get("법령명") or row.get("title") or "",
-                )
-                norm.append(row)
-            else:
-                norm.append(it)
-        items = norm
-
-        return items, r.url, None
-
-    except Exception as e:
-        return [], base + "?" + up.urlencode(params), f"DRF-EXC:{e}"
-
-
-    # 공공데이터포털 목록 검색
-    # 공공데이터포털 목록 검색
-def call_ods():
-    if not key:
-        return [], None, "ODS-KEY-미설정"
-
-    # serviceKey가 이미 % 인코딩되어 들어온 경우 이중 인코딩 방지
-    from urllib.parse import unquote
-    _key = key
-    if "%" in _key:
-        try:
-            _key = unquote(_key)
-        except Exception:
-            pass
-
-    base = "https://apis.data.go.kr/1170000/lawSearch"
-    params = {
-        "serviceKey": _key,
-        "pageNo": 1,
-        "numOfRows": max(1, min(int(num_rows or 5), 10)),
-        "query": (query or "").strip(),
-        "type": "json",            # 엔드포인트에 따라 'returnType'을 쓰는 경우도 있어요
-        # "returnType": "json",    # 필요시 이 줄을 켜서 A/B 테스트 가능
-    }
-    try:
-        r = s.get(base, params=params, timeout=timeout)
-        try:
-            _trace_api("list", r.url, params, r)   # ← 실제 호출 URL을 기록
-        except Exception:
-            pass
-
-        txt = (r.text or "")[:2000]
-        if "Policy Falsified" in txt:
-            return [], r.url, "ODS-PolicyFalsified(승인/정책/파라미터 문제)"
-
-        if r.ok:
-            # json 파싱 (스키마가 꽤 들쭉날쭉합니다)
-            try:
-                data = r.json()
-            except Exception:
-                return [], r.url, "ODS-UNPARSEABLE"
-
-            if isinstance(data, list):
-                items = data
-            else:
-                items = (
-                    data.get("law")
-                    or data.get("response", {}).get("body", {}).get("items", [])
-                    or data.get("items", [])
-                    or []
-                )
-            return items, r.url, None
-
-        return [], r.url, f"ODS-{r.status_code}"
-
-    except Exception as e:
-        from urllib.parse import urlencode, quote
-        return [], base + "?" + urlencode(params, quote_via=quote), f"ODS-EXC:{e}"
