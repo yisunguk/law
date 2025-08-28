@@ -3,9 +3,6 @@ from __future__ import annotations
 
 import streamlit as st
 import re
-# app.py
-from modules import law_fetch as LF
-LF.LAW_API_OC = LAW_API_OC  # ← OC를 law_fetch 모듈 전역에 주입
 
 # 모듈 전역에 미리 컴파일
 _NEED_TOOLS = re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API)', re.I)
@@ -2215,6 +2212,12 @@ SECRETS    = load_secrets()
 LAW_API_KEY = SECRETS.law_api_key
 LAW_API_OC  = SECRETS.law_api_oc
 AZURE       = SECRETS.az
+
+import os
+os.environ["LAW_API_OC"] = LAW_API_OC           # 환경변수로도 노출(백업 경로)
+import modules.law_fetch as LF
+LF.LAW_API_OC = LAW_API_OC                      # law_fetch 모듈 전역으로 직접 주입
+
 
 # Azure OpenAI 클라이언트 초기화 (기존 로직 유지)
 client = None
