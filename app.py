@@ -1073,32 +1073,6 @@ def strip_links_in_core_judgment(md: str) -> str:
     # [텍스트](http...) 형태의 링크 제거
     block = _re_memo.sub(r'\[([^\]]+)\]\((?:https?:\/\/)[^)]+\)', r'\1', block)
     return md[:start] + block + md[end:]
-# --- 조문 강제 인용(원문 요청 시) ---
-if m:
-    want_article = m.group(0)
-
-strong_verbs = any(s in (user_q or '') for s in ['본문','원문','요약하지 말고','그대로','문자 그대로','조문'])
-
-forced_block = ""
-forced_link  = ""
-
-if want_article and strong_verbs and collected_laws:
-    # 질문에 법령명이 직접 들어있으면 그걸 우선, 아니면 1순위
-    law_pick = next(
-        (it for it in collected_laws
-         if (it.get('법령명') or it.get('법령명한글') or '').strip() in (user_q or '')),
-        collected_laws[0]
-    )
-    mst = (law_pick.get('MST') or law_pick.get('법령ID') or law_pick.get('법령일련번호') or '').strip()
-    if mst:
-        forced_block, forced_link = fetch_article_block_by_mst(mst, want_article, prefer='JSON')
-
-if forced_block:
-    head = f"### 요청하신 {want_article}\n\n"
-    if forced_link:
-        head += f"[법제처 원문 보기]({forced_link})\n\n"
-    base_text = head + "```\n" + forced_block + "\n```\n\n" + (base_text or "")
-
 
 def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
     # 1) normalize (fallback 포함)
