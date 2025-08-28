@@ -40,6 +40,110 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# --- Law helpers -------------------------------------------------------------
+import re
+
+LAW_ALIASES = {"건설산업법": "건설산업기본법"}  # 필요시 추가
+
+def extract_law_name(text: str) -> str | None:
+    if not text: return None
+    toks = re.findall(r'([가-힣0-9·\s]+법(?:\s*시행령|\s*시행규칙)?)', text)
+    if not toks: return None
+    cand = sorted({t.strip() for t in toks}, key=len, reverse=True)[0]
+    cand_norm = re.sub(r'\s+', '', cand)
+    return LAW_ALIASES.get(cand_norm, cand_norm)
+
+def extract_article_label(text: str) -> str | None:
+    m = re.search(r'제\s*(\d{1,4})\s*조(?:\s*의\s*(\d{1,3}))?', text or '')
+    if not m: return None
+    return f"제{m.group(1)}조의{m.group(2)}" if m.group(2) else f"제{m.group(1)}조"
+
+def _pick_best_law(items: list[dict], qname: str | None) -> dict | None:
+    if not items: return None
+    cand = [x for x in items if (x.get('현행연혁코드') or x.get('연혁코드') or '').startswith('현행')] or items
+    if qname:
+        qn = re.sub(r'\s+', '', qname)
+        for x in cand:
+            nm = re.sub(r'\s+', '', (x.get('법령명한글') or x.get('법령명') or ''))
+            if qn in nm:  # 부분일치 우선
+                return x
+    return cand[0]
+
+def _slice_article_from_html(html: str, want: str) -> str | None:
+    """HTML 전체에서 '제N조(…)' 블록만 잘라내기."""
+    if not (html and want): return None
+    txt = re.sub(r'<[^>]+>', '\n', html)
+    txt = re.sub(r'\n{2,}', '\n', txt).strip()
+    p_start = re.compile(rf'{re.escape(want)}\s*(?=[\(\s]|$)')
+    m = p_start.search(txt) or re.compile(rf'{re.escape(want)}\s*\(').search(txt)
+    if not m: return None
+    p_next = re.compile(r'제\s*\d{1,4}\s*조(?:\s*의\s*\d{1,3})?')
+    m2 = p_next.search(txt, m.end())
+    block = txt[m.start(): (m2.start() if m2 else len(txt))].strip()
+    return block or None
+
+def build_article_capsule(user_q: str, num_rows: int = 5) -> dict | None:
+    """
+    사용자 질문에서 법령/조문을 감지해 DRF에서 조문 본문을 가져와
+    - sys_add: System Prompt에 붙일 캡슐 문자열
+    - ui: 화면에 출력할 원문(링크 포함)
+    를 반환. 실패 시 None.
+    """
+    want_law  = extract_law_name(user_q or "")
+    want_art  = extract_article_label(user_q or "")
+    trigger   = bool(want_art or re.search(r'(본문|원문|전문|요약\s*하지\s*말)', user_q or '', re.I))
+    if not trigger:
+        return None
+
+    # 후보 수집
+    law_items = find_all_law_data(user_q, num_rows=num_rows) or []
+    best = _pick_best_law(law_items, want_law)
+    if not best: 
+        return None
+
+    mst = str(best.get('MST') or best.get('법령일련번호') or best.get('법령ID') or '').strip()
+    if not mst:
+        return None
+
+    # 1차: HTML 우선(조문 구조가 들쭉날쭉할 때 안정적)
+    body, link = fetch_article_block_by_mst(mst, want_art, prefer="HTML")
+    # 2차: 조문을 못 찾았으면 전체 HTML에서 직접 슬라이스
+    if not body and want_art:
+        html_all, link_all = fetch_article_block_by_mst(mst, None, prefer="HTML")
+        sliced = _slice_article_from_html(html_all or "", want_art)
+        if sliced:
+            body, link = sliced, (link or link_all)
+    # 3차: 그래도 없으면 JSON 폴백
+    if not body:
+        body, link = fetch_article_block_by_mst(mst, want_art, prefer="JSON")
+
+    if not body:
+        return None
+
+    law_name = (best.get('법령명한글') or best.get('법령명') or '').strip()
+    try:
+        link = normalize_law_link(link) or link
+    except Exception:
+        pass
+
+    sys_add = (
+        "\n\n[법령 본문 캡슐]\n"
+        f"법령명: {law_name}\n"
+        f"조문: {want_art or '(전체)'}\n"
+        f"링크: {link}\n"
+        f"{body.strip()[:2000]}\n"
+    )
+    return {
+        "sys_add": sys_add,
+        "ui": {
+            "law_name": law_name,
+            "art_label": want_art or '',
+            "link": link,
+            "text": body.strip(),
+        },
+    }
+
+
 # 최상단 스크롤 기준점
 st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
 
@@ -474,6 +578,77 @@ def ask_llm_with_tools(
         history = _hist[-HISTORY_LIMIT:]
     except Exception:
         history = []
+
+
+    # 2.5) 최근 N개 히스토리 준비(user/assistant만)
+    try:
+        msgs = st.session_state.get("messages", [])
+        _hist = []
+        for _m in msgs:
+            if isinstance(_m, dict):
+                _r = _m.get("role")
+                _c = (_m.get("content") or "").strip()
+                if _r in ("user", "assistant") and _c:
+                    _hist.append({"role": _r, "content": _c})
+        HISTORY_LIMIT = int(st.session_state.get("__history_limit__", 6))
+        history = _hist[-HISTORY_LIMIT:]
+    except Exception:
+        history = []
+
+    # 2.6) ✅ DRF 조문 본문 '선행 주입' (여기 추가)
+    st.session_state['last_q'] = user_q
+    st.session_state['user_q'] = user_q
+
+    caps = build_article_capsule(user_q, num_rows=num_rows)  # ← 헬퍼는 상단에 정의해 둔 버전
+    if caps:
+        sys_prompt += caps["sys_add"]                  # LLM에 전달할 System Prompt에 원문 캡슐 추가
+        st.session_state["_quote_capsule"] = caps["ui"]  # UI에 바로 보여줄 원문 버퍼
+
+# LLM으로 보낼 system prompt 미리 저장(사이드바에서 확인)
+    st.session_state["_prompt_last"] = sys_prompt
+
+# 3) 엔진 호출 (history 전달 지원 여부 동적 확인 + 안전 폴백)
+    try:
+        sig = inspect.signature(engine.generate)
+        params = set(sig.parameters.keys())
+    except Exception:
+        params = set()
+
+    passed = False
+    for kw in ("history", "messages", "chat_history", "conversation"):
+        if kw in params:
+        # 히스토리를 지원하는 서명인 경우
+            yield from engine.generate(
+                user_q,
+                system_prompt=sys_prompt,
+                allow_tools=use_tools,
+                num_rows=num_rows,
+                stream=stream,
+                primer_enable=True,
+                **{kw: history},
+            )
+            passed = True
+            break
+
+    if not passed:
+    # 히스토리 미지원 엔진 폴백
+        yield from engine.generate(
+            user_q,
+            system_prompt=sys_prompt,
+            allow_tools=use_tools,
+            num_rows=num_rows,
+            stream=stream,
+            primer_enable=True,
+        )
+
+# 3.5) ✅ (선택) 화면에 조문 원문 바로 출력
+    caps_ui = st.session_state.pop("_quote_capsule", None)
+    if caps_ui:
+        st.markdown(
+            f"**요청하신 {caps_ui['law_name']} {caps_ui['art_label']} 조문 원문** · "
+            f"[법제처 전문 보기]({caps_ui['link']})"
+        )
+        st.code(caps_ui["text"])
 
 # LLM으로 보낼 system prompt 미리 저장(사이드바에서 확인)
 
