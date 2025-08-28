@@ -1940,6 +1940,97 @@ class TLS12HttpAdapter2(HTTPAdapter):
         ctx.maximum_version = ssl.TLSVersion.TLSv1_2
         self.poolmanager = PoolManager(*args, ssl_context=ctx, **kwargs)
 
+# --- 목록 API 통합 호출 함수 ---
+def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float = 8.0):
+    """
+    MOLEG(법제처) 목록/검색 API 호출
+    return: (items:list[dict], endpoint:str|None, err:str|None)
+    """
+    import requests, xml.etree.ElementTree as ET, re
+
+    target = (target or "law").strip().lower()
+    assert target in ("law", "admrul", "ordin", "trty")
+
+    # 엔드포인트 후보 (서비스 마다 path 명이 달라질 수 있어 다중 시도)
+    PATHS = {
+        "law":   ["lawSearch.do", "LawSearch.do", "lawSearch"],
+        "admrul":["admrulSearch.do", "AdmrulSearch.do", "admrulSearch"],
+        "ordin": ["ordinSearch.do", "OrdinSearch.do", "ordinSearch"],
+        "trty":  ["trtySearch.do", "TreatySearch.do", "treatySearch", "TrtySearch.do"],
+    }
+
+    # 공통 파라미터 (type=xml 고정)
+    params = {
+        "serviceKey": globals().get("LAW_API_KEY") or "",
+        "pageNo": 1,
+        "numOfRows": max(1, min(int(num_rows or 5), 10)),
+        "query": (query or "").strip(),
+        "type": "xml",
+    }
+
+    # 세션(TLS1.2 강제) 준비
+    sess = requests.Session()
+    try:
+        sess.mount("https://", TLS12HttpAdapter2())
+        sess.mount("http://",  TLS12HttpAdapter2())
+    except Exception:
+        pass
+
+    last_err = None
+    endpoint  = None
+
+    for base in MOLEG_BASES:
+        for path in PATHS[target]:
+            url = f"{base.rstrip('/')}/{path}"
+            try:
+                r = sess.get(url, params=params, timeout=timeout)
+                _trace_api("list", url, params, r)
+                if r.status_code != 200:
+                    last_err = f"HTTP {r.status_code}"
+                    continue
+
+                txt = (r.text or "").strip()
+                if not txt:
+                    last_err = "empty response"
+                    continue
+
+                # XML 파싱
+                try:
+                    root = ET.fromstring(txt)
+                except Exception as e:
+                    last_err = f"xml parse error: {e}"
+                    continue
+
+                items = []
+                # 보편적으로 <items><item>...</item></items> 구조
+                for it in root.findall(".//item"):
+                    row = {child.tag: (child.text or "") for child in list(it)}
+                    # 이름 필드 통일
+                    name = (
+                        row.get("법령명한글")
+                        or row.get("법령명")
+                        or row.get("ordinNm")
+                        or row.get("admrulNm")
+                        or row.get("조약명")
+                        or row.get("lawName")
+                        or row.get("title")
+                        or ""
+                    )
+                    if name:
+                        row["name"] = name
+                    items.append(row)
+
+                endpoint = url
+                return items, endpoint, None
+
+            except Exception as e:
+                last_err = str(e)
+                # 다음 후보 계속 시도
+                continue
+
+    return [], endpoint, (last_err or "no working endpoint")
+
+
 # 파일 어딘가(사이드바 렌더 근처)에 1번만 선언
 import time, urllib.parse as up
 def _trace_api(kind: str, url: str, params: dict | None = None, resp=None, sample_len: int = 500):
