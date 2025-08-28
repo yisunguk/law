@@ -3274,11 +3274,7 @@ if re.search(r'(본문|원문|요약\s*하지\s*말)', user_q or '', re.I):
         except Exception:
             pass
 
-# (moved) post-chat UI is now rendered inline under the last assistant message.
-
-# ============================================================================
-# 추가: 목록 API 통합 호출 함수 (DRF 우선, ODS 폴백)
-# ============================================================================
+# --- 목록 API 통합 호출 함수 (DRF 우선, ODS 폴백) ---
 def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float = 8.0):
     """
     MOLEG(법제처) 목록/검색 API 호출
@@ -3301,17 +3297,14 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float 
     except Exception:
         pass
 
+    # DRF 목록 검색
     def call_drf():
         if not oc:
             return [], None, "DRF-OC-미설정"
         base = "https://www.law.go.kr/DRF/lawSearch.do"
-        params = {
-            "OC": oc,
-            "target": target,
-            "type": "JSON",
-            "query": (query or "").strip(),
-            "numOfRows": max(1, min(int(num_rows or 5), 10)),
-        }
+        params = {"OC": oc, "target": target, "type": "JSON",
+                  "query": (query or "").strip(),
+                  "numOfRows": max(1, min(int(num_rows or 5), 10))}
         try:
             r = s.get(base, params=params, timeout=timeout, headers={
                 "User-Agent": "Mozilla/5.0",
@@ -3320,10 +3313,10 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float 
                 "X-Requested-With": "XMLHttpRequest",
             })
             try:
-                _trace_api("list", r.url, params, r)
+                _trace_api("list", base, params, r)
             except Exception:
                 pass
-            if r.ok and "json" in (r.headers.get("Content-Type","").lower()):
+            if r.ok and "json" in (r.headers.get("content-type","").lower()):
                 data = r.json()
                 if isinstance(data, list):
                     items = data
@@ -3334,21 +3327,19 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float 
         except Exception as e:
             return [], base + "?" + up.urlencode(params), f"DRF-EXC:{e}"
 
+    # 공공데이터포털 목록 검색
     def call_ods():
         if not key:
             return [], None, "ODS-KEY-미설정"
         base = "https://apis.data.go.kr/1170000/lawSearch"
-        params = {
-            "serviceKey": key,
-            "pageNo": 1,
-            "numOfRows": max(1, min(int(num_rows or 5), 10)),
-            "query": (query or "").strip(),
-            "type": "json",
-        }
+        params = {"serviceKey": key, "pageNo": 1,
+                  "numOfRows": max(1, min(int(num_rows or 5), 10)),
+                  "query": (query or "").strip(),
+                  "type": "json"}
         try:
             r = s.get(base, params=params, timeout=timeout)
             try:
-                _trace_api("list", r.url, params, r)
+                _trace_api("list", base, params, r)
             except Exception:
                 pass
             txt = (r.text or "")[:2000]
@@ -3362,11 +3353,9 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float 
                 if isinstance(data, list):
                     items = data
                 else:
-                    items = (
-                        data.get("law")
-                        or data.get("response", {}).get("body", {}).get("items", [])
-                        or data.get("items", [])
-                    )
+                    items = (data.get("law")
+                             or data.get("response", {}).get("body", {}).get("items", [])
+                             or data.get("items", []))
                 return (items or []), r.url, None
             return [], r.url, f"ODS-{r.status_code}"
         except Exception as e:
