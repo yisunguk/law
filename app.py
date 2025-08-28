@@ -154,6 +154,39 @@ def _init_engine_lazy():
     )
     return st.session_state.engine
 
+# app.py — 유틸 함수들 아래에 추가
+def render_api_diagnostics():
+    import urllib.parse as up, requests, streamlit as st
+    with st.sidebar.expander("🔧 API 연결 진단", expanded=True):
+        st.write("LAW_API_KEY:", "✅ 설정됨" if (globals().get("LAW_API_KEY")) else "❌ 없음")
+        st.write("LAW_API_OC:",   f"✅ '{globals().get('LAW_API_OC')}'" if (globals().get("LAW_API_OC")) else "❌ 없음")
+
+        # 1) 목록 API 테스트
+        try:
+            items, endpoint, err = _call_moleg_list("law", "민법", num_rows=1)
+            st.write("목록 API 엔드포인트:", endpoint or "-")
+            st.write("목록 API 결과:", f"{len(items)}건", ("OK" if not err else f"오류: {err}"))
+        except Exception as e:
+            st.error(f"목록 API 예외: {e}")
+            items = []
+
+        # 2) DRF(본문) JSON 테스트
+        try:
+            if items:
+                mst = (items[0].get("MST") or items[0].get("법령ID") or "").strip()
+                oc  = (globals().get("LAW_API_OC") or "").strip()
+                if mst and oc:
+                    params = {"OC": oc, "target": "law", "MST": mst, "type": "JSON"}
+                    url = "https://www.law.go.kr/DRF/lawService.do"
+                    r = requests.get(url, params=params, timeout=10)
+                    st.write("DRF 상태코드:", r.status_code)
+                    st.code(f"{url}?{up.urlencode(params, quote_via=up.quote)}", language="text")
+                    st.text(r.text[:800])
+                else:
+                    st.warning("MST 또는 OC가 없어 DRF 테스트 건너뜀.")
+        except Exception as e:
+            st.error(f"DRF 예외: {e}")
+
 
 # 기존 ask_llm_with_tools를 얇은 래퍼로 교체 (제너레이터)
 def ask_llm_with_tools(
@@ -2905,6 +2938,8 @@ if not chat_started:
       .center-hero { min-height: calc(100vh - 160px) !important; }
     </style>
     """, unsafe_allow_html=True)
+    
+render_api_diagnostics()   # ← 이 줄 추가
 
 # 3) 화면 분기
 if not chat_started:
