@@ -171,14 +171,21 @@ def render_api_diagnostics():
         st.write("LAW_API_OC:",   f"✅ '{globals().get('LAW_API_OC')}'" if (globals().get("LAW_API_OC")) else "❌ 없음")
         st.sidebar.write("primer src:", _summarize_laws_for_primer.__module__)
 
+        # --- replace inside render_api_diagnostics() ---
+
         # 1) 목록 API 테스트
-        try:
-            items, endpoint, err = _call_moleg_list("law", "민법", num_rows=1)
-            st.write("목록 API 엔드포인트:", endpoint or "-")
-            st.write("목록 API 결과:", f"{len(items)}건", ("OK" if not err else f"오류: {err}"))
-        except Exception as e:
-            st.error(f"목록 API 예외: {e}")
-            items = []
+    try:
+    # 마지막 사용자 질문에서 '...법' 토큰을 한 개 잡아봅니다.
+        last_q = (st.session_state.get('last_q') or '').strip()
+        m = re.search(r'([가-힣0-9·\s]+법)', _last_q)
+        _kw = (m.group(1).strip() if m else "민법")
+        items, endpoint, err = _call_moleg_list("law", _kw, num_rows=1)
+        st.write("목록 API 엔드포인트:", endpoint or "-")
+        st.write("목록 API 결과:", f"{len(items)}건", ("OK" if not err else f"오류: {err}"))
+    except Exception as e:
+        st.error(f"목록 API 예외: {e}")
+        items = []
+
 
         # 2) DRF 본문(JSON → XML → HTML) 테스트
         try:
@@ -207,17 +214,30 @@ def render_api_diagnostics():
 
 
 
-# 기존 ask_llm_with_tools를 얇은 래퍼로 교체 (제너레이터)
+from typing import Optional
+import re
+import inspect
+import streamlit as st
+# _NEED_TOOLS 전역이 없다면 자동 생성
+_NEED_TOOLS = globals().get("_NEED_TOOLS") or re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API|본문|원문|요약\s*하지\s*말)', re.I)
+
 def ask_llm_with_tools(
     user_q: str,
     brief: bool = False,
-    forced_mode: str | None = None,
+    forced_mode: Optional[str] = None,
     num_rows: int = 8,
     stream: bool = True,
 ):
+    """
+    LLM 호출 + 법령 도구 사용을 묶은 제너레이터 함수.
+    - 프롬프트 구성
+    - '본문/원문/요약하지 말'이면 DRF 조문을 사전 주입
+    - history 지원 여부를 동적으로 확인해 전달
+    - 결과는 `yield from`으로 스트리밍 전달
+    """
     engine = _init_engine_lazy()
     if engine is None:
-        return  # 초기화 전이면 종료
+        return
 
     # 1) 모드 결정
     det_intent, conf = classify_intent(user_q)
@@ -228,48 +248,74 @@ def ask_llm_with_tools(
         mode = pick_mode(det_intent, conf)
 
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
-
-    # 🔧 법/조문/DRF/API 키워드가 보이면 도구 강제 사용
     if not use_tools and _NEED_TOOLS.search(user_q or ""):
         use_tools = True
 
     # 2) 프롬프트/툴 사용 여부
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
-    # 사용자가 '본문/원문/전문'을 요구하면, 직접 인용을 허용하도록 지시
+    # 2.1) '요약 금지/원문 요청' 신호가 있으면 인용 지침 추가
     _WANTS_FULL = re.compile(r'(본문|원문|조문\s*(?:전문|전체)|요약\s*하지\s*말)', re.I)
-    if _WANTS_FULL.search(user_q or ''):
+    if _WANTS_FULL.search(user_q or ""):
         sys_prompt += (
-        "\n\n[조문 인용 지침]\n"
-        "- 사용자가 조문 원문을 원하면, DRF에서 가져온 본문 발췌를 **그대로 인용**한다.\n"
-        "- 임의 요약/의역 금지, 문장 순서 유지, 1~2천자 이내.\n"
-        "- 인용 아래에는 **법제처 공식 링크**(DRF 또는 법령 상세)를 함께 제공한다."
-    )
+            "\n\n[조문 인용 지침]\n"
+            "- 사용자가 조문 원문을 원하면, DRF/프라이머 본문을 그대로 인용한다.\n"
+            "- 임의 요약·의역 금지, 문장 순서 유지, 최대 1500~2000자.\n"
+            "- 인용 뒤에 법제처 공식 링크(DRF/상세)를 함께 제공한다."
+        )
 
-    # 2.5) 최근 N개 대화 히스토리 준비 (user/assistant만)
+    # 2.2) (선행 주입) '제n조'가 있고 원문 요청이면 DRF 조문을 system prompt에 포함
+    try:
+        wants_verbatim = _WANTS_FULL.search(user_q or "") is not None
+        art_m = re.search(r'제\d{1,4}조(?:의\d{1,3})?', user_q or "")
+        if wants_verbatim and art_m:
+            want_article = art_m.group(0)
+            # 후보 법령 조회
+            from modules.linking import find_all_law_data
+            law_items = find_all_law_data(user_q, num_rows=num_rows) or []
+            # 질문에 법령명이 직접 포함된 후보 우선
+            pick = next(
+                (it for it in law_items
+                 if (it.get("법령명") or it.get("법령명한글") or "").strip() in (user_q or "")),
+                (law_items[0] if law_items else None),
+            )
+            if pick:
+                mst = (pick.get("MST") or pick.get("법령ID") or pick.get("법령일련번호") or "").strip()
+                if mst:
+                    from modules.law_fetch import fetch_article_block_by_mst
+                    body, link = fetch_article_block_by_mst(mst, want_article, prefer="JSON")
+                    if body:
+                        sys_prompt += (
+                            "\n\n[참고 조문 원문]\n"
+                            f"(출처: 법제처 DRF{f', {link}' if link else ''})\n"
+                            f"```\n{body}\n```\n"
+                        )
+    except Exception as _e:
+        st.sidebar.warning(f"조문 원문 사전 주입 실패: {type(_e).__name__}")
+
+    # 2.5) 최근 N개 히스토리 준비(user/assistant만)
     try:
         msgs = st.session_state.get("messages", [])
         _hist = []
         for _m in msgs:
-            if not isinstance(_m, dict):
-                continue
-            _r = _m.get("role")
-            _c = (_m.get("content") or "").strip()
-            if _r in ("user", "assistant") and _c:
-                _hist.append({"role": _r, "content": _c})
+            if isinstance(_m, dict):
+                _r = _m.get("role")
+                _c = (_m.get("content") or "").strip()
+                if _r in ("user", "assistant") and _c:
+                    _hist.append({"role": _r, "content": _c})
         HISTORY_LIMIT = int(st.session_state.get("__history_limit__", 6))
         history = _hist[-HISTORY_LIMIT:]
     except Exception:
         history = []
 
-    # 3) 엔진 호출 (히스토리 전달 시도 + 안전한 폴백)
+    # 3) 엔진 호출 (history 전달 지원 여부 동적 확인 + 안전 폴백)
     try:
         sig = inspect.signature(engine.generate)
         params = set(sig.parameters.keys())
     except Exception:
         params = set()
 
-    called = False
+    passed = False
     for kw in ("history", "messages", "chat_history", "conversation"):
         if kw in params:
             # 히스토리를 지원하는 서명인 경우
@@ -282,16 +328,16 @@ def ask_llm_with_tools(
                 primer_enable=True,
                 **{kw: history},
             )
-            called = True
+            passed = True
             break
 
-    if not called:
-        # fallback: 히스토리를 system prompt 앞에 텍스트로 주입
+    if not passed:
+        # 폴백: 이전 대화를 user_q에 텍스트로 주입
         def _as_transcript(items):
             lines = []
             for it in items:
-                role = "사용자" if it.get("role") == "user" else "어시스턴트"
-                lines.append(f"{role}: {it.get('content','')}")
+                who = "사용자" if it.get("role") == "user" else "어시스턴트"
+                lines.append(f"{who}: {it.get('content','')}")
             return "\n".join(lines)
 
         hist_text = _as_transcript(history or [])
@@ -3175,13 +3221,37 @@ if re.search(r'(본문|원문|요약\s*하지\s*말)', user_q or '', re.I):
     m = re.search(r'제\d{1,4}조(의\d{1,3})?', user_q or '')
     if m and collected_laws:
         want_article = m.group(0)
-        # 질문에 법령명이 명시되어 있으면 그 법령 우선, 아니면 1순위
+
+        # 1) 후보 중 '법령명' 매칭 강화 (공백 제거·양방향 contains)
+        def _nm(it: dict) -> str:
+            return (it.get('법령명') or it.get('법령명한글') or '').replace(' ', '').strip()
+
+        uq = (user_q or '').replace(' ', '')
+        # 질문에서 '...법' 토큰 하나 추출해 힌트로 사용
+        m_name = re.search(r'([가-힣0-9·\s]+법)', user_q or '')
+        hint = (m_name.group(1).replace(' ', '') if m_name else '')
+
         law_pick = next(
             (it for it in collected_laws
-             if (it.get('법령명') or it.get('법령명한글') or '').strip() in (user_q or '')),
+             if (_nm(it) and ((hint and hint in _nm(it)) or (_nm(it) in uq) or (uq in _nm(it))))),
             collected_laws[0]
         )
-        mst = (law_pick.get('MST') or law_pick.get('법령ID') or law_pick.get('법령일련번호') or '').strip()
+
+        # 2) 법령명으로 DRF 링크 → MST 추출 (정확도 우선)
+        mst_from_name = ''
+        if hint:
+            try:
+                from modules.linking import fetch_drf_law_link_by_name
+                from urllib.parse import urlsplit, parse_qsl
+                drf_url = fetch_drf_law_link_by_name(hint)  # DRF 메인 링크 (쿼리에 MST 포함)
+                if drf_url:
+                    qs = dict(parse_qsl(urlsplit(drf_url).query))
+                    mst_from_name = (qs.get('MST') or qs.get('mst') or '').strip()
+            except Exception:
+                mst_from_name = ''
+
+        # 3) 우선 mst_from_name 사용, 없으면 law_pick에서 폴백
+        mst = mst_from_name or (law_pick.get('MST') or law_pick.get('법령ID') or law_pick.get('법령일련번호') or '').strip()
         if mst:
             body, link = fetch_article_block_by_mst(mst, want_article, prefer='JSON')
             if body:
