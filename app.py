@@ -7,10 +7,12 @@ import re
 # 모듈 전역에 미리 컴파일
 _NEED_TOOLS = re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API)', re.I)
 
+# --- imports (파일 상단에 한 번만) ---
+from modules.linking import find_all_law_data
+from modules.law_fetch import fetch_article_block_by_mst
+from modules.law_fetch import _summarize_laws_for_primer
 
-from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
-
-import streamlit as st
+import inspect
 
 # --- per-turn nonce ledger (prevents double appends)
 st.session_state.setdefault('_nonce_done', {})
@@ -110,12 +112,6 @@ if "_last_user_nonce" not in st.session_state:
 
 
 KEY_PREFIX = "main"
-
-# --- imports (파일 상단에 한 번만) ---
-from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
-import streamlit as st
-import inspect
-import re
 
 # 법/조문/DRF/API 키워드가 보이면 도구 강제 ON
 _NEED_TOOLS = re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API)', re.I)
