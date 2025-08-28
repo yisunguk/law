@@ -99,7 +99,7 @@ def _summarize_laws_for_primer(law_items: list[dict], max_items: int = 6) -> str
         if not law: law = (info.get("law_name") or mst)
         link = _build_drf_link(mst, typ="HTML", efYd=ef)
         snippet = (text or "").replace("\r","").strip()
-        if len(snippet) > 2000: snippet = snippet[:2000] + " …"
+        if len(snippet) > 3000: snippet = snippet[:3000] + " …"
         block = f"• 법령: {law}" + (f" (시행 {ef})" if ef else "")
         if link:   block += f"\n  - 본문 보기: {link}"
         if snippet: block += f"\n  - 발췌: {snippet}"
