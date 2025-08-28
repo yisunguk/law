@@ -1073,43 +1073,34 @@ def strip_links_in_core_judgment(md: str) -> str:
     # [텍스트](http...) 형태의 링크 제거
     block = _re_memo.sub(r'\[([^\]]+)\]\((?:https?:\/\/)[^)]+\)', r'\1', block)
     return md[:start] + block + md[end:]
-# === [END NEW] ===
-# === ⬇️ add: 조문 강제 인용 폴백 ===
-import re as _re_force
-from modules.law_fetch import fetch_article_block_by_mst  # 새로 추가한 함수
+# --- 조문 강제 인용(원문 요청 시) ---
+from modules.law_fetch import fetch_article_block_by_mst  # 지역 임포트로 안전
 
 want_article = None
-m = _re_force.search(r'제\d{1,4}조(의\d{1,3})?', user_q or '')
+m = re.search(r'제\d{1,4}조(의\d{1,3})?', user_q or '')
 if m:
     want_article = m.group(0)
 
-# "본문", "원문", "요약하지 말고", "조문" 같은 강한 신호가 있는지 확인
-strong_verbs = any(k in (user_q or '') for k in ["본문", "원문", "요약하지 말고", "그대로", "문자 그대로", "조문"])
+strong_verbs = any(s in (user_q or '') for s in ['본문','원문','요약하지 말고','그대로','문자 그대로','조문'])
 
 forced_block = ""
 forced_link  = ""
 
 if want_article and strong_verbs and collected_laws:
-    # 1) 후보 법령 중 사용자 질문에 이름이 직접 들어있는 법령 우선
-    law_pick = None
-    for it in collected_laws:
-        nm = (it.get("법령명") or it.get("법령명한글") or "").strip()
-        if nm and nm in (user_q or ""):
-            law_pick = it; break
-    # 없으면 1순위로
-    if not law_pick:
-        law_pick = collected_laws[0]
-
-    mst = (law_pick.get("MST") or law_pick.get("법령ID") or law_pick.get("법령일련번호") or "").strip()
+    # 질문에 법령명이 직접 들어있으면 그걸 우선, 아니면 1순위
+    law_pick = next(
+        (it for it in collected_laws
+         if (it.get('법령명') or it.get('법령명한글') or '').strip() in (user_q or '')),
+        collected_laws[0]
+    )
+    mst = (law_pick.get('MST') or law_pick.get('법령ID') or law_pick.get('법령일련번호') or '').strip()
     if mst:
-        forced_block, forced_link = fetch_article_block_by_mst(mst, want_article, prefer="JSON")
+        forced_block, forced_link = fetch_article_block_by_mst(mst, want_article, prefer='JSON')
 
-# 강제 인용이 성공하면, 답변 맨 위에 '요청하신 조문'을 그대로 붙인다.
 if forced_block:
     head = f"### 요청하신 {want_article}\n\n"
     if forced_link:
         head += f"[법제처 원문 보기]({forced_link})\n\n"
-    # LLM 결과(base_text) 앞에 '원문'을 삽입하여, 설령 모델이 요약하려고 해도 원문이 먼저 보이게 함
     base_text = head + "```\n" + forced_block + "\n```\n\n" + (base_text or "")
 
 
