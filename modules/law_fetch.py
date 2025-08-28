@@ -1,78 +1,170 @@
-# --- 1) DRF 상세 페이지에서 텍스트 추출 ---
-def _fetch_detail_text_from_item(it: dict, max_chars: int = 3000, timeout: float = 4.0) -> str:
-    """
-    목록 아이템(it)의 '법령상세링크/상세링크'를 요청해 본문을 평문으로 추출.
-    - type=XML이어도 괜찮지만 호환성을 위해 HTML로 강제 변환해 파싱.
-    - 너무 길면 max_chars로 컷.
-    """
-    import re, requests
-    from urllib.parse import urljoin
+# --- [PATCH] DRF 헤더 추가 + JSON/XML/HTML 폴백 + 프라이머 캡슐 ---
+
+from __future__ import annotations
+import os, re, json
+from typing import Any
+import requests
+from bs4 import BeautifulSoup
+from lxml import etree
+
+# DRF가 JSON 대신 뷰어 HTML을 주는 경우가 있어 헤더를 명시합니다.
+HEADERS_DRF = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Referer": "https://www.law.go.kr/DRF/index.do",
+    "X-Requested-With": "XMLHttpRequest",
+}
+
+def _get_oc() -> str:
+    """OC를 전역/환경변수에서 가져옵니다."""
+    return (globals().get("LAW_API_OC") or os.getenv("LAW_API_OC") or "").strip()
+
+def _drf_params(mst: str, typ: str, efYd: str | None = None) -> dict:
+    p = {"OC": _get_oc(), "target": "law", "MST": str(mst), "type": typ}
+    if efYd:
+        p["efYd"] = efYd.replace("-", "")
+    return p
+
+def drf_fetch(mst: str, typ: str = "JSON", timeout: float = 10.0) -> requests.Response:
+    """DRF 상세 호출 (헤더 포함)"""
+    url = "https://www.law.go.kr/DRF/lawService.do"
+    return requests.get(url, params=_drf_params(mst, typ), headers=HEADERS_DRF, timeout=timeout)
+
+def _extract_text_from_json(text: str) -> tuple[str, dict]:
+    """DRF JSON에서 조문/본문 텍스트를 최대한 수집"""
     try:
-        link = (
-            it.get("법령상세링크") or it.get("상세링크") or
-            it.get("url") or it.get("link") or it.get("detail_url") or ""
-        ).strip()
-        if not link:
-            # MST만 있을 때는 DRF 상세 URL을 구성
-            mst = (it.get("MST") or it.get("mst") or it.get("LawMST") or "").strip()
-            if not mst:
-                return ""
-            eff = (it.get("시행일자") or "").replace("-", "")
-            link = f"/DRF/lawService.do?OC={LAW_API_OC}&target=law&MST={mst}&type=HTML" + (f"&efYd={eff}" if eff else "")
+        data = json.loads(text)
+    except Exception:
+        return "", {}
 
-        # 절대 URL로 정규화
-        url = normalize_law_link(link) if 'normalize_law_link' in globals() else urljoin("https://www.law.go.kr", link)
-        url = re.sub(r"type=XML", "type=HTML", url)
+    # 트리 순회 유틸
+    def walk(v):
+        if isinstance(v, dict):
+            for k, x in v.items():
+                yield k, x
+                yield from walk(x)
+        elif isinstance(v, list):
+            for x in v:
+                yield from walk(x)
 
-        r = requests.get(url, timeout=timeout)
-        if r.status_code != 200:
-            return ""
-        # HTML → 텍스트
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(r.text, "html.parser")
-        for bad in soup(["script", "style", "noscript"]):
-            bad.extract()
-        text = soup.get_text("\n", strip=True)
-        # 노이즈 줄이기: 연속 공백 정리
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        return text[:max_chars]
+    # 법령명 후보
+    law_name = ""
+    for k, v in walk(data):
+        if k in ("법령명한글", "법령명", "lawName", "법령명_한글") and isinstance(v, str) and v.strip():
+            law_name = v.strip()
+            break
+
+    # 조문/본문 텍스트 후보
+    texts: list[str] = []
+    want_keys = {"조문내용", "조문", "내용", "text", "조문본문"}
+    for k, v in walk(data):
+        if k in want_keys and isinstance(v, str):
+            s = v.strip()
+            if len(s) >= 30:
+                texts.append(s)
+                if len(texts) >= 3:
+                    break
+
+    # 여전히 없으면 문자열 덩어리 아무거나
+    if not texts:
+        for k, v in walk(data):
+            if isinstance(v, str):
+                s = v.strip()
+                if 100 <= len(s) <= 4000:
+                    texts.append(s)
+                    if len(texts) >= 3:
+                        break
+
+    snippet = "\n".join(texts[:3])
+    return snippet, {"law_name": law_name}
+
+def _extract_text_from_xml(text: str) -> str:
+    try:
+        root = etree.fromstring(text.encode("utf-8"))
     except Exception:
         return ""
+    parts = []
+    for t in root.itertext():
+        t = (t or "").strip()
+        if t:
+            parts.append(t)
+    return "\n".join(parts)[:3000]
 
-# --- 2) 기존 프라이머를 확장: 상위 n개 법령의 '조문 발췌 캡슐'을 함께 주입 ---
-def _summarize_laws_for_primer(law_items: list[dict], max_items: int = 5, with_articles: bool = True) -> str:
+def _extract_text_from_html(text: str) -> str:
+    soup = BeautifulSoup(text, "lxml")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    main = soup.select_one("#conScroll, .conScroll, .lawView, #content, body")
+    s = main.get_text("\n", strip=True) if main else soup.get_text("\n", strip=True)
+    return s[:3000]
+
+def fetch_law_detail_text(mst: str, prefer: str = "JSON") -> tuple[str, str, dict]:
     """
-    (기존) 법령 후보 요약 + (옵션) 각 후보의 DRF 상세에서 발췌한 본문 캡슐을 프롬프트에 포함.
+    DRF에서 본문을 받아 텍스트로 반환
+    returns: (텍스트, 사용한타입(JSON/XML/HTML), 부가정보)
+    """
+    order = ["JSON", "XML", "HTML"] if prefer.upper() == "JSON" else ["XML", "JSON", "HTML"]
+    for typ in order:
+        r = drf_fetch(mst, typ=typ)
+        ctype = (r.headers.get("content-type") or "").lower()
+        text = r.text or ""
+
+        if "json" in ctype or (typ == "JSON" and text.strip().startswith("{")):
+            s, info = _extract_text_from_json(text)
+            if s:
+                return s, "JSON", info
+        elif "xml" in ctype or (typ == "XML" and text.strip().startswith("<")):
+            s = _extract_text_from_xml(text)
+            if s:
+                return s, "XML", {}
+        else:
+            s = _extract_text_from_html(text)
+            if s:
+                return s, "HTML", {}
+
+    return "", "", {}
+
+def _build_drf_link(mst: str, typ: str = "HTML", efYd: str | None = None) -> str:
+    from urllib.parse import urlencode, quote
+    oc = _get_oc()
+    if not oc:
+        return ""
+    return "https://www.law.go.kr/DRF/lawService.do?" + urlencode(_drf_params(mst, typ, efYd), quote_via=quote)
+
+def _summarize_laws_for_primer(law_items: list[dict], max_items: int = 6) -> str:
+    """
+    통합검색 결과(law_items)를 받아 각 항목별 '법령 본문 캡슐'을 만들어 반환.
+    - DRF JSON 우선 → XML → HTML 순으로 본문을 확보
+    - OC가 없거나 본문이 비어도 링크는 제공
     """
     if not law_items:
         return ""
-    rows = []
-    picks = law_items[:max_items]
-    for i, d in enumerate(picks, 1):
-        nm   = (d.get("법령명") or d.get("법령명한글") or d.get("행정규칙명") or d.get("자치법규명") or "").strip()
-        kind = (d.get("법령구분") or d.get("법령구분명") or d.get("자치법규종류") or d.get("행정규칙종류") or "").strip()
-        dept = (d.get("소관부처명") or d.get("지자체기관명") or "").strip()
-        eff  = (d.get("시행일자") or "").strip()
-        pub  = (d.get("공포일자") or "").strip()
-        rows.append(f"{i}) {nm} ({kind}; {dept}; 시행 {eff}, 공포 {pub})")
 
-    header = (
-        "아래는 사용자 사건과 관련도가 높은 법령 후보 목록이다. "
-        "답변을 작성할 때 적용 범위·책임주체·구성요건·의무·제재를 교차 검토하라.\n"
-        + "\n".join(rows) +
-        "\n가능하면 각 법령을 분리 소제목으로 정리하고, 핵심 조문(1~2개)만 간단 인용하라."
-    )
+    blocks: list[str] = []
+    for it in law_items[:max_items]:
+        mst = str(it.get("MST") or it.get("mst") or it.get("법령ID") or "").strip()
+        if not mst:
+            continue
+        ef = (it.get("시행일자") or it.get("efYd") or "").strip()
+        law_name = (it.get("법령명한글") or it.get("법령명") or "").strip()
 
-    if not with_articles:
-        return header
+        text, used_type, info = fetch_law_detail_text(mst, prefer="JSON")
+        if not law_name:
+            law_name = (info.get("law_name") or mst)
 
-    capsules = []
-    # 후보당 1500자씩만 가져와 토큰 폭주 방지
-    per_item = 1500
-    for d in picks:
-        nm = (d.get("법령명") or d.get("법령명한글") or d.get("행정규칙명") or d.get("자치법규명") or "").strip() or "관련 법령"
-        body = _fetch_detail_text_from_item(d, max_chars=per_item)
-        if body:
-            capsules.append(f"〈{nm} 조문(발췌)〉\n{body}")
+        link = _build_drf_link(mst, typ="HTML", efYd=ef)
+        snippet = (text or "").replace("\r", "").strip()
+        if len(snippet) > 800:
+            snippet = snippet[:800] + " …"
 
-    return header + ("\n\n" + "\n\n".join(capsules) if capsules else "")
+        title = f"• 법령: {law_name}"
+        if ef:
+            title += f" (시행 {ef})"
+        if link:
+            title += f"\n  - 본문 보기: {link}"
+        if snippet:
+            title += f"\n  - 발췌: {snippet}"
+
+        blocks.append(title)
+
+    return "【법령 본문 캡슐】\n" + "\n\n".join(blocks) if blocks else ""
