@@ -105,3 +105,76 @@ def _summarize_laws_for_primer(law_items: list[dict], max_items: int = 6) -> str
         if snippet: block += f"\n  - 발췌: {snippet}"
         blocks.append(block)
     return "【법령 본문 캡슐】\n" + "\n\n".join(blocks) if blocks else ""
+# --- ⬇️ add: 조문 블록 추출 & DRF 한 번에 ---
+import re as _re
+
+_ART_HDR = _re.compile(r'^\s*제\d{1,4}조(의\d{1,3})?\s*', _re.M)
+
+def extract_article_block(full_text: str, art_label: str, max_chars: int = 4000) -> str:
+    """
+    DRF에서 받은 전체 텍스트에서 '제83조(…)' 같은 조문 블록만 잘라 반환.
+    다음 조문 헤더(제n조) 직전까지를 포함.
+    """
+    if not full_text or not art_label:
+        return ""
+    m = _re.search(rf'^\s*{_re.escape(art_label)}[^\n]*$', full_text, _re.M)
+    if not m:
+        # 괄호 제목 없이 '제83조'만 있는 경우까지 커버
+        m = _re.search(rf'^\s*{_re.escape(art_label)}\s*', full_text, _re.M)
+    if not m:
+        return ""
+    start = m.start()
+    n = _ART_HDR.search(full_text, m.end())
+    end = n.start() if n else len(full_text)
+    block = full_text[start:end].strip()
+    return block[:max_chars]
+
+def fetch_article_block_by_mst(mst: str, art_label: str, prefer: str = "JSON") -> tuple[str, str]:
+    """
+    MST로 DRF를 치고 해당 조문만 잘라 반환.
+    return: (조문텍스트, HTML보기링크)
+    """
+    txt, used, _ = fetch_law_detail_text(mst, prefer=prefer)
+    if not txt:
+        return "", ""
+    art = extract_article_block(txt, art_label)
+    link = _build_drf_link(mst, typ="HTML")
+    return art, link
+# --- add: 조문 블록 추출 + 단건 조회 helper (modules/law_fetch.py 맨 아래에 붙이기) ---
+import re as _re
+
+_ART_HDR = _re.compile(r'^\s*제\d{1,4}조(의\d{1,3})?\s*', _re.M)
+
+def extract_article_block(full_text: str, art_label: str, max_chars: int = 4000) -> str:
+    """
+    DRF에서 받은 전체 텍스트에서 '제83조(…)' 같은 조문 블록만 잘라 반환.
+    다음 조문 헤더(제n조) 직전까지 포함.
+    """
+    if not full_text or not art_label:
+        return ""
+    # ① 완전 라벨 (예: "제83조(벌점제도)") 우선
+    m = _re.search(rf'^\s*{_re.escape(art_label)}[^\n]*$', full_text, _re.M)
+    if not m:
+        # ② 괄호 제목 없이 "제83조"만 있는 경우도 허용
+        m = _re.search(rf'^\s*{_re.escape(art_label)}\s*', full_text, _re.M)
+    if not m:
+        return ""
+    start = m.start()
+    # 다음 조문 헤더가 나오기 전까지 자르기
+    n = _ART_HDR.search(full_text, m.end())
+    end = n.start() if n else len(full_text)
+    block = full_text[start:end].strip()
+    return block[:max_chars]
+
+def fetch_article_block_by_mst(mst: str, art_label: str, prefer: str = "JSON", timeout: float = 8.0) -> tuple[str, str]:
+    """
+    MST를 DRF로 조회해 해당 '제n조' 조문만 잘라 반환.
+    return: (조문텍스트, HTML원문링크)
+    """
+    # 이 파일에 이미 있는 함수들을 재사용합니다.
+    txt, used, _ = fetch_law_detail_text(mst, prefer=prefer)
+    if not txt:
+        return "", ""
+    block = extract_article_block(txt, art_label)
+    link = _build_drf_link(mst, typ="HTML")
+    return (block or "").strip(), link
