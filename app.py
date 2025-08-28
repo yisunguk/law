@@ -120,6 +120,8 @@ import re
 # 법/조문/DRF/API 키워드가 보이면 도구 강제 ON
 _NEED_TOOLS = re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API)', re.I)
 
+# 본문 발췌 포함 프라이머로 덮어쓰기
+from law_fetch import _summarize_laws_for_primer as _summarize_laws_for_primer
 
 # 지연 초기화: 필요한 전역들이 준비된 뒤에 한 번만 엔진 생성
 def _init_engine_lazy():
@@ -154,9 +156,16 @@ def _init_engine_lazy():
     )
     return st.session_state.engine
 
-# app.py — 유틸 함수들 아래에 추가
 def render_api_diagnostics():
     import urllib.parse as up, requests, streamlit as st
+
+    HEADERS_DRF = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Referer": "https://www.law.go.kr/DRF/index.do",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+
     with st.sidebar.expander("🔧 API 연결 진단", expanded=True):
         st.write("LAW_API_KEY:", "✅ 설정됨" if (globals().get("LAW_API_KEY")) else "❌ 없음")
         st.write("LAW_API_OC:",   f"✅ '{globals().get('LAW_API_OC')}'" if (globals().get("LAW_API_OC")) else "❌ 없음")
@@ -170,22 +179,31 @@ def render_api_diagnostics():
             st.error(f"목록 API 예외: {e}")
             items = []
 
-        # 2) DRF(본문) JSON 테스트
+        # 2) DRF 본문(JSON → XML → HTML) 테스트
         try:
             if items:
                 mst = (items[0].get("MST") or items[0].get("법령ID") or "").strip()
                 oc  = (globals().get("LAW_API_OC") or "").strip()
                 if mst and oc:
-                    params = {"OC": oc, "target": "law", "MST": mst, "type": "JSON"}
-                    url = "https://www.law.go.kr/DRF/lawService.do"
-                    r = requests.get(url, params=params, timeout=10)
-                    st.write("DRF 상태코드:", r.status_code)
-                    st.code(f"{url}?{up.urlencode(params, quote_via=up.quote)}", language="text")
-                    st.text(r.text[:800])
+                    def try_fetch(typ):
+                        url = "https://www.law.go.kr/DRF/lawService.do"
+                        params = {"OC": oc, "target": "law", "MST": mst, "type": typ}
+                        r = requests.get(url, params=params, headers=HEADERS_DRF, timeout=10)
+                        return url, params, r
+
+                    for typ in ("JSON", "XML", "HTML"):
+                        url, params, r = try_fetch(typ)
+                        ctype = (r.headers.get("content-type") or "").lower()
+                        st.write(f"DRF({typ}) 상태코드:", r.status_code, "| Content-Type:", ctype)
+                        st.code(f"{url}?{up.urlencode(params, quote_via=up.quote)}", language="text")
+                        st.text((r.text or "")[:500])
+                        if ("json" in ctype) or ("xml" in ctype):
+                            break
                 else:
                     st.warning("MST 또는 OC가 없어 DRF 테스트 건너뜀.")
         except Exception as e:
             st.error(f"DRF 예외: {e}")
+
 
 
 # 기존 ask_llm_with_tools를 얇은 래퍼로 교체 (제너레이터)
@@ -1448,7 +1466,7 @@ def _dedupe_blocks(text: str) -> str:
     return s
 
 # === add: 여러 법령 결과를 한 번에 요약해서 LLM에 먹일 프라이머 ===
-def _summarize_laws_for_primer(law_items: list[dict], max_items: int = 6) -> str:
+def _summarize_laws_for_basic(law_items: list[dict], max_items: int = 6) -> str:
     """
     여러 법령 검색 결과를 짧게 요약해 시스템 프롬프트로 주입.
     - 너무 많으면 상위 일부만 (max_items)
