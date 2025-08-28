@@ -236,6 +236,16 @@ def ask_llm_with_tools(
     # 2) 프롬프트/툴 사용 여부
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
+    # 사용자가 '본문/원문/전문'을 요구하면, 직접 인용을 허용하도록 지시
+    _WANTS_FULL = re.compile(r'(본문|원문|조문\s*(?:전문|전체)|요약\s*하지\s*말)', re.I)
+    if _WANTS_FULL.search(user_q or ''):
+        sys_prompt += (
+        "\n\n[조문 인용 지침]\n"
+        "- 사용자가 조문 원문을 원하면, DRF에서 가져온 본문 발췌를 **그대로 인용**한다.\n"
+        "- 임의 요약/의역 금지, 문장 순서 유지, 1~2천자 이내.\n"
+        "- 인용 아래에는 **법제처 공식 링크**(DRF 또는 법령 상세)를 함께 제공한다."
+    )
+
     # 2.5) 최근 N개 대화 히스토리 준비 (user/assistant만)
     try:
         msgs = st.session_state.get("messages", [])
@@ -1064,6 +1074,43 @@ def strip_links_in_core_judgment(md: str) -> str:
     block = _re_memo.sub(r'\[([^\]]+)\]\((?:https?:\/\/)[^)]+\)', r'\1', block)
     return md[:start] + block + md[end:]
 # === [END NEW] ===
+# === ⬇️ add: 조문 강제 인용 폴백 ===
+import re as _re_force
+from modules.law_fetch import fetch_article_block_by_mst  # 새로 추가한 함수
+
+want_article = None
+m = _re_force.search(r'제\d{1,4}조(의\d{1,3})?', user_q or '')
+if m:
+    want_article = m.group(0)
+
+# "본문", "원문", "요약하지 말고", "조문" 같은 강한 신호가 있는지 확인
+strong_verbs = any(k in (user_q or '') for k in ["본문", "원문", "요약하지 말고", "그대로", "문자 그대로", "조문"])
+
+forced_block = ""
+forced_link  = ""
+
+if want_article and strong_verbs and collected_laws:
+    # 1) 후보 법령 중 사용자 질문에 이름이 직접 들어있는 법령 우선
+    law_pick = None
+    for it in collected_laws:
+        nm = (it.get("법령명") or it.get("법령명한글") or "").strip()
+        if nm and nm in (user_q or ""):
+            law_pick = it; break
+    # 없으면 1순위로
+    if not law_pick:
+        law_pick = collected_laws[0]
+
+    mst = (law_pick.get("MST") or law_pick.get("법령ID") or law_pick.get("법령일련번호") or "").strip()
+    if mst:
+        forced_block, forced_link = fetch_article_block_by_mst(mst, want_article, prefer="JSON")
+
+# 강제 인용이 성공하면, 답변 맨 위에 '요청하신 조문'을 그대로 붙인다.
+if forced_block:
+    head = f"### 요청하신 {want_article}\n\n"
+    if forced_link:
+        head += f"[법제처 원문 보기]({forced_link})\n\n"
+    # LLM 결과(base_text) 앞에 '원문'을 삽입하여, 설령 모델이 요약하려고 해도 원문이 먼저 보이게 함
+    base_text = head + "```\n" + forced_block + "\n```\n\n" + (base_text or "")
 
 
 def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
