@@ -1074,10 +1074,6 @@ def strip_links_in_core_judgment(md: str) -> str:
     block = _re_memo.sub(r'\[([^\]]+)\]\((?:https?:\/\/)[^)]+\)', r'\1', block)
     return md[:start] + block + md[end:]
 # --- 조문 강제 인용(원문 요청 시) ---
-from modules.law_fetch import fetch_article_block_by_mst  # 지역 임포트로 안전
-
-want_article = None
-m = re.search(r'제\d{1,4}조(의\d{1,3})?', user_q or '')
 if m:
     want_article = m.group(0)
 
@@ -3197,6 +3193,30 @@ if user_q:
     else:
         # 정상 경로: final이 있으면 final, 없으면 delta 누적 사용
         base_text = (final_payload.strip() or deltas_only)
+        # (추가) 사용자가 '본문/원문/요약하지 말' 요청 + '제n조'가 있으면 DRF 본문을 강제 인용
+from modules.law_fetch import fetch_article_block_by_mst  # 안전하게 여기서 임포트해도 OK
+import re
+
+if re.search(r'(본문|원문|요약\s*하지\s*말)', user_q or '', re.I):
+    m = re.search(r'제\d{1,4}조(의\d{1,3})?', user_q or '')
+    if m and collected_laws:
+        want_article = m.group(0)
+        # 질문에 법령명이 명시되어 있으면 그 법령 우선, 아니면 1순위
+        law_pick = next(
+            (it for it in collected_laws
+             if (it.get('법령명') or it.get('법령명한글') or '').strip() in (user_q or '')),
+            collected_laws[0]
+        )
+        mst = (law_pick.get('MST') or law_pick.get('법령ID') or law_pick.get('법령일련번호') or '').strip()
+        if mst:
+            body, link = fetch_article_block_by_mst(mst, want_article, prefer='JSON')
+            if body:
+                head = f"### 요청하신 {want_article}\n\n"
+                if link:
+                    head += f"[법제처 원문 보기]({link})\n\n"
+                # DRF에서 가져온 원문을 답변 맨 위에 그대로 인용
+                base_text = head + "```\n" + body + "\n```\n\n" + (base_text or "")
+
 
     # --- Postprocess & de-dup ---
     final_text = apply_final_postprocess(base_text, collected_laws)
