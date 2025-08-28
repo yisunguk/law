@@ -120,11 +120,10 @@ import re
 # 법/조문/DRF/API 키워드가 보이면 도구 강제 ON
 _NEED_TOOLS = re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API)', re.I)
 
-# 본문 발췌 포함 프라이머로 덮어쓰기
-from modules.law_fetch import _summarize_laws_for_primer as _summarize_laws_for_primer
-
 # 지연 초기화: 필요한 전역들이 준비된 뒤에 한 번만 엔진 생성
 def _init_engine_lazy():
+    assert summar is not None, "법령 프라이머 함수가 None입니다. import 경로를 확인하세요."
+
     if "engine" in st.session_state and st.session_state.engine is not None:
         return st.session_state.engine
 
@@ -1490,10 +1489,8 @@ def _summarize_laws_for_basic(law_items: list[dict], max_items: int = 6) -> str:
         "가능하면 각 법령을 분리된 소제목으로 정리하고, 핵심 조문(1~2개)만 간단 인용하라."
     )
 # --- 조문 본문 캡슐 버전으로 덮어쓰기 ---
-try:
-    from modules.law_fetch import _summarize_laws_for_primer as _summarize_laws_for_primer
-except Exception:
-    pass  # law_fetch가 없으면 기본 요약 버전 그대로 사용
+
+from modules.law_fetch import _summarize_laws_for_primer
 
 # === add: LLM-우선 후보 → 각 후보로 MOLEG API 다건 조회/누적 ===
 def prefetch_law_context(user_q: str, num_rows_per_law: int = 3) -> list[dict]:
