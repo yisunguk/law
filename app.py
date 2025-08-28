@@ -156,6 +156,28 @@ def _init_engine_lazy():
     )
     return st.session_state.engine
 
+# (위치 권장) render_prompt_inspector() 정의 인근 — 한 번만 정의
+import time, urllib.parse as up
+
+def _trace_api(kind: str, url: str, params: dict | None = None, resp=None, sample_len: int = 500):
+    """사이드바 'API Trace'에 최근 호출을 누적 기록"""
+    try:
+        import streamlit as st
+        rows = st.session_state.setdefault("_api_trace", [])
+        full_url = url if not params else f"{url}?{up.urlencode(params, quote_via=up.quote)}"
+        rows.append({
+            "t": time.strftime("%H:%M:%S"),
+            "kind": kind,                     # e.g. "list" or "drf"
+            "url": full_url,
+            "params": params or {},
+            "status": getattr(resp, "status_code", None),
+            "ctype": (getattr(resp, "headers", {}) or {}).get("content-type", ""),
+            "sample": (getattr(resp, "text", "") or "")[:sample_len],
+        })
+        st.session_state["_api_trace"] = rows[-12:]  # 최근 12개만 유지
+    except Exception:
+        pass
+
 def render_prompt_inspector():
     import streamlit as st, json
     with st.sidebar.expander("🧪 Prompt Inspector (LLM 전달 내용)", expanded=True):
@@ -1918,93 +1940,27 @@ class TLS12HttpAdapter2(HTTPAdapter):
         ctx.maximum_version = ssl.TLSVersion.TLSv1_2
         self.poolmanager = PoolManager(*args, ssl_context=ctx, **kwargs)
 
-def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int = 1):
-    """
-    target: law | admrul | ordin | trty | expc | detc | licbyl | lstrm
-    """
-    if not LAW_API_KEY:
-        return [], None, "LAW_API_KEY 미설정"
-
-    api_key = (LAW_API_KEY or "").strip().strip("'").strip('"')
-    if "%" in api_key and any(t in api_key.upper() for t in ("%2B", "%2F", "%3D")):
-        try:
-            api_key = up.unquote(api_key)
-        except Exception:
-            pass
-
-    # === 추가: 빈 질의어(와일드카드) 호출 차단 ===
-    q = (query or "").strip()
-    if not q:
-        return [], None, "빈 질의어로 호출되어 무시함"
-
-    params = {
-        "serviceKey": api_key,
-        "target": target,
-        "query": q,  # <-- 기존의 (query or "*") 를 q 로 교체
-        "numOfRows": max(1, min(10, int(num_rows))),
-        "pageNo": max(1, int(page_no)),
-    }
-    # ... 이하 기존 로직 그대로 ...
-
-    last_err = None
-    resp = None
-    last_endpoint = None
-
-    for base in MOLEG_BASES:
-        endpoint = f"{base}/{target}/{target}SearchList.do"
-        last_endpoint = endpoint
-        try:
-            sess = requests.Session()
-            if base.startswith("https://"):
-                sess.mount("https://", TLS12HttpAdapter2())
-            resp = sess.get(
-                endpoint, params=params, timeout=15,
-                headers={"User-Agent":"Mozilla/5.0"}, allow_redirects=True
-            )
-            resp.raise_for_status()
-            break
-        except requests.exceptions.SSLError as e:
-            last_err = e; continue
-        except Exception as e:
-            last_err = e; continue
-
-    if resp is None:
-        return [], last_endpoint, f"법제처 API 연결 실패: {last_err}"
-
+# 파일 어딘가(사이드바 렌더 근처)에 1번만 선언
+import time, urllib.parse as up
+def _trace_api(kind: str, url: str, params: dict | None = None, resp=None, sample_len: int = 500):
+    """사이드바에서 볼 수 있게 최근 API 호출을 누적 기록"""
     try:
-        root = ET.fromstring(resp.text)
-        result_code = (root.findtext(".//resultCode") or "").strip()
-        result_msg  = (root.findtext(".//resultMsg")  or "").strip()
-        if result_code and result_code != "00":
-            return [], last_endpoint, f"법제처 API 오류 [{result_code}]: {result_msg or 'fail'}"
+        import streamlit as st
+        rows = st.session_state.setdefault("_api_trace", [])
+        full_url = url if not params else f"{url}?{up.urlencode(params, quote_via=up.quote)}"
+        rows.append({
+            "t": time.strftime("%H:%M:%S"),
+            "kind": kind,                      # "list" / "drf" 등
+            "url": full_url,
+            "params": params or {},
+            "status": getattr(resp, "status_code", None),
+            "ctype": (getattr(resp, "headers", {}) or {}).get("content-type", ""),
+            "sample": (getattr(resp, "text", "") or "")[:sample_len],
+        })
+        st.session_state["_api_trace"] = rows[-12:]  # 최근 12개만 유지
+    except Exception:
+        pass
 
-        item_tags = {
-            "law": ["law"], "admrul": ["admrul"], "ordin": ["ordin"],
-            "trty": ["Trty","trty"], "expc":["expc"], "detc":["Detc","detc"],
-            "licbyl":["licbyl"], "lstrm":["lstrm"],
-        }.get(target, ["law"])
-
-        items = []
-        for tag in item_tags: items.extend(root.findall(f".//{tag}"))
-
-        normalized = []
-        for el in items:
-            normalized.append({
-                "법령명": (el.findtext("법령명한글") or el.findtext("자치법규명") or el.findtext("조약명") or "").strip(),
-                "법령명칭ID": (el.findtext("법령명칭ID") or "").strip(),
-                "소관부처명": (el.findtext("소관부처명") or "").strip(),
-                "법령구분": (el.findtext("법령구분") or el.findtext("자치법규종류") or el.findtext("조약구분명") or "").strip(),
-                "시행일자": (el.findtext("시행일자") or "").strip(),
-                "공포일자": (el.findtext("공포일자") or "").strip(),
-                "MST": (el.findtext("MST") or el.findtext("법령ID") or el.findtext("법령일련번호") or "").strip(),
-                "법령상세링크": normalize_law_link(
-                    (el.findtext("법령상세링크") or el.findtext("자치법규상세링크") or el.findtext("조약상세링크") or "").strip()
-                ),
-            })
-
-        return normalized, last_endpoint, None
-    except Exception as e:
-        return [], last_endpoint, f"응답 파싱 실패: {e}"
 
 # 통합 미리보기 전용: 과한 문장부호/따옴표 제거 + '법령명 (제n조)'만 추출
 def _clean_query_for_api(q: str) -> str:
