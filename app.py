@@ -96,7 +96,8 @@ def build_article_capsule(user_q: str, num_rows: int = 5) -> dict | None:
         return None
 
     # 후보 수집
-    law_items = find_all_law_data(user_q, num_rows=num_rows) or []
+    _pack = find_all_law_data(user_q, num_rows=num_rows) or {}
+    law_items = ((_pack.get("법령") or {}).get("items") or [])
     best = _pick_best_law(law_items, want_law)
     if not best: 
         return None
@@ -543,7 +544,8 @@ def ask_llm_with_tools(
             want_article = art_m.group(0)
             # 후보 법령 조회
             
-            law_items = find_all_law_data(user_q, num_rows=num_rows) or []
+            _pack = find_all_law_data(user_q, num_rows=num_rows) or {}
+            law_items = ((_pack.get("법령") or {}).get("items") or [])
             # 질문에 법령명이 직접 포함된 후보 우선
             pick = next(
                 (it for it in law_items
