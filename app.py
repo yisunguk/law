@@ -218,7 +218,7 @@ def render_api_diagnostics():
     try:
     # 마지막 사용자 질문에서 '...법' 토큰을 한 개 잡아봅니다.
         last_q = (st.session_state.get('last_q') or '').strip()
-        m = re.search(r'([가-힣0-9·\s]+법)', last_q)
+        m = re.search(r'([가-힣0-9·\s]+법)', _last_q)
         _kw = (m.group(1).strip() if m else "민법")
         items, endpoint, err = _call_moleg_list("law", _kw, num_rows=1)
         st.write("목록 API 엔드포인트:", endpoint or "-")
@@ -1940,97 +1940,6 @@ class TLS12HttpAdapter2(HTTPAdapter):
         ctx.maximum_version = ssl.TLSVersion.TLSv1_2
         self.poolmanager = PoolManager(*args, ssl_context=ctx, **kwargs)
 
-# --- 목록 API 통합 호출 함수 ---
-def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float = 8.0):
-    """
-    MOLEG(법제처) 목록/검색 API 호출
-    return: (items:list[dict], endpoint:str|None, err:str|None)
-    """
-    import requests, xml.etree.ElementTree as ET, re
-
-    target = (target or "law").strip().lower()
-    assert target in ("law", "admrul", "ordin", "trty")
-
-    # 엔드포인트 후보 (서비스 마다 path 명이 달라질 수 있어 다중 시도)
-    PATHS = {
-        "law":   ["lawSearch.do", "LawSearch.do", "lawSearch"],
-        "admrul":["admrulSearch.do", "AdmrulSearch.do", "admrulSearch"],
-        "ordin": ["ordinSearch.do", "OrdinSearch.do", "ordinSearch"],
-        "trty":  ["trtySearch.do", "TreatySearch.do", "treatySearch", "TrtySearch.do"],
-    }
-
-    # 공통 파라미터 (type=xml 고정)
-    params = {
-        "serviceKey": globals().get("LAW_API_KEY") or "",
-        "pageNo": 1,
-        "numOfRows": max(1, min(int(num_rows or 5), 10)),
-        "query": (query or "").strip(),
-        "type": "xml",
-    }
-
-    # 세션(TLS1.2 강제) 준비
-    sess = requests.Session()
-    try:
-        sess.mount("https://", TLS12HttpAdapter2())
-        sess.mount("http://",  TLS12HttpAdapter2())
-    except Exception:
-        pass
-
-    last_err = None
-    endpoint  = None
-
-    for base in MOLEG_BASES:
-        for path in PATHS[target]:
-            url = f"{base.rstrip('/')}/{path}"
-            try:
-                r = sess.get(url, params=params, timeout=timeout)
-                _trace_api("list", url, params, r)
-                if r.status_code != 200:
-                    last_err = f"HTTP {r.status_code}"
-                    continue
-
-                txt = (r.text or "").strip()
-                if not txt:
-                    last_err = "empty response"
-                    continue
-
-                # XML 파싱
-                try:
-                    root = ET.fromstring(txt)
-                except Exception as e:
-                    last_err = f"xml parse error: {e}"
-                    continue
-
-                items = []
-                # 보편적으로 <items><item>...</item></items> 구조
-                for it in root.findall(".//item"):
-                    row = {child.tag: (child.text or "") for child in list(it)}
-                    # 이름 필드 통일
-                    name = (
-                        row.get("법령명한글")
-                        or row.get("법령명")
-                        or row.get("ordinNm")
-                        or row.get("admrulNm")
-                        or row.get("조약명")
-                        or row.get("lawName")
-                        or row.get("title")
-                        or ""
-                    )
-                    if name:
-                        row["name"] = name
-                    items.append(row)
-
-                endpoint = url
-                return items, endpoint, None
-
-            except Exception as e:
-                last_err = str(e)
-                # 다음 후보 계속 시도
-                continue
-
-    return [], endpoint, (last_err or "no working endpoint")
-
-
 # 파일 어딘가(사이드바 렌더 근처)에 1번만 선언
 import time, urllib.parse as up
 def _trace_api(kind: str, url: str, params: dict | None = None, resp=None, sample_len: int = 500):
@@ -3366,3 +3275,106 @@ if re.search(r'(본문|원문|요약\s*하지\s*말)', user_q or '', re.I):
             pass
 
 # (moved) post-chat UI is now rendered inline under the last assistant message.
+
+# ============================================================================
+# 추가: 목록 API 통합 호출 함수 (DRF 우선, ODS 폴백)
+# ============================================================================
+def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float = 8.0):
+    """
+    MOLEG(법제처) 목록/검색 API 호출
+    1순위: DRF(law.go.kr/DRF) - OC 필요
+    2순위: 공공데이터포털(apis.data.go.kr/1170000) - serviceKey 필요
+    반환: (items:list[dict], endpoint:str|None, err:str|None)
+    """
+    import requests, urllib.parse as up
+
+    target = (target or "law").strip().lower()
+    assert target in ("law", "admrul", "ordin", "trty")
+
+    oc  = (globals().get("LAW_API_OC")   or "").strip()
+    key = (globals().get("LAW_API_KEY")  or "").strip()
+
+    s = requests.Session()
+    try:
+        s.mount("https://", TLS12HttpAdapter2())
+        s.mount("http://",  TLS12HttpAdapter2())
+    except Exception:
+        pass
+
+    def call_drf():
+        if not oc:
+            return [], None, "DRF-OC-미설정"
+        base = "https://www.law.go.kr/DRF/lawSearch.do"
+        params = {
+            "OC": oc,
+            "target": target,
+            "type": "JSON",
+            "query": (query or "").strip(),
+            "numOfRows": max(1, min(int(num_rows or 5), 10)),
+        }
+        try:
+            r = s.get(base, params=params, timeout=timeout, headers={
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+                "Referer": "https://www.law.go.kr/DRF/index.do",
+                "X-Requested-With": "XMLHttpRequest",
+            })
+            try:
+                _trace_api("list", r.url, params, r)
+            except Exception:
+                pass
+            if r.ok and "json" in (r.headers.get("Content-Type","").lower()):
+                data = r.json()
+                if isinstance(data, list):
+                    items = data
+                else:
+                    items = data.get("law") or data.get("admrul") or data.get("ordin") or data.get("trty") or []
+                return (items or []), r.url, None
+            return [], r.url, f"DRF-{r.status_code}"
+        except Exception as e:
+            return [], base + "?" + up.urlencode(params), f"DRF-EXC:{e}"
+
+    def call_ods():
+        if not key:
+            return [], None, "ODS-KEY-미설정"
+        base = "https://apis.data.go.kr/1170000/lawSearch"
+        params = {
+            "serviceKey": key,
+            "pageNo": 1,
+            "numOfRows": max(1, min(int(num_rows or 5), 10)),
+            "query": (query or "").strip(),
+            "type": "json",
+        }
+        try:
+            r = s.get(base, params=params, timeout=timeout)
+            try:
+                _trace_api("list", r.url, params, r)
+            except Exception:
+                pass
+            txt = (r.text or "")[:2000]
+            if "Policy Falsified" in txt:
+                return [], r.url, "ODS-PolicyFalsified(승인/정책/파라미터 문제)"
+            if r.ok:
+                try:
+                    data = r.json()
+                except Exception:
+                    return [], r.url, "ODS-UNPARSEABLE"
+                if isinstance(data, list):
+                    items = data
+                else:
+                    items = (
+                        data.get("law")
+                        or data.get("response", {}).get("body", {}).get("items", [])
+                        or data.get("items", [])
+                    )
+                return (items or []), r.url, None
+            return [], r.url, f"ODS-{r.status_code}"
+        except Exception as e:
+            return [], base + "?" + up.urlencode(params), f"ODS-EXC:{e}"
+
+    items, url, err = call_drf()
+    if not items:
+        items2, url2, err2 = call_ods()
+        if items2 or (err and not err2):
+            return items2, url2, err2
+    return items, url, err
