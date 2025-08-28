@@ -121,7 +121,7 @@ import re
 _NEED_TOOLS = re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API)', re.I)
 
 # 본문 발췌 포함 프라이머로 덮어쓰기
-from law_fetch import _summarize_laws_for_primer as _summarize_laws_for_primer
+from modules.law_fetch import _summarize_laws_for_primer as _summarize_laws_for_primer
 
 # 지연 초기화: 필요한 전역들이 준비된 뒤에 한 번만 엔진 생성
 def _init_engine_lazy():
@@ -1491,7 +1491,7 @@ def _summarize_laws_for_basic(law_items: list[dict], max_items: int = 6) -> str:
     )
 # --- 조문 본문 캡슐 버전으로 덮어쓰기 ---
 try:
-    from law_fetch import _summarize_laws_for_primer as _summarize_laws_for_primer
+    from modules.law_fetch import _summarize_laws_for_primer as _summarize_laws_for_primer
 except Exception:
     pass  # law_fetch가 없으면 기본 요약 버전 그대로 사용
 
