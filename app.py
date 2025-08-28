@@ -3382,42 +3382,60 @@ def call_drf():
 
 
     # 공공데이터포털 목록 검색
-    def call_ods():
-        if not key:
-            return [], None, "ODS-KEY-미설정"
-        base = "https://apis.data.go.kr/1170000/lawSearch"
-        params = {"serviceKey": key, "pageNo": 1,
-                  "numOfRows": max(1, min(int(num_rows or 5), 10)),
-                  "query": (query or "").strip(),
-                  "type": "json"}
-        try:
-            r = s.get(base, params=params, timeout=timeout)
-            try:
-                _trace_api("list", base, params, r)
-            except Exception:
-                pass
-            txt = (r.text or "")[:2000]
-            if "Policy Falsified" in txt:
-                return [], r.url, "ODS-PolicyFalsified(승인/정책/파라미터 문제)"
-            if r.ok:
-                try:
-                    data = r.json()
-                except Exception:
-                    return [], r.url, "ODS-UNPARSEABLE"
-                if isinstance(data, list):
-                    items = data
-                else:
-                    items = (data.get("law")
-                             or data.get("response", {}).get("body", {}).get("items", [])
-                             or data.get("items", []))
-                return (items or []), r.url, None
-            return [], r.url, f"ODS-{r.status_code}"
-        except Exception as e:
-            return [], base + "?" + up.urlencode(params), f"ODS-EXC:{e}"
+    # 공공데이터포털 목록 검색
+def call_ods():
+    if not key:
+        return [], None, "ODS-KEY-미설정"
 
-    items, url, err = call_drf()
-    if not items:
-        items2, url2, err2 = call_ods()
-        if items2 or (err and not err2):
-            return items2, url2, err2
-    return items, url, err
+    # serviceKey가 이미 % 인코딩되어 들어온 경우 이중 인코딩 방지
+    from urllib.parse import unquote
+    _key = key
+    if "%" in _key:
+        try:
+            _key = unquote(_key)
+        except Exception:
+            pass
+
+    base = "https://apis.data.go.kr/1170000/lawSearch"
+    params = {
+        "serviceKey": _key,
+        "pageNo": 1,
+        "numOfRows": max(1, min(int(num_rows or 5), 10)),
+        "query": (query or "").strip(),
+        "type": "json",            # 엔드포인트에 따라 'returnType'을 쓰는 경우도 있어요
+        # "returnType": "json",    # 필요시 이 줄을 켜서 A/B 테스트 가능
+    }
+    try:
+        r = s.get(base, params=params, timeout=timeout)
+        try:
+            _trace_api("list", r.url, params, r)   # ← 실제 호출 URL을 기록
+        except Exception:
+            pass
+
+        txt = (r.text or "")[:2000]
+        if "Policy Falsified" in txt:
+            return [], r.url, "ODS-PolicyFalsified(승인/정책/파라미터 문제)"
+
+        if r.ok:
+            # json 파싱 (스키마가 꽤 들쭉날쭉합니다)
+            try:
+                data = r.json()
+            except Exception:
+                return [], r.url, "ODS-UNPARSEABLE"
+
+            if isinstance(data, list):
+                items = data
+            else:
+                items = (
+                    data.get("law")
+                    or data.get("response", {}).get("body", {}).get("items", [])
+                    or data.get("items", [])
+                    or []
+                )
+            return items, r.url, None
+
+        return [], r.url, f"ODS-{r.status_code}"
+
+    except Exception as e:
+        from urllib.parse import urlencode, quote
+        return [], base + "?" + urlencode(params, quote_via=quote), f"ODS-EXC:{e}"
