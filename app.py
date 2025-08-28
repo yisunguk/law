@@ -120,10 +120,7 @@ import re
 # 법/조문/DRF/API 키워드가 보이면 도구 강제 ON
 _NEED_TOOLS = re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API)', re.I)
 
-# 지연 초기화: 필요한 전역들이 준비된 뒤에 한 번만 엔진 생성
 def _init_engine_lazy():
-    assert summar is not None, "법령 프라이머 함수가 None입니다. import 경로를 확인하세요."
-
     if "engine" in st.session_state and st.session_state.engine is not None:
         return st.session_state.engine
 
@@ -135,9 +132,13 @@ def _init_engine_lazy():
     t_one   = g.get("tool_search_one")
     t_multi = g.get("tool_search_multi")
     pre     = g.get("prefetch_law_context")
-    summar  = g.get("_summarize_laws_for_primer")
+    # ✅ 먼저 가져오고, 없으면 기본 프라이머로 폴백
+    summar  = g.get("_summarize_laws_for_primer") or _summarize_laws_for_basic
 
-    # 필수 구성요소가 아직 준비 안 되었으면 None을 캐시하고 리턴
+    # (선택) 안전 확인
+    # if summar is None:
+    #     raise RuntimeError("법령 프라이머 함수 로드 실패")
+
     if not (c and az and tools and scc and t_one and t_multi):
         st.session_state.engine = None
         return None
@@ -150,7 +151,7 @@ def _init_engine_lazy():
         tool_search_one=t_one,
         tool_search_multi=t_multi,
         prefetch_law_context=pre,
-        summarize_laws_for_primer=summar,
+        summarize_laws_for_primer=summar,  # ← 여기로 전달
         temperature=0.2,
     )
     return st.session_state.engine
@@ -168,6 +169,7 @@ def render_api_diagnostics():
     with st.sidebar.expander("🔧 API 연결 진단", expanded=True):
         st.write("LAW_API_KEY:", "✅ 설정됨" if (globals().get("LAW_API_KEY")) else "❌ 없음")
         st.write("LAW_API_OC:",   f"✅ '{globals().get('LAW_API_OC')}'" if (globals().get("LAW_API_OC")) else "❌ 없음")
+        st.sidebar.write("primer src:", _summarize_laws_for_primer.__module__)
 
         # 1) 목록 API 테스트
         try:
