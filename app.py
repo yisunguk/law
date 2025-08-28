@@ -317,12 +317,12 @@ def render_api_diagnostics():
     with st.sidebar.expander("🔧 API 연결 진단", expanded=True):
         st.write("LAW_API_KEY:", "✅ 설정됨" if (globals().get("LAW_API_KEY")) else "❌ 없음")
         st.write("LAW_API_OC:",   f"✅ '{globals().get('LAW_API_OC')}'" if (globals().get("LAW_API_OC")) else "❌ 없음")
-        st.sidebar.write("primer src:", _summarize_laws_for_primer.__module__)
 
-        # 1) 목록 API 테스트
-        items = []  # ← 기본값 유지(예외 시 아래 단계에서 참조 가능)
+        # --- 1) 목록 API 테스트: try 전에 기본값 잡기 (여기!) ---
+        items: list[dict] = []
+        endpoint: str | None = None
+        err: str | None = None
         try:
-            # 마지막 사용자 질문에서 '...법' 토큰 한 개 추출
             last_q = (st.session_state.get('last_q') or '').strip()
             m = re.search(r'([가-힣0-9·\s]+법)', last_q)
             _kw = (m.group(1).strip() if m else "민법")
@@ -333,13 +333,15 @@ def render_api_diagnostics():
         except Exception as e:
             st.error(f"목록 API 예외: {e}")
 
-        # 2) DRF 본문(JSON→XML→HTML) 테스트 (있을 때만)
+        # --- 2) DRF 본문 테스트: 여기서도 기본값 먼저 ---
+        body: str | None = None
+        link: str | None = None
         try:
             if items:
-                mst = (items[0].get("MST") or items[0].get("법령ID") or "").strip()
+                it = items[0]  # 또는 _pick_best(items, _kw)
+                mst = (it.get("MST") or it.get("법령ID") or "").strip()
                 if mst:
-                    # 필요 시 본문 페치 함수 사용 (예: JSON 우선)
-                    body, link = fetch_article_block_by_mst(mst, None, prefer="JSON")
+                    body, link = fetch_article_block_by_mst(mst, None, prefer="HTML")
                     st.write("DRF 본문 링크:", link or "-")
                     st.write("본문 길이:", len(body or ""))
                 else:
@@ -348,6 +350,7 @@ def render_api_diagnostics():
                 st.info("목록 결과가 없어 본문 테스트를 건너뜁니다.")
         except Exception as e:
             st.error(f"DRF 예외: {e}")
+
 
       
         # 2) DRF 본문(JSON → XML → HTML) 테스트
@@ -2708,32 +2711,32 @@ TOOLS = [
 # ============================
 
 # 1) imports
-from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
+#from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
 
 # 2) 엔진 생성 (한 번만)
-engine = None
-try:
+#engine = None
+#try:
     # 아래 객체들은 app.py 상단에서 이미 정의되어 있어야 합니다.
     # - client, AZURE, TOOLS
     # - safe_chat_completion
     # - tool_search_one, tool_search_multi
     # - prefetch_law_context, _summarize_laws_for_primer
-    if client and AZURE and TOOLS:
-        engine = AdviceEngine(
-            client=client,
-            model=AZURE["deployment"],
-            tools=TOOLS,
-            safe_chat_completion=safe_chat_completion,
-            tool_search_one=tool_search_one,
-            tool_search_multi=tool_search_multi,
-            prefetch_law_context=prefetch_law_context,            # 있으면 그대로
-            summarize_laws_for_primer=_summarize_laws_for_primer, # 있으면 그대로
-            temperature=0.2,
-        )
-except NameError:
+    #if client and AZURE and TOOLS:
+     #   engine = AdviceEngine(
+      #      client=client,
+       #     model=AZURE["deployment"],
+        #    tools=TOOLS,
+          #  safe_chat_completion=safe_chat_completion,
+           # tool_search_one=tool_search_one,
+ #           tool_search_multi=tool_search_multi,
+  #          prefetch_law_context=prefetch_law_context,            # 있으면 그대로
+   #         summarize_laws_for_primer=_summarize_laws_for_primer, # 있으면 그대로
+    #        temperature=0.2,
+        #)
+#except NameError:
     # 만약 위 객체들이 아직 정의되기 전 위치라면,
     # 이 패치를 해당 정의 '아래'로 옮겨 붙이세요.
-    pass
+ #   pass
 
 # =============================
 # 키워드 기본값/위젯 헬퍼 (with st.sidebar: 위에 배치)
@@ -3144,7 +3147,7 @@ if not chat_started:
     </style>
     """, unsafe_allow_html=True)
     
-render_api_diagnostics()   # ← 이 줄 추가
+render_api_diagnostics()   
 
 # 3) 화면 분기
 if not chat_started:
@@ -3273,6 +3276,7 @@ with st.container():
                         for j, law in enumerate(laws, 1):
                             if not isinstance(law, dict):
                                 continue
+
                             name = law.get('법령명') or law.get('법령명한글') or law.get('title') or '(제목 없음)'
                             kind = law.get('법령구분') or law.get('kind') or '-'
                             eff  = law.get('시행일자') or law.get('effective_date') or '-'
@@ -3284,8 +3288,6 @@ with st.container():
                                 st.write(f"- 링크: {link}")
             else:
                 st.markdown(content)
-
-
 
 # ✅ 답변 말풍선 바로 아래에 입력/업로더 붙이기 (답변 생성 중이 아닐 때만)
 if chat_started and not st.session_state.get("__answering__", False):
