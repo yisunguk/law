@@ -156,6 +156,25 @@ def _init_engine_lazy():
     )
     return st.session_state.engine
 
+def render_prompt_inspector():
+    import streamlit as st, json
+    with st.sidebar.expander("🧪 Prompt Inspector (LLM 전달 내용)", expanded=True):
+        p = st.session_state.get("_prompt_last") or ""
+        st.write(f"System prompt 길이: {len(p)}자")
+        st.code(p[:4000] or "비어 있음", language="markdown")
+
+    with st.sidebar.expander("📡 API Trace (최근 6건)", expanded=False):
+        rows = st.session_state.get("_api_trace") or []
+        for e in list(rows)[-6:][::-1]:
+            st.text(f"[{e.get('t')}] {e.get('kind')}  status={e.get('status')}  {e.get('ctype')}")
+            st.code(e.get("url") or "", language="text")
+            if e.get("params"):
+                st.code(json.dumps(e["params"], ensure_ascii=False, indent=2), language="json")
+            if e.get("sample"):
+                st.text("…응답 미리보기:")
+                st.code(e["sample"], language="text")
+
+
 def render_api_diagnostics():
     import urllib.parse as up, requests, streamlit as st
 
@@ -212,6 +231,7 @@ def render_api_diagnostics():
         except Exception as e:
             st.error(f"DRF 예외: {e}")
 
+render_prompt_inspector()
 
 
 from typing import Optional
@@ -307,6 +327,10 @@ def ask_llm_with_tools(
         history = _hist[-HISTORY_LIMIT:]
     except Exception:
         history = []
+
+# LLM으로 보낼 system prompt 미리 저장(사이드바에서 확인)
+
+    st.session_state["_prompt_last"] = sys_prompt
 
     # 3) 엔진 호출 (history 전달 지원 여부 동적 확인 + 안전 폴백)
     try:
