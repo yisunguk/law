@@ -4,12 +4,133 @@ from __future__ import annotations
 import streamlit as st
 import re
 
+# app.py 맨 위 근처
+import os, sys
+ROOT = os.path.dirname(os.path.abspath(__file__))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
 # 모듈 전역에 미리 컴파일
 _NEED_TOOLS = re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API)', re.I)
 
-from modules.law_fetch import fetch_article_block_by_mst
 from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
 from modules.law_fetch import fetch_article_block_by_mst, _summarize_laws_for_primer
+
+# === [ADD] 조문 원문 캡슐 주입 유틸 (app.py 상단 import 바로 아래) ===
+import re
+import streamlit as st
+
+try:
+    # 루트에 law_fetch.py가 있는 프로젝트 구조 기준
+    from law_fetch import fetch_article_block_by_mst
+except Exception:
+    # 혹시 modules/ 경로를 쓰는 구조라면 이 라인을 쓰세요.
+    from modules.law_fetch import fetch_article_block_by_mst  # noqa
+
+# 질문에서 법령명/조문 라벨 뽑기
+_LAW_ALIASES = {"건설산업법": "건설산업기본법"}  # 동음이의/약칭 교정표 필요시 추가
+def _extract_law_name(text: str) -> str | None:
+    if not text:
+        return None
+    # 예: "건설산업기본법", "민법 시행령"
+    m = re.findall(r'([가-힣0-9·\s]+법(?:\s*시행령|\s*시행규칙)?)', text)
+    if not m:
+        return None
+    cand = sorted({t.strip() for t in m}, key=len, reverse=True)[0]
+    cand_norm = re.sub(r'\s+', '', cand)
+    return _LAW_ALIASES.get(cand_norm, cand_norm)
+
+def _extract_article_label(text: str) -> str | None:
+    # 제83조, 제83조의2 등
+    m = re.search(r'제\s*(\d{1,4})\s*조(?:\s*의\s*(\d{1,3}))?', text or '')
+    if not m:
+        return None
+    return f"제{m.group(1)}조의{m.group(2)}" if m.group(2) else f"제{m.group(1)}조"
+
+def _pick_best_law(items: list[dict], qname: str | None) -> dict | None:
+    if not items:
+        return None
+    # "현행" 우선
+    cand = [x for x in items if (x.get('현행연혁코드') or x.get('연혁코드') or '').startswith('현행')] or items
+    if qname:
+        qn = re.sub(r'\s+', '', qname)
+        for x in cand:
+            nm = re.sub(r'\s+', '', (x.get('법령명한글') or x.get('법령명') or ''))
+            if qn in nm:  # 부분일치 우선
+                return x
+    return cand[0]
+
+def _slice_article_from_html(html_text: str, want: str) -> str | None:
+    """DRF HTML 전체에서 '제N조(…)' 블록만 텍스트로 슬라이스(보호용 폴백)."""
+    if not (html_text and want):
+        return None
+    t = re.sub(r'<[^>]+>', '\n', html_text)
+    t = re.sub(r'\n{2,}', '\n', t).strip()
+    start = re.search(rf'{re.escape(want)}\s*(?=[\(\s]|$)', t)
+    if not start:
+        return None
+    next_hdr = re.compile(r'제\s*\d{1,4}\s*조(?:\s*의\s*\d{1,3})?')
+    m2 = next_hdr.search(t, start.end())
+    return t[start.start(): (m2.start() if m2 else len(t))].strip() or None
+
+def build_article_capsule(user_q: str, num_rows: int = 5) -> dict | None:
+    """
+    1) 질문에서 법령/조문을 감지 → 2) 목록 API로 MST 식별 → 3) DRF로 해당 조문 본문만 추출
+    반환: {"sys_add": system에 붙일 문자열, "ui": 화면 표시용 dict}
+    """
+    want_law = _extract_law_name(user_q or "")
+    want_art = _extract_article_label(user_q or "")
+    wants_verbatim = bool(re.search(r'(본문|원문|전문|요약\s*하지\s*말)', user_q or '', re.I))
+    if not (wants_verbatim or want_art):
+        return None
+
+    # 후보 수집: 앱에 이미 있는 헬퍼를 최우선 사용
+    law_items = []
+    try:
+        # 우측 플라이아웃/통합검색이 있는 경우
+        bucket = find_all_law_data(user_q, num_rows=num_rows) or {}
+        law_items = (bucket.get("법령") or {}).get("items", [])
+    except Exception:
+        # 최소 폴백: 단일 검색 헬퍼가 있다면 활용
+        try:
+            items, _, _ = search_law_data(want_law or (user_q or ""), num_rows=num_rows)
+            law_items = items or []
+        except Exception:
+            pass
+
+    best = _pick_best_law(law_items, want_law)
+    if not best:
+        return None
+
+    mst = str(best.get('MST') or best.get('법령일련번호') or best.get('법령ID') or '').strip()
+    if not mst:
+        return None
+
+    # 1순위 HTML → 2순위 HTML 전체 슬라이스 → 3순위 JSON
+    body, link = fetch_article_block_by_mst(mst, want_art, prefer="HTML")
+    if not body and want_art:
+        html_all, link_all = fetch_article_block_by_mst(mst, None, prefer="HTML")
+        sliced = _slice_article_from_html(html_all or "", want_art)
+        if sliced:
+            body, link = sliced, (link or link_all)
+    if not body:
+        body, link = fetch_article_block_by_mst(mst, want_art, prefer="JSON")
+    if not body:
+        return None
+
+    law_name = (best.get('법령명한글') or best.get('법령명') or '').strip()
+    sys_add = (
+        "\n\n[법령 본문 캡슐]\n"
+        f"법령명: {law_name}\n"
+        f"조문: {want_art or '(전체)'}\n"
+        f"링크: {link}\n"
+        f"{body.strip()[:2000]}\n"
+    )
+    return {
+        "sys_add": sys_add,
+        "ui": {"law_name": law_name, "art_label": want_art or '', "link": link, "text": body.strip()},
+    }
+
 
 import inspect
 
@@ -296,12 +417,13 @@ def render_prompt_inspector():
             if e.get("sample"):
                 st.text("…응답 미리보기:")
                 st.code(e["sample"], language="text")
-# --- 목록 API 통합 호출 함수 (DRF 우선, ODS 폴백) ---
+# app.py — _call_moleg_list()  (드롭인 교체)
+
 def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float = 8.0):
     """
     MOLEG(법제처) 목록/검색 API 호출
     1순위: DRF(law.go.kr/DRF) - OC 필요
-    2순위: 공공데이터포털(apis.data.go.kr/1170000) - serviceKey 필요
+    2순위: 공공데이터포털(apis.data.go.kr/1170000) - serviceKey 필요 (XML 기본)
     반환: (items:list[dict], endpoint:str|None, err:str|None)
     """
     import requests, urllib.parse as up
@@ -313,12 +435,12 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float 
 
     s = requests.Session()
     try:
-        s.mount("https://", TLS12HttpAdapter2())
-        s.mount("http://",  TLS12HttpAdapter2())
+        s.mount("https://", TLS12HttpAdapter())
+        s.mount("http://",  TLS12HttpAdapter())
     except Exception:
         pass
 
-    # --- DRF ---
+    # --- DRF (기존 그대로) ---
     def call_drf():
         if not oc:
             return [], None, "DRF-OC-미설정"
@@ -337,10 +459,8 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float 
             })
             try: _trace_api("list", base, params, r)
             except Exception: pass
-            if not r.ok:
+            if not r.ok or "json" not in (r.headers.get("content-type","").lower()):
                 return [], r.url, f"DRF-{r.status_code}"
-            if "json" not in (r.headers.get("content-type","").lower()):
-                return [], r.url, "DRF-UNEXPECTED-CONTENT"
             data = r.json()
             # 래퍼 키 풀기
             if isinstance(data, dict):
@@ -350,9 +470,11 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float 
             if isinstance(data, list):
                 items = data
             elif isinstance(data, dict):
-                items = (data.get("law") or data.get("admrul") or data.get("ordin")
-                         or data.get("trty") or data.get("response",{}).get("body",{}).get("items",[])
-                         or data.get("items",[]) or [])
+                items = (
+                    data.get("law") or data.get("admrul") or data.get("ordin") or data.get("trty")
+                    or data.get("response",{}).get("body",{}).get("items",[]) or data.get("items",[])
+                    or []
+                )
             else:
                 items = []
             # 필드 정규화
@@ -367,38 +489,79 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float 
         except Exception as e:
             return [], base + "?" + up.urlencode(params, quote_via=up.quote), f"DRF-EXC:{e}"
 
-    # --- ODS ---
+    # --- ODS (스펙대로: 대상별 엔드포인트 + XML 기본) ---
     def call_ods():
         if not key:
             return [], None, "ODS-KEY-미설정"
-        from urllib.parse import unquote, urlencode, quote
-        _key = unquote(key) if "%" in key else key
-        base = "https://apis.data.go.kr/1170000/lawSearch"
+
+        # 대상별 정규 엔드포인트 (가이드 명시)
+        BASES = {
+            "law":   "https://apis.data.go.kr/1170000/law/lawSearchList.do",
+            "admrul":"https://apis.data.go.kr/1170000/admrul/admrulSearchList.do",
+            "ordin": "https://apis.data.go.kr/1170000/ordin/ordinSearchList.do",
+            "trty":  "https://apis.data.go.kr/1170000/trty/trtySearchList.do",
+        }  # XML 교환 표준, 파라미터: serviceKey/target/query/numOfRows/pageNo  :contentReference[oaicite:2]{index=2}
+
+        base = BASES[target]
+        # serviceKey는 URL-encoded 상태 그대로 사용
         params = {
-            "serviceKey": _key, "pageNo": 1,
+            "serviceKey": key,
+            "target": target,
+            "query": (query or "").strip() or "*",
             "numOfRows": max(1, min(int(num_rows or 5), 10)),
-            "query": (query or "").strip(), "type": "json",
+            "pageNo": 1,
         }
+
         try:
-            r = s.get(base, params=params, timeout=timeout)
+            r = s.get(base, params=params, timeout=timeout, headers={"User-Agent":"Mozilla/5.0", "Accept":"application/xml"})
             try: _trace_api("list", base, params, r)
             except Exception: pass
-            if "Policy Falsified" in (r.text or "")[:2000]:
-                return [], r.url, "ODS-PolicyFalsified"
+
             if not r.ok:
                 return [], r.url, f"ODS-{r.status_code}"
-            try:
-                data = r.json()
-            except Exception:
-                return [], r.url, "ODS-UNPARSEABLE"
-            if isinstance(data, list):
-                items = data
+
+            ctype = (r.headers.get("content-type") or "").lower()
+            text  = r.text or ""
+            # XML 기본 파싱
+            items = []
+            if ("xml" in ctype) or text.strip().startswith("<"):
+                try:
+                    import xml.etree.ElementTree as ET
+                    root = ET.fromstring(text)
+                    # 루트는 LawSearch/AdmRulSearch/OrdinSearch/TrtySearch 중 하나
+                    # 각 항목 태그: law/admrul/law(trty 케이스에선 Trty로 표기될 수 있음)
+                    rows = list(root.findall(".//law")) + list(root.findall(".//admrul")) \
+                         + list(root.findall(".//ordin")) + list(root.findall(".//Trty")) + list(root.findall(".//trty"))
+                    for node in rows:
+                        row = {}
+                        for child in list(node):
+                            tag = child.tag.strip()
+                            val = (child.text or "").strip()
+                            # CDATA 포함 텍스트 안전 처리
+                            row[tag] = val
+                        # 필수 키 보정
+                        if "법령명한글" not in row and "법령명" in row:
+                            row["법령명한글"] = row["법령명"]
+                        items.append(row)
+                except Exception:
+                    items = []
             else:
-                items = (data.get("law")
-                         or data.get("response",{}).get("body",{}).get("items",[])
-                         or data.get("items",[]) or [])
-            return items, r.url, None
+                # 혹시 JSON으로 내려오면 최소 파싱 폴백
+                try:
+                    data = r.json()
+                    if isinstance(data, dict):
+                        body = data.get("response",{}).get("body",{})
+                        items = body.get("items",[]) or data.get("items",[])
+                    elif isinstance(data, list):
+                        items = data
+                    else:
+                        items = []
+                except Exception:
+                    return [], r.url, "ODS-UNPARSEABLE"
+
+            return (items or []), r.url, None
         except Exception as e:
+            from urllib.parse import urlencode, quote
             return [], base + "?" + urlencode(params, quote_via=quote), f"ODS-EXC:{e}"
 
     # --- 우선 DRF, 실패 시 ODS 폴백 ---
@@ -407,6 +570,7 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float 
     items2, ep2, err2 = call_ods()
     if items2: return items2, ep2, None
     return [], (ep or ep2), (err or err2 or "NO_RESULT")
+
 
 
 
@@ -494,6 +658,9 @@ import streamlit as st
 # _NEED_TOOLS 전역이 없다면 자동 생성
 _NEED_TOOLS = globals().get("_NEED_TOOLS") or re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API|본문|원문|요약\s*하지\s*말)', re.I)
 
+# === [REPLACE] ask_llm_with_tools ===
+from typing import Optional
+
 def ask_llm_with_tools(
     user_q: str,
     brief: bool = False,
@@ -502,11 +669,9 @@ def ask_llm_with_tools(
     stream: bool = True,
 ):
     """
-    LLM 호출 + 법령 도구 사용을 묶은 제너레이터 함수.
     - 프롬프트 구성
-    - '본문/원문/요약하지 말'이면 DRF 조문을 사전 주입
-    - history 지원 여부를 동적으로 확인해 전달
-    - 결과는 `yield from`으로 스트리밍 전달
+    - '본문/원문/요약 금지' + '제n조' 요청 시, DRF 조문을 system에 선주입
+    - 엔진(history 지원/미지원 모두)에 안전하게 전달
     """
     engine = _init_engine_lazy()
     if engine is None:
@@ -524,10 +689,10 @@ def ask_llm_with_tools(
     if not use_tools and _NEED_TOOLS.search(user_q or ""):
         use_tools = True
 
-    # 2) 프롬프트/툴 사용 여부
+    # 2) 시스템 프롬프트
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
-    # 2.1) '요약 금지/원문 요청' 신호가 있으면 인용 지침 추가
+    # 2-1) '요약 금지/원문' 신호 있으면 인용 지침 추가
     _WANTS_FULL = re.compile(r'(본문|원문|조문\s*(?:전문|전체)|요약\s*하지\s*말)', re.I)
     if _WANTS_FULL.search(user_q or ""):
         sys_prompt += (
@@ -537,91 +702,35 @@ def ask_llm_with_tools(
             "- 인용 뒤에 법제처 공식 링크(DRF/상세)를 함께 제공한다."
         )
 
-    # 2.2) (선행 주입) '제n조'가 있고 원문 요청이면 DRF 조문을 system prompt에 포함
-    try:
-        wants_verbatim = _WANTS_FULL.search(user_q or "") is not None
-        art_m = re.search(r'제\d{1,4}조(?:의\d{1,3})?', user_q or "")
-        if wants_verbatim and art_m:
-            want_article = art_m.group(0)
-            # 후보 법령 조회
-            
-            _pack = find_all_law_data(user_q, num_rows=num_rows) or {}
-            bucket = find_all_law_data(user_q, num_rows=num_rows) or {}
-            law_items = (bucket.get("법령") or {}).get("items", [])
-            # 질문에 법령명이 직접 포함된 후보 우선
-            pick = next(
-                (it for it in law_items
-                 if (it.get("법령명") or it.get("법령명한글") or "").strip() in (user_q or "")),
-                (law_items[0] if law_items else None),
-            )
-            if pick:
-                mst = (pick.get("MST") or pick.get("법령ID") or pick.get("법령일련번호") or "").strip()
-                if mst:
-                    from modules.law_fetch import fetch_article_block_by_mst
-                    body, link = fetch_article_block_by_mst(mst, want_article, prefer="JSON")
-                    if body:
-                        sys_prompt += (
-                            "\n\n[참고 조문 원문]\n"
-                            f"(출처: 법제처 DRF{f', {link}' if link else ''})\n"
-                            f"```\n{body}\n```\n"
-                        )
-    except Exception as _e:
-        st.sidebar.warning(f"조문 원문 사전 주입 실패: {type(_e).__name__}")
-
-    # 2.5) 최근 N개 히스토리 준비(user/assistant만)
-    try:
-        msgs = st.session_state.get("messages", [])
-        _hist = []
-        for _m in msgs:
-            if isinstance(_m, dict):
-                _r = _m.get("role")
-                _c = (_m.get("content") or "").strip()
-                if _r in ("user", "assistant") and _c:
-                    _hist.append({"role": _r, "content": _c})
-        HISTORY_LIMIT = int(st.session_state.get("__history_limit__", 6))
-        history = _hist[-HISTORY_LIMIT:]
-    except Exception:
-        history = []
-
-
-    # 2.5) 최근 N개 히스토리 준비(user/assistant만)
-    try:
-        msgs = st.session_state.get("messages", [])
-        _hist = []
-        for _m in msgs:
-            if isinstance(_m, dict):
-                _r = _m.get("role")
-                _c = (_m.get("content") or "").strip()
-                if _r in ("user", "assistant") and _c:
-                    _hist.append({"role": _r, "content": _c})
-        HISTORY_LIMIT = int(st.session_state.get("__history_limit__", 6))
-        history = _hist[-HISTORY_LIMIT:]
-    except Exception:
-        history = []
-
-    # 2.6) ✅ DRF 조문 본문 '선행 주입' (여기 추가)
+    # 2-2) ✅ DRF 조문 본문 '선행 주입'
     st.session_state['last_q'] = user_q
-    st.session_state['user_q'] = user_q
-
-    caps = build_article_capsule(user_q, num_rows=num_rows)  # ← 헬퍼는 상단에 정의해 둔 버전
+    caps = build_article_capsule(user_q, num_rows=num_rows)
     if caps:
-        sys_prompt += caps["sys_add"]                  # LLM에 전달할 System Prompt에 원문 캡슐 추가
-        st.session_state["_quote_capsule"] = caps["ui"]  # UI에 바로 보여줄 원문 버퍼
+        sys_prompt += caps["sys_add"]                   # LLM system에 원문 캡슐 주입
+        st.session_state["_quote_capsule"] = caps["ui"] # UI에 바로 보여줄 버퍼 저장
 
-# LLM으로 보낼 system prompt 미리 저장(사이드바에서 확인)
+    # 2-3) 최근 히스토리
+    try:
+        msgs = st.session_state.get("messages", [])
+        history = [{"role":m["role"], "content":m["content"]} for m in msgs if m.get("role") in ("user","assistant")]
+        HISTORY_LIMIT = int(st.session_state.get("__history_limit__", 6))
+        history = history[-HISTORY_LIMIT:]
+    except Exception:
+        history = []
+
+    # 2-4) 사이드바 확인용
     st.session_state["_prompt_last"] = sys_prompt
 
-# 3) 엔진 호출 (history 전달 지원 여부 동적 확인 + 안전 폴백)
+    # 3) 엔진 호출 (history 인자명 안전 탐지)
     try:
         sig = inspect.signature(engine.generate)
         params = set(sig.parameters.keys())
     except Exception:
         params = set()
 
-    passed = False
+    called = False
     for kw in ("history", "messages", "chat_history", "conversation"):
         if kw in params:
-        # 히스토리를 지원하는 서명인 경우
             yield from engine.generate(
                 user_q,
                 system_prompt=sys_prompt,
@@ -631,11 +740,10 @@ def ask_llm_with_tools(
                 primer_enable=True,
                 **{kw: history},
             )
-            passed = True
+            called = True
             break
 
-    if not passed:
-    # 히스토리 미지원 엔진 폴백
+    if not called:
         yield from engine.generate(
             user_q,
             system_prompt=sys_prompt,
@@ -645,7 +753,7 @@ def ask_llm_with_tools(
             primer_enable=True,
         )
 
-# 3.5) ✅ (선택) 화면에 조문 원문 바로 출력
+    # 3-1) ✅ 화면에 조문 원문 바로 출력
     caps_ui = st.session_state.pop("_quote_capsule", None)
     if caps_ui:
         st.markdown(
@@ -653,53 +761,6 @@ def ask_llm_with_tools(
             f"[법제처 전문 보기]({caps_ui['link']})"
         )
         st.code(caps_ui["text"])
-
-# LLM으로 보낼 system prompt 미리 저장(사이드바에서 확인)
-
-    st.session_state["_prompt_last"] = sys_prompt
-
-    # 3) 엔진 호출 (history 전달 지원 여부 동적 확인 + 안전 폴백)
-    try:
-        sig = inspect.signature(engine.generate)
-        params = set(sig.parameters.keys())
-    except Exception:
-        params = set()
-
-    passed = False
-    for kw in ("history", "messages", "chat_history", "conversation"):
-        if kw in params:
-            # 히스토리를 지원하는 서명인 경우
-            yield from engine.generate(
-                user_q,
-                system_prompt=sys_prompt,
-                allow_tools=use_tools,
-                num_rows=num_rows,
-                stream=stream,
-                primer_enable=True,
-                **{kw: history},
-            )
-            passed = True
-            break
-
-    if not passed:
-        # 폴백: 이전 대화를 user_q에 텍스트로 주입
-        def _as_transcript(items):
-            lines = []
-            for it in items:
-                who = "사용자" if it.get("role") == "user" else "어시스턴트"
-                lines.append(f"{who}: {it.get('content','')}")
-            return "\n".join(lines)
-
-        hist_text = _as_transcript(history or [])
-        uq = user_q if not hist_text else f"[이전 대화]\n{hist_text}\n\n[현재 질문]\n{user_q}"
-        yield from engine.generate(
-            uq,
-            system_prompt=sys_prompt,
-            allow_tools=use_tools,
-            num_rows=num_rows,
-            stream=stream,
-            primer_enable=True,
-        )
 
 
 import io, os, re, json, time, html
