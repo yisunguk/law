@@ -7,9 +7,9 @@ import re
 # 모듈 전역에 미리 컴파일
 _NEED_TOOLS = re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API)', re.I)
 
-# --- imports (파일 상단에 한 번만) ---
 from modules.law_fetch import fetch_article_block_by_mst
-from modules.law_fetch import _summarize_laws_for_primer
+from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
+from modules.law_fetch import fetch_article_block_by_mst, _summarize_laws_for_primer
 
 import inspect
 
