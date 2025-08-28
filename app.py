@@ -8,7 +8,6 @@ import re
 _NEED_TOOLS = re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API)', re.I)
 
 # --- imports (파일 상단에 한 번만) ---
-from modules.linking import find_all_law_data
 from modules.law_fetch import fetch_article_block_by_mst
 from modules.law_fetch import _summarize_laws_for_primer
 
@@ -306,7 +305,7 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 5, timeout: float 
 
 
 def render_api_diagnostics():
-    import urllib.parse as up, requests, streamlit as st
+    import urllib.parse as up, requests, streamlit as st, re
 
     HEADERS_DRF = {
         "User-Agent": "Mozilla/5.0",
@@ -320,19 +319,36 @@ def render_api_diagnostics():
         st.write("LAW_API_OC:",   f"✅ '{globals().get('LAW_API_OC')}'" if (globals().get("LAW_API_OC")) else "❌ 없음")
         st.sidebar.write("primer src:", _summarize_laws_for_primer.__module__)
 
-        # --- replace inside render_api_diagnostics() ---
-
         # 1) 목록 API 테스트
-    try:
-    # 마지막 사용자 질문에서 '...법' 토큰을 한 개 잡아봅니다.
-        last_q = (st.session_state.get('last_q') or '').strip()
-        m = re.search(r'([가-힣0-9·\s]+법)', last_q)
-        _kw = (m.group(1).strip() if m else "민법")
-        items, endpoint, err = _call_moleg_list("law", _kw, num_rows=1)
-        st.write("목록 API 엔드포인트:", endpoint or "-")
-        st.write("목록 API 결과:", f"{len(items)}건", ("OK" if not err else f"오류: {err}"))
-    except Exception as e:
-        st.error(f"목록 API 예외: {e}")
+        items = []  # ← 기본값 유지(예외 시 아래 단계에서 참조 가능)
+        try:
+            # 마지막 사용자 질문에서 '...법' 토큰 한 개 추출
+            last_q = (st.session_state.get('last_q') or '').strip()
+            m = re.search(r'([가-힣0-9·\s]+법)', last_q)
+            _kw = (m.group(1).strip() if m else "민법")
+
+            items, endpoint, err = _call_moleg_list("law", _kw, num_rows=1)
+            st.write("목록 API 엔드포인트:", endpoint or "-")
+            st.write("목록 API 결과:", f"{len(items)}건", ("OK" if not err else f"오류: {err}"))
+        except Exception as e:
+            st.error(f"목록 API 예외: {e}")
+
+        # 2) DRF 본문(JSON→XML→HTML) 테스트 (있을 때만)
+        try:
+            if items:
+                mst = (items[0].get("MST") or items[0].get("법령ID") or "").strip()
+                if mst:
+                    # 필요 시 본문 페치 함수 사용 (예: JSON 우선)
+                    body, link = fetch_article_block_by_mst(mst, want_article=None, prefer="JSON")
+                    st.write("DRF 본문 링크:", link or "-")
+                    st.write("본문 길이:", len(body or ""))
+                else:
+                    st.info("MST가 없어 본문 테스트를 건너뜁니다.")
+            else:
+                st.info("목록 결과가 없어 본문 테스트를 건너뜁니다.")
+        except Exception as e:
+            st.error(f"DRF 예외: {e}")
+
         items = []
 
 
@@ -421,7 +437,7 @@ def ask_llm_with_tools(
         if wants_verbatim and art_m:
             want_article = art_m.group(0)
             # 후보 법령 조회
-            from modules.linking import find_all_law_data
+            
             law_items = find_all_law_data(user_q, num_rows=num_rows) or []
             # 질문에 법령명이 직접 포함된 후보 우선
             pick = next(
