@@ -218,7 +218,7 @@ def render_api_diagnostics():
     try:
     # 마지막 사용자 질문에서 '...법' 토큰을 한 개 잡아봅니다.
         last_q = (st.session_state.get('last_q') or '').strip()
-        m = re.search(r'([가-힣0-9·\s]+법)', _last_q)
+        m = re.search(r'([가-힣0-9·\s]+법)', last_q)
         _kw = (m.group(1).strip() if m else "민법")
         items, endpoint, err = _call_moleg_list("law", _kw, num_rows=1)
         st.write("목록 API 엔드포인트:", endpoint or "-")
