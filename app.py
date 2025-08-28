@@ -339,7 +339,7 @@ def render_api_diagnostics():
                 mst = (items[0].get("MST") or items[0].get("법령ID") or "").strip()
                 if mst:
                     # 필요 시 본문 페치 함수 사용 (예: JSON 우선)
-                    body, link = fetch_article_block_by_mst(mst, want_article=None, prefer="JSON")
+                    body, link = fetch_article_block_by_mst(mst, None, prefer="JSON")
                     st.write("DRF 본문 링크:", link or "-")
                     st.write("본문 길이:", len(body or ""))
                 else:
@@ -349,9 +349,7 @@ def render_api_diagnostics():
         except Exception as e:
             st.error(f"DRF 예외: {e}")
 
-        items = []
-
-
+      
         # 2) DRF 본문(JSON → XML → HTML) 테스트
         try:
             if items:
@@ -2574,16 +2572,48 @@ def _append_message(role: str, content: str, **extra):
 
 
 def format_law_context(law_data: list[dict]) -> str:
-    if not law_data: return "관련 법령 검색 결과가 없습니다."
+    """
+    검색된 법령 목록을 안전하게 문자열로 포맷한다.
+    누락 키에 대비해 .get()과 기본값을 사용하고, 링크가 없으면 '없음'으로 표시한다.
+    """
+    if not law_data:
+        return "관련 법령 검색 결과가 없습니다."
+
     rows = []
+    normalizer = globals().get("normalize_law_link")  # 선택적: 있으면 링크 정규화
+
     for i, law in enumerate(law_data, 1):
-        rows.append(
-            f"{i}. {law['법령명']} ({law['법령구분']})\n"
-            f"   - 소관부처: {law['소관부처명']}\n"
-            f"   - 시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}\n"
-            f"   - 링크: {law['법령상세링크'] or '없음'}"
+        if not isinstance(law, dict):
+            rows.append(f"{i}. (알 수 없는 항목)")
+            continue
+
+        name = law.get("법령명") or law.get("법령명한글") or law.get("title") or "(제목 없음)"
+        kind = law.get("법령구분") or law.get("kind") or "-"
+        dept = law.get("소관부처명") or law.get("부처명") or "-"
+        eff  = law.get("시행일자") or law.get("effective_date") or "-"
+        pub  = law.get("공포일자") or law.get("promulgation_date") or "-"
+
+        link = (
+            law.get("법령상세링크")
+            or law.get("상세링크")
+            or law.get("detail_url")
+            or ""
         )
+        if callable(normalizer) and link:
+            try:
+                link = normalizer(link) or link
+            except Exception:
+                pass
+
+        rows.append(
+            f"{i}. {name} ({kind})\n"
+            f"   - 소관부처: {dept}\n"
+            f"   - 시행일자: {eff} / 공포일자: {pub}\n"
+            f"   - 링크: {link if link else '없음'}"
+        )
+
     return "\n\n".join(rows)
+
 
 def animate_law_results(law_data: list[dict], delay: float = 1.0):
     if not law_data:
@@ -3235,14 +3265,26 @@ with st.container():
         with st.chat_message(role):
             if role == "assistant":
                 render_bubble_with_copy(content, key=f"past-{i}")
-                if m.get("law"):
-                    with st.expander("📋 이 턴에서 참고한 법령 요약"):
-                        for j, law in enumerate(m["law"], 1):
-                            st.write(f"**{j}. {law['법령명']}** ({law['법령구분']})  | 시행 {law['시행일자']}  | 공포 {law['공포일자']}")
-                            if law.get("법령상세링크"):
-                                st.write(f"- 링크: {law['법령상세링크']}")
-            else:
-                st.markdown(content)
+
+                laws = (m.get("law") or []) if isinstance(m, dict) else []
+            if laws:
+                with st.expander("📋 이 턴에서 참고한 법령 요약"):
+                    for j, law in enumerate(laws, 1):
+                        if not isinstance(law, dict):
+                            continue
+
+                    name = law.get('법령명') or law.get('법령명한글') or law.get('title') or '(제목 없음)'
+                    kind = law.get('법령구분') or law.get('kind') or '-'
+                    eff  = law.get('시행일자') or law.get('effective_date') or '-'
+                    pub  = law.get('공포일자') or law.get('promulgation_date') or '-'
+
+                    st.write(f"**{j}. {name}** ({kind})  | 시행 {eff}  | 공포 {pub}")
+
+                    link = law.get('법령상세링크') or law.get('상세링크') or law.get('detail_url') or ''
+                    if link:
+                        st.write(f"- 링크: {link}")
+    else:
+        st.markdown(content)
 
 
 # ✅ 답변 말풍선 바로 아래에 입력/업로더 붙이기 (답변 생성 중이 아닐 때만)
