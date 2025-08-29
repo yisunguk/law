@@ -1,27 +1,15 @@
-# modules/__init__.py  ← 전체 교체
+# modules/__init__.py  (수정본)
 
-# 패키지 내부 상대 임포트
+# 패키지 내부 상대 임포트 우선
 try:
-    from .legal_modes import (
-        AdviceEngine,
-        Intent,
-        classify_intent,
-        pick_mode,
-        build_sys_for_mode,
-    )
-except ImportError:  # 실행 환경에 따라 폴백
-    from legal_modes import (  # type: ignore
-        AdviceEngine,
-        Intent,
-        classify_intent,
-        pick_mode,
-        build_sys_for_mode,
-    )
+    from .advice_engine import AdviceEngine, pick_mode
+    from .legal_modes import Intent, classify_intent, build_sys_for_mode
+except Exception:
+    # 드물게 패키지 인식이 꼬인 환경 폴백
+    from advice_engine import AdviceEngine, pick_mode  # type: ignore
+    from legal_modes import Intent, classify_intent, build_sys_for_mode  # type: ignore
 
 __all__ = [
-    "AdviceEngine",
-    "Intent",
-    "classify_intent",
-    "pick_mode",
-    "build_sys_for_mode",
+    "AdviceEngine", "pick_mode",
+    "Intent", "classify_intent", "build_sys_for_mode",
 ]
