@@ -1,7 +1,39 @@
 from __future__ import annotations
 # app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
-
+# app.py (요지 스니펫)
 import streamlit as st
+from modules.legal_modes import Intent, build_sys_for_mode  # 시스템 프롬프트 생성:contentReference[oaicite:6]{index=6}
+from modules.router_llm import make_plan_with_llm
+from modules.plan_executor import execute_plan
+
+# ... user_q = st.text_input(...) 등으로 질문을 받았다고 가정 ...
+
+# 1) LLM에게 라우팅 계획 받기
+plan = make_plan_with_llm(client, user_q)
+
+# 2) 계획 실행(본문/링크 확보)
+result = execute_plan(plan)
+
+# 3) 답변 생성: DRF 원문을 프롬프트에 주입하여 최종 답변
+sys_prompt = build_sys_for_mode(Intent.LAWFINDER)  # "DRF 본문을 우선으로" 지시:contentReference[oaicite:7]{index=7}
+
+extra_context = ""
+if result.get("type") == "article" and result.get("text"):
+    extra_context = f"<<원문>>\n{result['text']}\n<</원문>>\n원문 링크: {result['link']}"
+
+final = client.chat.completions.create(
+    model=getattr(client, "answer_model", None) or "gpt-4o-mini",
+    messages=[
+        {"role": "system", "content": sys_prompt},
+        {"role": "user", "content": user_q},
+        {"role": "assistant", "content": extra_context} if extra_context else
+        {"role": "assistant", "content": "원문 링크만 있습니다."}
+    ],
+    temperature=0.2
+)
+
+answer = final.choices[0].message.content
+# → Streamlit에 출력
 
 # --- per-turn nonce ledger (prevents double appends)
 st.session_state.setdefault('_nonce_done', {})
