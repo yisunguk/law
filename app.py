@@ -140,6 +140,9 @@ def _init_engine_lazy():
     )
     return st.session_state.engine
 
+DEBUG = st.sidebar.checkbox("DRF 디버그", value=False, key="__debug__")
+
+
 # 기존 ask_llm_with_tools를 얇은 래퍼로 교체
 from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
 
@@ -154,15 +157,22 @@ def ask_llm_with_tools(
     """① 의도 판단 → ② (가능하면) 라우터로 DRF 호출하여 조문 즉시 반환 → ③ 실패 시 엔진/직접호출 폴백"""
     import inspect
     import streamlit as st
+    import os
+    import json as _json
 
+    # ──────────────────────────────────────────────────────────────────────────
     # 0) 엔진/클라이언트
+    # ──────────────────────────────────────────────────────────────────────────
     engine = _init_engine_lazy() if "_init_engine_lazy" in globals() else globals().get("engine")
     _client = globals().get("client")
+
     if engine is None and _client is None:
         yield ("final", "엔진이 아직 초기화되지 않았습니다. (client/AZURE/TOOLS 확인)", [])
         return
 
+    # ──────────────────────────────────────────────────────────────────────────
     # 1) 모드 결정
+    # ──────────────────────────────────────────────────────────────────────────
     try:
         det_intent, _conf = classify_intent(user_q)
     except Exception:
@@ -174,11 +184,15 @@ def ask_llm_with_tools(
     except Exception:
         mode = det_intent
 
+    # ──────────────────────────────────────────────────────────────────────────
     # 2) 프롬프트/툴
+    # ──────────────────────────────────────────────────────────────────────────
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
+    # ──────────────────────────────────────────────────────────────────────────
     # 2.5) 히스토리
+    # ──────────────────────────────────────────────────────────────────────────
     try:
         msgs = st.session_state.get("messages", [])
         _hist = []
@@ -193,7 +207,12 @@ def ask_llm_with_tools(
     except Exception:
         history = []
 
+    # (옵션) 사이드바 디버그 스위치
+    DEBUG = st.sidebar.checkbox("DRF 디버그", value=False, key="__debug_drf__")
+
+    # ──────────────────────────────────────────────────────────────────────────
     # 2.7) 라우팅 → DRF → (본문 폴백 포함) 즉시 반환
+    # ──────────────────────────────────────────────────────────────────────────
     try:
         if _client is not None:
             router_model = (
@@ -203,7 +222,35 @@ def ask_llm_with_tools(
             )
             plan = make_plan_with_llm(_client, user_q, model=router_model)
 
+            if DEBUG:
+                st.sidebar.caption("Router plan")
+                st.sidebar.code(_json.dumps(plan, ensure_ascii=False, indent=2), language="json")
+
+            # ── MST 보강기: 플랜에 mst가 없으면 통합검색으로 즉시 보강 ──
+            def _resolve_mst_for(law_name: str) -> str:
+                try:
+                    if not law_name:
+                        return ""
+                    items, _, _ = _call_moleg_list("law", law_name, num_rows=5)
+                    # 정확 일치 우선
+                    for it in (items or []):
+                        if (it.get("법령명") or "").strip() == law_name.strip():
+                            return (it.get("MST") or "").strip()
+                    # 없으면 첫 후보
+                    return ((items or [{}])[0].get("MST") or "").strip()
+                except Exception:
+                    return ""
+
             if isinstance(plan, dict) and (plan.get("action") or "").upper() == "GET_ARTICLE":
+                if not (plan.get("mst") or "").strip():
+                    plan["mst"] = _resolve_mst_for(plan.get("law_name", ""))
+
+                if DEBUG:
+                    _oc = os.environ.get("LAW_API_OC", "")
+                    _oc_masked = (_oc[:2] + "***") if _oc else "(빈 값)"
+                    st.sidebar.text(f"OC(env): {_oc_masked}")
+                    st.sidebar.text(f"MST(resolved): {plan.get('mst','')}")
+
                 res = execute_plan(plan) or {}
 
                 law_hint = res.get("law") or plan.get("law_name") or ""
@@ -216,6 +263,11 @@ def ask_llm_with_tools(
                     if text2:
                         text, link = text2, (link2 or link)
 
+                if DEBUG:
+                    st.sidebar.caption("DRF link tried")
+                    st.sidebar.code(link or "(no link)", language="text")
+                    st.sidebar.text(f"text length: {len(text)}")
+
                 if text:
                     out = f"{text}\n\n원문 링크: {(link or _deep_article_url(law_hint, art_hint)).strip()}".strip()
                     yield ("final", out, [])
@@ -224,7 +276,9 @@ def ask_llm_with_tools(
         # 라우팅 실패 시 폴백으로 진행
         pass
 
+    # ──────────────────────────────────────────────────────────────────────────
     # 3) 폴백: (A) 엔진 → (B) 직접 ChatCompletion
+    # ──────────────────────────────────────────────────────────────────────────
     try:
         if engine is not None:
             try:
@@ -238,10 +292,13 @@ def ask_llm_with_tools(
 
             hist_key = next((k for k in ("history", "messages", "chat_history", "conversation") if k in params), None)
             if hist_key:
-                yield from engine.generate(user_q, **base_kwargs, **{hist_key: history})
+                yield from engine.generate(user_q, **{**base_kwargs, hist_key: history})
             else:
                 if history:
-                    transcript = "\n".join(f"{'사용자' if h['role']=='user' else '어시스턴트'}: {h['content']}" for h in history)
+                    transcript = "\n".join(
+                        f"{'사용자' if h['role']=='user' else '어시스턴트'}: {h['content']}"
+                        for h in history
+                    )
                     user_q2 = f"[이전 대화]\n{transcript}\n\n[현재 질문]\n{user_q}"
                 else:
                     user_q2 = user_q
@@ -250,7 +307,9 @@ def ask_llm_with_tools(
     except Exception:
         pass
 
+    # ──────────────────────────────────────────────────────────────────────────
     # B) 직접 ChatCompletion
+    # ──────────────────────────────────────────────────────────────────────────
     try:
         if _client is None:
             raise RuntimeError("LLM client not initialized")
@@ -261,7 +320,12 @@ def ask_llm_with_tools(
             or "gpt-4o"
         )
         msgs = [{"role": "system", "content": sys_prompt}] + history + [{"role": "user", "content": user_q}]
-        resp = _client.chat.completions.create(model=model_id, messages=msgs, temperature=0.2, max_tokens=1200)
+        resp = _client.chat.completions.create(
+            model=model_id,
+            messages=msgs,
+            temperature=0.2,
+            max_tokens=1200,
+        )
         answer = (resp.choices[0].message.content or "").strip()
         yield ("final", answer, [])
         return
@@ -1750,21 +1814,32 @@ def fix_links_with_lawdata(markdown: str, law_data: list[dict]) -> str:
 # Secrets / Clients / Session
 # =============================
 LAW_API_KEY, AZURE = load_secrets()
+
+# 👉 OC 브릿지: law_fetch.py가 환경변수에서만 OC를 읽으므로 여기서 연결
+import os, streamlit as st
+try:
+    _oc = st.secrets.get("LAW_API_OC", "")
+except Exception:
+    _oc = ""
+if _oc and not os.environ.get("LAW_API_OC"):
+    os.environ["LAW_API_OC"] = _oc  # DRF 호출용
+
+# Azure 클라이언트 초기화 (그대로 두되, 예외 시 폴백 로깅 유지)
 client = None
 if AZURE:
     try:
+        from openai import AzureOpenAI
         client = AzureOpenAI(
             api_key=AZURE["api_key"],
             api_version=AZURE["api_version"],
             azure_endpoint=AZURE["endpoint"],
         )
-        # ✅ 추가: 라우터가 사용할 Azure 배포명(4o) 고정
-        client.router_model = AZURE.get("router_deployment") or AZURE.get("deployment")
     except Exception as e:
         st.warning(f"Azure 초기화 실패, OpenAI로 폴백합니다: {e}")
 
-if client is None:                 # ← 예외 숨기지 않음
-    client = get_llm_client()      # 실패 시 RuntimeError 발생
+if client is None:
+    client = get_llm_client()
+
 
 import os
 try:
