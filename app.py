@@ -6,16 +6,16 @@ from modules.legal_modes import Intent, build_sys_for_mode  # 시스템 프롬�
 from modules.router_llm import make_plan_with_llm
 from modules.plan_executor import execute_plan
 
-# ... user_q = st.text_input(...) 등으로 질문을 받았다고 가정 ...
+# ... user_q = ... (사용자 질문 확보)
 
-# 1) LLM에게 라우팅 계획 받기
+# 1) LLM 라우팅 계획 생성
 plan = make_plan_with_llm(client, user_q)
 
-# 2) 계획 실행(본문/링크 확보)
+# 2) 계획 실행 (본문/링크 확보)
 result = execute_plan(plan)
 
-# 3) 답변 생성: DRF 원문을 프롬프트에 주입하여 최종 답변
-sys_prompt = build_sys_for_mode(Intent.LAWFINDER)  # "DRF 본문을 우선으로" 지시:contentReference[oaicite:7]{index=7}
+# 3) 최종 답변 합성(원문을 주입)
+sys_prompt = build_sys_for_mode(Intent.LAWFINDER)
 
 extra_context = ""
 if result.get("type") == "article" and result.get("text"):
@@ -27,11 +27,10 @@ final = client.chat.completions.create(
         {"role": "system", "content": sys_prompt},
         {"role": "user", "content": user_q},
         {"role": "assistant", "content": extra_context} if extra_context else
-        {"role": "assistant", "content": "원문 링크만 있습니다."}
+        {"role": "assistant", "content": "원문 링크만 확보되었습니다."}
     ],
     temperature=0.2
 )
-
 answer = final.choices[0].message.content
 # → Streamlit에 출력
 

@@ -2,14 +2,14 @@
 from __future__ import annotations
 from typing import Dict, Any, Optional
 
-# 패키지 상대 임포트 (modules 패키지 내부에서 안전)
+# 패키지 상대 임포트 우선
 try:
     from .law_fetch import fetch_article_block_by_mst, jo_from_art_label
 except ImportError:
     # 스트림릿 핫리로드/경로 이슈 대비
     from law_fetch import fetch_article_block_by_mst, jo_from_art_label
 
-__all__ = ["execute_plan"]  # 내보낼 심볼 명시
+__all__ = ["execute_plan"]
 
 def execute_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     act = (plan.get("action") or "").upper()
