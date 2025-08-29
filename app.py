@@ -1947,8 +1947,6 @@ def _summarize_laws_for_basic(law_items: list[dict], max_items: int = 6) -> str:
     )
 # --- 조문 본문 캡슐 버전으로 덮어쓰기 ---
 
-from modules.law_fetch import _summarize_laws_for_basic
-
 # === add: LLM-우선 후보 → 각 후보로 MOLEG API 다건 조회/누적 ===
 def prefetch_law_context(user_q: str, num_rows_per_law: int = 3) -> list[dict]:
     """
