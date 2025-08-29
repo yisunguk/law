@@ -1,17 +1,15 @@
 # === app.py: import block (맨 위로 교체) ===
 from __future__ import annotations
 import os, sys, re
+# === 세션 안전 부트스트랩: 이 블록만 남기세요 ===
 import streamlit as st
 from datetime import datetime
 
-# ----- 세션 안전 부트스트랩 -----
 def _ensure_messages() -> None:
-    """세션에 messages 리스트 보장."""
     if not isinstance(st.session_state.get("messages"), list):
         st.session_state["messages"] = []
 
 def _safe_append_message(role: str, content: str, **extra) -> None:
-    """빈문자/코드블록만/직전중복 방지 + 타임스탬프 포함"""
     _ensure_messages()
 
     txt = (content or "").strip()
@@ -20,11 +18,11 @@ def _safe_append_message(role: str, content: str, **extra) -> None:
     if txt.startswith("```") and txt.endswith("```"):
         return
 
-    msgs = st.session_state["messages"]
+    msgs = st.session_state["messages"]        # ✅ 이게 정답
     if msgs and isinstance(msgs[-1], dict):
         prev = msgs[-1]
         if prev.get("role") == role and (prev.get("content") or "").strip() == txt:
-            return  # 직전과 완전 동일하면 추가 안 함
+            return  # 직전과 동일하면 중복 추가 방지
 
     msgs.append({
         "role": role,
@@ -33,16 +31,12 @@ def _safe_append_message(role: str, content: str, **extra) -> None:
         **(extra or {})
     })
 
-# (레거시 호환) 예전 코드가 _append_message를 부르면 여기로 위임
 def _append_message(role: str, content: str, **extra) -> None:
     _safe_append_message(role, content, **extra)
 
-# 최초 1회 보장
-_ensure_messages()
-# ---------------------------------
+_ensure_messages()  # 최초 1회 보장
+# === 여기까지가 끝 ===
 
-# --- path/setup ---
-ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
@@ -55,7 +49,6 @@ try:
     from law_fetch import fetch_article_block_by_mst
 except Exception:
     from modules.law_fetch import fetch_article_block_by_mst  # noqa
-
 
 # 질문에서 법령명/조문 라벨 뽑기
 _LAW_ALIASES = {"건설산업법": "건설산업기본법"}  # 동음이의/약칭 교정표 필요시 추가
