@@ -8,11 +8,10 @@ from modules.plan_executor import execute_plan
 st.session_state.setdefault('_nonce_done', {})
 # --- cache helpers: suggestions shouldn't jitter on reruns ---
 def cached_suggest_for_tab(tab_key: str):
-    import streamlit as st
     store = st.session_state.setdefault("__tab_suggest__", {})
     if tab_key not in store:
         from modules import suggest_keywords_for_tab
-        store[tab_key] = cached_suggest_for_tab(tab_key)
+        store[tab_key] = suggest_keywords_for_tab(tab_key)  # ← 여기!
     return store[tab_key]
 
 def cached_suggest_for_law(law_name: str):
@@ -153,9 +152,12 @@ def ask_llm_with_tools(
     brief: bool = False,
 ):
     """
-    ① 의도 판단 → ② (가능하면) 라우터로 DRF 호출하여 조문 즉시 반환 → ③ 실패 시 기존 엔진으로 답변
+    ① 의도 판단 → ② (가능하면) 라우터로 DRF 호출하여 조문 즉시 반환 → ③ 실패 시 엔진/직접호출 폴백
     """
-    # 0) 엔진 준비
+    import inspect
+    import streamlit as st
+
+    # 0) 엔진/클라이언트 준비
     engine = _init_engine_lazy() if "_init_engine_lazy" in globals() else globals().get("engine")
     if engine is None and globals().get("client") is None:
         # 엔진/클라이언트가 모두 없으면 바로 종료
@@ -168,8 +170,11 @@ def ask_llm_with_tools(
     except Exception:
         det_intent, _conf = (Intent.QUICK, 0.0)
 
-    allowed = {Intent.QUICK, Intent.LAWFINDER, Intent.MEMO, Intent.DRAFT}
-    mode = forced_mode if (forced_mode in allowed) else det_intent
+    try:
+        valid_values = {m.value for m in Intent}
+        mode = Intent(forced_mode) if (forced_mode in valid_values) else det_intent
+    except Exception:
+        mode = det_intent
 
     # 2) 프롬프트/툴 사용 여부
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
@@ -201,35 +206,76 @@ def ask_llm_with_tools(
                     yield ("final", txt, [])
                     return  # ★ 여기서 종료 (이미 최종 답변 제공)
     except Exception:
-        pass  # 라우팅 실패 시 조용히 fallback
+        # 라우팅 실패 시 조용히 fallback
+        pass
 
-    # 3) Fallback: 기존 엔진으로 정상 스트리밍
+    # 3) Fallback: (A) 엔진 시도 → (B) 직접 ChatCompletion → (C) 최종 사과문
+    # A) 엔진 우선 시도 (generate 시그니처를 런타임 확인)
     try:
-        for kind, chunk, cites in engine.generate(
-            user_q,
-            system_prompt=sys_prompt,
-            allow_tools=use_tools,
-            history=history,
-            topk=num_rows,
-            stream=stream,
-        ):
-            yield (kind, chunk, cites)
+        if engine is not None:
+            try:
+                params = set(inspect.signature(engine.generate).parameters)
+            except Exception:
+                params = set()
+
+            base_kwargs = dict(
+                system_prompt=sys_prompt,
+                allow_tools=use_tools,
+                num_rows=num_rows,
+                stream=stream,
+            )
+            # primer_enable을 지원하는 엔진만 넣기
+            if "primer_enable" in params:
+                base_kwargs["primer_enable"] = True
+
+            # 히스토리 인자 이름 자동 탐색
+            hist_key = None
+            for key in ("history", "messages", "chat_history", "conversation"):
+                if key in params:
+                    hist_key = key
+                    break
+
+            if hist_key:
+                yield from engine.generate(user_q, **base_kwargs, **{hist_key: history})
+            else:
+                # 히스토리 파라미터가 없으면 텍스트로 앞에 붙여 전달
+                if history:
+                    transcript = "\n".join(
+                        f"{'사용자' if h['role']=='user' else '어시스턴트'}: {h['content']}"
+                        for h in history
+                    )
+                    user_q = f"[이전 대화]\n{transcript}\n\n[현재 질문]\n{user_q}"
+                yield from engine.generate(user_q, **base_kwargs)
+            return  # 엔진 경로 성공 시 종료
     except Exception:
+        # 엔진 경로 실패 → 아래 B로 폴백
+        pass
+
+    # B) 직접 ChatCompletion 폴백
+    try:
+        _client = globals().get("client")
+        if _client is None:
+            raise RuntimeError("LLM client not initialized")
+
+        msgs = [{"role": "system", "content": sys_prompt}] + history + [
+            {"role": "user", "content": user_q}
+        ]
+        model_id = (globals().get("AZURE") or {}).get("deployment") or "gpt-4o-mini"
+
+        resp = _client.chat.completions.create(
+            model=model_id,
+            messages=msgs,
+            temperature=0.2,
+            max_tokens=1200,
+        )
+        answer = (resp.choices[0].message.content or "").strip()
+        yield ("final", answer, [])
+        return
+    except Exception:
+        # C) 정말 모두 실패했을 때만 사과문
         yield ("final", "죄송합니다. 내부 오류로 답변을 완료하지 못했습니다.", [])
+        return
 
-import io, os, re, json, time, html
-
-if "_normalize_text" not in globals():
-    def _normalize_text(s: str) -> str:
-        """불필요한 공백/빈 줄을 정돈하는 안전한 기본 버전"""
-        s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
-        # 앞뒤 공백 정리
-        s = s.strip()
-        # 3개 이상 연속 개행 → 2개로
-        s = re.sub(r"\n{3,}", "\n\n", s)
-        # 문장 끝 공백 제거
-        s = re.sub(r"[ \t]+\n", "\n", s)
-        return s
 
 def _esc(s: str) -> str:
     """HTML escape only"""
@@ -2363,16 +2409,18 @@ def find_law_with_fallback(user_query: str, num_rows: int = 10):
     return [], endpoint, err, "none"
 
 def _append_message(role: str, content: str, **extra):
-    
+    """어시스턴트/사용자 메시지를 세션에 추가한다.
+    - 코드블록만으로 이루어진 응답도 허용 (이전 가드 제거).
+    - 직전 메시지와 완전히 동일하면 중복 삽입 방지.
+    """
     txt = (content or "").strip()
-    is_code_only = (txt.startswith("```") and txt.endswith("```"))
-    if not txt or is_code_only:
+    if not txt:
         return
     msgs = st.session_state.get("messages", [])
     if msgs and isinstance(msgs[-1], dict) and msgs[-1].get("role")==role and (msgs[-1].get("content") or "").strip()==txt:
-        # skip exact duplicate of the last message (role+content)
         return
     st.session_state.messages.append({"role": role, "content": txt, **extra})
+
 
 
 
