@@ -71,6 +71,19 @@ if "cached_suggest_for_law" not in globals():
             return store[law_name]
         except Exception:
             return _DEFAULT_LAW.get(law_name, ["정의","목적","벌칙"])
+
+# --- CONSTANT: central ministries list (used by selectbox) ---
+if "MINISTRIES" not in globals():
+    MINISTRIES = [
+        "부처 선택(선택)",
+        "국무조정실", "기획재정부", "교육부", "과학기술정보통신부",
+        "외교부", "통일부", "법무부", "행정안전부", "문화체육관광부",
+        "농림축산식품부", "산업통상자원부", "보건복지부", "환경부",
+        "고용노동부", "여성가족부", "국토교통부", "해양수산부",
+        "중소벤처기업부", "금융위원회", "방송통신위원회", "공정거래위원회",
+        "국가보훈부", "인사혁신처", "원자력안전위원회", "질병관리청",
+    ]
+# -------------------------------------------------------------
 # === END HOTFIX ===
     if not isinstance(st.session_state.get("messages"), list):
         st.session_state["messages"] = []
