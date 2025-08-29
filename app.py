@@ -16,6 +16,67 @@ def _ensure_messages() -> None:
 
 def _safe_append_message(role: str, content: str, **extra) -> None:
     _ensure_messages()
+    txt = (content or "").strip()
+    if not txt:
+        return
+    if txt.startswith("```") and txt.endswith("```"):
+        return
+    msgs = st.session_state["messages"]
+    if msgs and isinstance(msgs[-1], dict):
+        prev = msgs[-1]
+        if prev.get("role") == role and (prev.get("content") or "").strip() == txt:
+            return
+    msgs.append({
+        "role": role,
+        "content": txt,
+        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        **(extra or {})
+    })
+
+
+
+# === HOTFIX: define early fallbacks so calls never raise NameError ===
+if "cached_suggest_for_tab" not in globals():
+    def cached_suggest_for_tab(tab_key: str):
+        _DEFAULT = {
+            "admrul": ["고시", "훈령", "예규", "지침", "개정"],
+            "ordin":  ["조례", "규칙", "규정", "시행", "개정"],
+            "trty":   ["비준", "발효", "양자", "다자", "협정"],
+            "prec":   ["손해배상", "대여금", "사기", "이혼", "근로"],
+            "cc":     ["위헌", "합헌", "각하", "침해", "기각"],
+            "expc":   ["유권해석", "법령해석", "질의회신", "적용범위"],
+        }
+        try:
+            from modules import suggest_keywords_for_tab
+            import streamlit as st
+            store = st.session_state.setdefault("__tab_suggest__", {})
+            if tab_key not in store:
+                store[tab_key] = suggest_keywords_for_tab(tab_key) or _DEFAULT.get(tab_key, [])
+            return store[tab_key]
+        except Exception:
+            return _DEFAULT.get(tab_key, [])
+
+if "cached_suggest_for_law" not in globals():
+    def cached_suggest_for_law(law_name: str):
+        _DEFAULT_LAW = {
+            "민법": ["제839조", "재산분할", "이혼", "제840조", "친권"],
+            "형법": ["제307조", "명예훼손", "사기", "폭행", "상해"],
+        }
+        try:
+            from modules import suggest_keywords_for_law
+            import streamlit as st
+            store = st.session_state.setdefault("__law_suggest__", {})
+            if law_name not in store:
+                store[law_name] = suggest_keywords_for_law(law_name) or _DEFAULT_LAW.get(law_name, ["정의","목적","벌칙"])
+            return store[law_name]
+        except Exception:
+            return _DEFAULT_LAW.get(law_name, ["정의","목적","벌칙"])
+# === END HOTFIX ===
+    if not isinstance(st.session_state.get("messages"), list):
+        st.session_state["messages"] = []
+
+def _safe_append_message(role: str, content: str, **extra) -> None:
+    _ensure_messages()
 
 def format_law_context(law_data: list[dict]) -> str:
     """
