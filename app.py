@@ -1,30 +1,20 @@
-# app.py — fixed header
+# === app.py: import block (맨 위로 교체) ===
 from __future__ import annotations
-
+import os, sys, re
 import streamlit as st
-import re
 
-# app.py 맨 위 근처
-import os, sys
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-# 모듈 전역에 미리 컴파일
 _NEED_TOOLS = re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API)', re.I)
 
 from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
-from modules.law_fetch import fetch_article_block_by_mst, _summarize_laws_for_primer
 
-# === [ADD] 조문 원문 캡슐 주입 유틸 (app.py 상단 import 바로 아래) ===
-import re
-import streamlit as st
-
+# law_fetch: 루트 또는 패키지 경로 모두 허용
 try:
-    # 루트에 law_fetch.py가 있는 프로젝트 구조 기준
     from law_fetch import fetch_article_block_by_mst
 except Exception:
-    # 혹시 modules/ 경로를 쓰는 구조라면 이 라인을 쓰세요.
     from modules.law_fetch import fetch_article_block_by_mst  # noqa
 
 # 질문에서 법령명/조문 라벨 뽑기
@@ -1957,7 +1947,7 @@ def _summarize_laws_for_basic(law_items: list[dict], max_items: int = 6) -> str:
     )
 # --- 조문 본문 캡슐 버전으로 덮어쓰기 ---
 
-from modules.law_fetch import _summarize_laws_for_primer
+from modules.law_fetch import _summarize_laws_for_basic
 
 # === add: LLM-우선 후보 → 각 후보로 MOLEG API 다건 조회/누적 ===
 def prefetch_law_context(user_q: str, num_rows_per_law: int = 3) -> list[dict]:
