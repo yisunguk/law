@@ -97,17 +97,15 @@ def build_article_capsule(user_q: str, num_rows: int = 5) -> dict | None:
         return None
 
     eff = (best.get('시행일자') or best.get('공포일자') or '').strip().replace('-', '') or None
-    eff = (best.get('시행일자') or best.get('공포일자') or '').strip().replace('-', '') or None
+    # 1순위 HTML → 2순위 HTML 전체 슬라이스 → 3순위 JSON
     body, link = fetch_article_block_by_mst(mst, want_art, prefer="JSON", efYd=eff)
-
-
     if not body and want_art:
-        html_all, link_all = fetch_article_block_by_mst(mst, None, prefer="HTML")
+        html_all, link_all = fetch_article_block_by_mst(mst, None, prefer="HTML", efYd=eff)
         sliced = _slice_article_from_html(html_all or "", want_art)
         if sliced:
             body, link = sliced, (link or link_all)
     if not body:
-        body, link = fetch_article_block_by_mst(mst, want_art, prefer="JSON")
+        body, link = fetch_article_block_by_mst(mst, want_art, prefer="HTML", efYd=eff)
     if not body:
         return None
 
@@ -183,159 +181,9 @@ def _pick_best_law(items: list[dict], qname: str | None) -> dict | None:
                 return x
     return cand[0]
 
-def _slice_article_from_html(html: str, want: str) -> str | None:
-    """HTML 전체에서 '제N조(…)' 블록만 잘라내기."""
-    if not (html and want): return None
-    txt = re.sub(r'<[^>]+>', '\n', html)
-    txt = re.sub(r'\n{2,}', '\n', txt).strip()
-    p_start = re.compile(rf'{re.escape(want)}\s*(?=[\(\s]|$)')
-    m = p_start.search(txt) or re.compile(rf'{re.escape(want)}\s*\(').search(txt)
-    if not m: return None
-    p_next = re.compile(r'제\s*\d{1,4}\s*조(?:\s*의\s*\d{1,3})?')
-    m2 = p_next.search(txt, m.end())
-    block = txt[m.start(): (m2.start() if m2 else len(txt))].strip()
-    return block or None
-
-def build_article_capsule(user_q: str, num_rows: int = 5) -> dict | None:
-    """
-    사용자 질문에서 법령/조문을 감지해 DRF에서 조문 본문을 가져와
-    - sys_add: System Prompt에 붙일 캡슐 문자열
-    - ui: 화면에 출력할 원문(링크 포함)
-    를 반환. 실패 시 None.
-    """
-    want_law  = extract_law_name(user_q or "")
-    want_art  = extract_article_label(user_q or "")
-    trigger   = bool(want_art or re.search(r'(본문|원문|전문|요약\s*하지\s*말)', user_q or '', re.I))
-    if not trigger:
-        return None
-
-    # 후보 수집
-    _pack = find_all_law_data(user_q, num_rows=num_rows) or {}
-    bucket = find_all_law_data(user_q, num_rows=num_rows) or {}
-    law_items = (bucket.get("법령") or {}).get("items", [])
-    best = _pick_best_law(law_items, want_law)
-    if not best: 
-        return None
-
-    mst = str(best.get('MST') or best.get('법령일련번호') or best.get('법령ID') or '').strip()
-    if not mst:
-        return None
-
-    # 1차: HTML 우선(조문 구조가 들쭉날쭉할 때 안정적)
-    eff = (best.get('시행일자') or best.get('공포일자') or '').strip().replace('-', '') or None
-    body, link = fetch_article_block_by_mst(mst, want_art, prefer="JSON", efYd=eff)
-
-    # 2차: 조문을 못 찾았으면 전체 HTML에서 직접 슬라이스
-    if not body and want_art:
-        html_all, link_all = fetch_article_block_by_mst(mst, None, prefer="HTML")
-        sliced = _slice_article_from_html(html_all or "", want_art)
-        if sliced:
-            body, link = sliced, (link or link_all)
-    # 3차: 그래도 없으면 JSON 폴백
-    if not body:
-        body, link = fetch_article_block_by_mst(mst, want_art, prefer="JSON")
-
-    if not body:
-        return None
-
-    law_name = (best.get('법령명한글') or best.get('법령명') or '').strip()
-    try:
-        link = normalize_law_link(link) or link
-    except Exception:
-        pass
-
-    sys_add = (
-        "\n\n[법령 본문 캡슐]\n"
-        f"법령명: {law_name}\n"
-        f"조문: {want_art or '(전체)'}\n"
-        f"링크: {link}\n"
-        f"{body.strip()[:2000]}\n"
-    )
-    return {
-        "sys_add": sys_add,
-        "ui": {
-            "law_name": law_name,
-            "art_label": want_art or '',
-            "link": link,
-            "text": body.strip(),
-        },
-    }
 
 
-# 최상단 스크롤 기준점
-st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
 
-st.markdown("""
-<style>
-:root{
-  --center-col: 980px;   /* 중앙 전체 폭 */
-  --bubble-max: 760px;   /* 말풍선 최대 폭 */
-  --pad-x: 12px;         /* 좌우 여백 */
-}
-
-/* 본문(채팅 전/후 공통) 중앙 폭 고정 */
-.block-container{
-  max-width: var(--center-col) !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-  padding-left: var(--pad-x) !important;
-  padding-right: var(--pad-x) !important;
-}
-
-/* 업로더/폼/카드류도 같은 폭 */
-.block-container [data-testid="stFileUploader"],
-.block-container form,
-.block-container .stForm,
-.block-container .stMarkdown>div{
-  max-width: var(--center-col) !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-}
-
-/* 채팅 메시지 폭(답변 후) */
-[data-testid="stChatMessage"]{
-  max-width: var(--bubble-max) !important;
-  width: 100% !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<style>
-:root{
-  --left-rail: 300px;
-  --right-rail: calc(var(--flyout-width, 0px) + var(--flyout-gap, 0px));
-}
-</style>
-<script>
-(function(){
-  function setLeftRail(){
-    const sb = window.parent.document.querySelector('[data-testid="stSidebar"]');
-    if(!sb) return;
-    const w = Math.round(sb.getBoundingClientRect().width || 300);
-    document.documentElement.style.setProperty('--left-rail', w + 'px');
-  }
-  setLeftRail();
-  window.addEventListener('resize', setLeftRail);
-  new MutationObserver(setLeftRail).observe(window.parent.document.body, {subtree:true, childList:true, attributes:true});
-})();
-</script>
-""", unsafe_allow_html=True)
-
-
-# === [BOOTSTRAP] session keys (must be first) ===
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "_last_user_nonce" not in st.session_state:
-    st.session_state["_last_user_nonce"] = None
-
-
-KEY_PREFIX = "main"
-
-# 법/조문/DRF/API 키워드가 보이면 도구 강제 ON
-_NEED_TOOLS = re.compile(r'(법령|조문|제\d+조(?:의\d+)?|DRF|OPEN\s*API|API)', re.I)
 
 def _init_engine_lazy():
     if "engine" in st.session_state and st.session_state.engine is not None:
@@ -606,9 +454,8 @@ def render_api_diagnostics():
                 it = items[0]  # 또는 _pick_best(items, _kw)
                 mst = (it.get("MST") or it.get("법령ID") or "").strip()
                 if mst:
-                    eff = (best.get('시행일자') or best.get('공포일자') or '').strip().replace('-', '') or None
-                    body, link = fetch_article_block_by_mst(mst, want_art, prefer="JSON", efYd=eff)
-
+                    eff = (it.get("시행일자") or it.get("공포일자") or "").strip().replace("-", "") or None
+                    body, link = fetch_article_block_by_mst(mst, None, prefer="HTML", efYd=eff)
                     st.write("DRF 본문 링크:", link or "-")
                     st.write("본문 길이:", len(body or ""))
                 else:
@@ -3642,9 +3489,8 @@ if re.search(r'(본문|원문|요약\s*하지\s*말)', user_q or '', re.I):
         # 3) 우선 mst_from_name 사용, 없으면 law_pick에서 폴백
         mst = mst_from_name or (law_pick.get('MST') or law_pick.get('법령ID') or law_pick.get('법령일련번호') or '').strip()
         if mst:
-            eff = (best.get('시행일자') or best.get('공포일자') or '').strip().replace('-', '') or None
-            body, link = fetch_article_block_by_mst(mst, want_art, prefer="JSON", efYd=eff)
-
+            eff = (law_pick.get('시행일자') or law_pick.get('공포일자') or '').strip().replace('-', '') or None
+            body, link = fetch_article_block_by_mst(mst, want_article, prefer='JSON', efYd=eff)
             if body:
                 head = f"### 요청하신 {want_article}\n\n"
                 if link:
