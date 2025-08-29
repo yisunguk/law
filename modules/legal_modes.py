@@ -1,11 +1,6 @@
-# modules/legal_modes.py
 
-import re  # ← 누락되어 NameError 발생
-
-# 예: 아래처럼 정규식 상수가 이어서 정의되어 있을 겁니다.
+import re  # 정규식 상수에서 사용
 _ART_HDR = re.compile(r'^\s*제\d{1,4}조(의\d{1,3})?\s*', re.M)
-# ...
-
 
 # --- law_fetch.py: 드롭인 패치 (REPLACE) ---
 
