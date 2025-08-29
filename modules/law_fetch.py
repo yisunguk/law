@@ -1,102 +1,108 @@
-# modules/law_fetch.py — 드롭인 패치 (REPLACE)
+# law_fetch.py — DRF 본문(조문 단위) 안정 추출 모듈
 
-import re, json
+from __future__ import annotations
+import os, re, json
+from typing import Tuple, Optional
+import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urlencode
 
-# 1) JSON → 풀텍스트 평문화: "제n조(제목)" 머리줄을 복원
-def _extract_text_from_json(text: str) -> tuple[str, dict]:
+# -------------------------
+# 0) DRF 링크 빌더
+# -------------------------
+def _build_drf_link(mst: str, typ: str = "HTML", *, efYd: Optional[str] = None,
+                    lang: str = "KO", jo: Optional[str] = None) -> str:
+    base = "https://www.law.go.kr/DRF/lawService.do"
+    q = {
+        "OC": os.environ.get("LAW_API_OC", ""),
+        "target": "law",
+        "MST": str(mst),
+        "type": typ,
+    }
+    if efYd: q["efYd"] = efYd
+    if lang: q["LANG"] = lang
+    if jo:   q["JO"]   = jo
+    return base + "?" + urlencode(q)
+
+# ---------------------------------
+# 1) DRF 호출 + 포맷별 텍스트 평문화
+# ---------------------------------
+def _extract_text_from_html(html_text: str) -> str:
+    soup = BeautifulSoup(html_text or "", "html.parser")
+    main = soup.select_one("#contentBody") or soup.select_one("#conBody") \
+           or soup.select_one("#content") or soup.select_one("body") or soup
+    txt = main.get_text("\n", strip=True)
+    return re.sub(r"\n{3,}", "\n\n", txt)
+
+def _extract_text_from_json(json_text: str) -> str:
     try:
-        data = json.loads(text)
+        data = json.loads(json_text or "{}")
     except Exception:
-        return "", {}
-
-    info = {}
-
-    def _walk_pairs(v):
-        if isinstance(v, dict):
-            for k, x in v.items():
-                yield k, x
-                yield from _walk_pairs(x)
-        elif isinstance(v, list):
-            for x in v:
-                yield from _walk_pairs(x)
-
-    # 법령명 추출
-    for k, v in _walk_pairs(data):
-        if k in ("법령명한글", "법령명", "lawName") and isinstance(v, str) and v.strip():
-            info["law_name"] = v.strip()
-            break
-
-    # 조문 트리 → 평문화
+        return ""
     lines = []
+    def walk(v):
+        if isinstance(v, dict):
+            al = v.get("조문여부") or v.get("AL")
+            an = v.get("조문번호") or v.get("AN")
+            at = v.get("조문제목") or v.get("AT")
+            if (al == "Y") and an:
+                head = f"제{an}조"
+                if at:
+                    head += f"({at})"
+                lines.append(head)
+            bt = v.get("본문") or v.get("BT")
+            if isinstance(bt, str) and bt.strip():
+                lines.append(bt.strip())
+            for k in ("항", "호", "목", "조문", "조문내용"):
+                x = v.get(k)
+                if x: walk(x)
+        elif isinstance(v, list):
+            for x in v: walk(x)
+    walk(data)
+    return "\n".join(lines).strip()
 
-    def _emit_article(n):
-        if not isinstance(n, dict):
-            return
-        num = (n.get("조문번호") or n.get("조문번호_한글") or "").strip()
-        title = (n.get("조문제목") or "").strip()
-        body = (n.get("조문내용") or n.get("내용") or n.get("text") or "").strip()
-        head = (f"{num}{f'({title})' if title else ''}").strip()
-        if head:
-            lines.append(head)
-        if body:
-            lines.append(body)
+def _drf_get(mst: str, *, typ: str = "JSON", jo: Optional[str] = None,
+             efYd: Optional[str] = None, timeout: float = 10.0) -> Tuple[str, str]:
+    url = _build_drf_link(mst, typ=typ, efYd=efYd, jo=jo)
+    s = requests.Session()
+    r = s.get(url, timeout=timeout, headers={
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "*/*",
+        "Referer": "https://www.law.go.kr/DRF/index.do",
+    })
+    r.raise_for_status()
+    return r.text or "", url
 
-        # 하위(항/호/목/children 등 일반 케이스 지원)
-        for key in ("항", "호", "목", "조문", "children", "Items"):
-            v = n.get(key)
-            if isinstance(v, list):
-                for c in v:
-                    _emit_article(c)
-            elif isinstance(v, dict):
-                _emit_article(v)
+def fetch_law_detail_text(mst: str, *, prefer: str = "JSON",
+                          jo: Optional[str] = None, efYd: Optional[str] = None,
+                          timeout: float = 10.0) -> Tuple[str, str, str]:
+    """
+    DRF lawService 본문을 평문으로 반환.
+    - prefer(JSON/HTML) 우선 시도 → 실패 시 1회 폴백
+    - jo(조문 6자리)가 있으면 해당 조문만 서버에서 필터링 (권장)
+    반환: (plain_text, used_type, url)
+    """
+    order = [prefer.upper(), "HTML" if prefer.upper() == "JSON" else "JSON"]
+    last_url = ""
+    for typ in order:
+        text, last_url = _drf_get(mst, typ=typ, jo=jo, efYd=efYd, timeout=timeout)
+        plain = _extract_text_from_json(text) if typ == "JSON" else _extract_text_from_html(text)
+        if len(plain.strip()) >= 30:
+            return plain, typ, last_url
+    return "", order[-1], last_url
 
-    def _recur(x):
-        if isinstance(x, dict):
-            _emit_article(x)
-            for v in x.values():
-                _recur(v)
-        elif isinstance(x, list):
-            for v in x:
-                _recur(v)
+# -----------------------------------------
+# 2) 조문 블록 슬라이스(헤더 관대 매칭)
+# -----------------------------------------
+_ART_HDR = re.compile(r"^\s*제\d{1,4}조(의\d{1,3})?\s*", re.M)
 
-    _recur(data)
-
-    if lines:
-        flat = "\n".join(lines)
-        return flat[:120000], info  # 넉넉한 상한
-
-    # 폴백(기존 휴리스틱)
-    texts = []
-    for k, v in _walk_pairs(data):
-        if isinstance(v, str) and k in {"조문내용", "조문", "내용", "text"} and len(v.strip()) >= 30:
-            texts.append(v.strip())
-            if len(texts) >= 3:
-                break
-    return ("\n".join(texts[:3]) if texts else ""), info
-
-
-# 2) HTML 파서 선택자 보강(+ 상한 확장)
-def _extract_text_from_html(text: str) -> str:
-    soup = BeautifulSoup(text, "lxml")
-    for tag in soup(["script", "style", "noscript"]):
-        tag.decompose()
-    main = soup.select_one(
-        "#conScroll, .conScroll, .lawSeView, .lawView, "
-        "#contentBody, #content, #wrap, pre, body"
-    )
-    out = (main.get_text("\n", strip=True) if main else soup.get_text("\n", strip=True))
-    return out[:12000]
-
-
-# 3) 조문 블록 슬라이스(다음 조문 헤더까지)
-_ART_HDR = re.compile(r'^\s*제\d{1,4}조(의\d{1,3})?\s*', re.M)
 def extract_article_block(full_text: str, art_label: str, max_chars: int = 4000) -> str:
     if not full_text or not art_label:
         return ""
-    m = re.search(rf'^\s*{re.escape(art_label)}[^\n]*$', full_text, re.M)
-    if not m:
-        m = re.search(rf'^\s*{re.escape(art_label)}\s*', full_text, re.M)
+    mnum = re.search(r"(제\s*\d{1,4}\s*조(?:\s*의\s*\d{1,3})?)", art_label)
+    key = mnum.group(1) if mnum else art_label
+    m = re.search(rf"^\s*{re.escape(key)}[^\n]*$", full_text, re.M) or \
+        re.search(rf"^\s*{re.escape(key)}\b.*$", full_text, re.M)
     if not m:
         return ""
     start = m.start()
@@ -104,34 +110,37 @@ def extract_article_block(full_text: str, art_label: str, max_chars: int = 4000)
     end = n.start() if n else len(full_text)
     return full_text[start:end].strip()[:max_chars]
 
+# -----------------------------------------
+# 3) '제n조(의m)' → JO 6자리 변환
+# -----------------------------------------
+def jo_from_art_label(art_label: str) -> Optional[str]:
+    m = re.search(r"제\s*(\d{1,4})\s*조(?:\s*의\s*(\d{1,3}))?", art_label or "")
+    if not m: return None
+    main = int(m.group(1))
+    sub  = int(m.group(2)) if m.group(2) else 0
+    return f"{main:04d}{sub:02d}"  # 83조 → 008300, 10조의2 → 001002
 
-# 4) DRF 본문 조회 + 짧으면 자동 폴백(JSON↔HTML)
-def fetch_article_block_by_mst(
-    mst: str,
-    art_label: str | None,
-    prefer: str = "JSON",
-    timeout: float = 8.0
-) -> tuple[str, str]:
+# -----------------------------------------
+# 4) 최종: MST + (옵션)조문 라벨 → 본문
+# -----------------------------------------
+def fetch_article_block_by_mst(mst: str, art_label: Optional[str],
+                               prefer: str = "JSON", efYd: Optional[str] = None,
+                               timeout: float = 10.0) -> Tuple[str, str]:
     """
-    - prefer 포맷으로 먼저 시도
-    - 결과가 없거나 너무 짧으면 반대 포맷으로 1회 폴백
-    - art_label 없으면 앞부분 일부(미리보기) 반환
+    - art_label이 있으면 JO 파라미터를 사용해 서버에서 조문만 받아온다(가장 안정).
+    - JO가 불가/실패면 평문화 텍스트에서 조문 슬라이스.
+    반환: (조문 텍스트 또는 미리보기, 원문 HTML 링크)
     """
-    from .law_fetch import fetch_law_detail_text, _build_drf_link  # 프로젝트 내 기존 함수 사용
+    jo = jo_from_art_label(art_label) if art_label else None
+    txt, used, url = fetch_law_detail_text(mst, prefer=prefer, jo=jo, efYd=efYd, timeout=timeout)
 
-    txt, used, _ = fetch_law_detail_text(mst, prefer=prefer)
-    block = ""
-    if txt:
-        block = extract_article_block(txt, art_label) if art_label else txt[:2000]
+    block = txt
+    if art_label and not jo:
+        block = extract_article_block(txt, art_label)
+    if not (block and block.strip()):
+        alt = "HTML" if (prefer or "").upper() == "JSON" else "JSON"
+        txt2, _, _ = fetch_law_detail_text(mst, prefer=alt, jo=jo, efYd=efYd, timeout=timeout)
+        block = (extract_article_block(txt2, art_label) if (art_label and not jo) else txt2) or ""
 
-    # 길이 기준(짧으면 실패 간주)으로 폴백
-    if (not block) or (len(block) < 80):
-        alt = "JSON" if (prefer or "").upper() == "HTML" else "HTML"
-        txt2, _, _ = fetch_law_detail_text(mst, prefer=alt)
-        if txt2:
-            block2 = extract_article_block(txt2, art_label) if art_label else txt2[:2000]
-            if len((block2 or "")) >= max(80, len(block or "")):
-                block = block2
-
-    link = _build_drf_link(mst, typ="HTML")
+    link = _build_drf_link(mst, typ="HTML", efYd=efYd, jo=jo)
     return (block or "").strip(), link

@@ -96,8 +96,11 @@ def build_article_capsule(user_q: str, num_rows: int = 5) -> dict | None:
     if not mst:
         return None
 
-    # 1순위 HTML → 2순위 HTML 전체 슬라이스 → 3순위 JSON
-    body, link = fetch_article_block_by_mst(mst, want_art, prefer="HTML")
+    eff = (best.get('시행일자') or best.get('공포일자') or '').strip().replace('-', '') or None
+    eff = (best.get('시행일자') or best.get('공포일자') or '').strip().replace('-', '') or None
+    body, link = fetch_article_block_by_mst(mst, want_art, prefer="JSON", efYd=eff)
+
+
     if not body and want_art:
         html_all, link_all = fetch_article_block_by_mst(mst, None, prefer="HTML")
         sliced = _slice_article_from_html(html_all or "", want_art)
@@ -219,7 +222,9 @@ def build_article_capsule(user_q: str, num_rows: int = 5) -> dict | None:
         return None
 
     # 1차: HTML 우선(조문 구조가 들쭉날쭉할 때 안정적)
-    body, link = fetch_article_block_by_mst(mst, want_art, prefer="HTML")
+    eff = (best.get('시행일자') or best.get('공포일자') or '').strip().replace('-', '') or None
+    body, link = fetch_article_block_by_mst(mst, want_art, prefer="JSON", efYd=eff)
+
     # 2차: 조문을 못 찾았으면 전체 HTML에서 직접 슬라이스
     if not body and want_art:
         html_all, link_all = fetch_article_block_by_mst(mst, None, prefer="HTML")
@@ -601,7 +606,9 @@ def render_api_diagnostics():
                 it = items[0]  # 또는 _pick_best(items, _kw)
                 mst = (it.get("MST") or it.get("법령ID") or "").strip()
                 if mst:
-                    body, link = fetch_article_block_by_mst(mst, None, prefer="HTML")
+                    eff = (best.get('시행일자') or best.get('공포일자') or '').strip().replace('-', '') or None
+                    body, link = fetch_article_block_by_mst(mst, want_art, prefer="JSON", efYd=eff)
+
                     st.write("DRF 본문 링크:", link or "-")
                     st.write("본문 길이:", len(body or ""))
                 else:
@@ -3635,7 +3642,9 @@ if re.search(r'(본문|원문|요약\s*하지\s*말)', user_q or '', re.I):
         # 3) 우선 mst_from_name 사용, 없으면 law_pick에서 폴백
         mst = mst_from_name or (law_pick.get('MST') or law_pick.get('법령ID') or law_pick.get('법령일련번호') or '').strip()
         if mst:
-            body, link = fetch_article_block_by_mst(mst, want_article, prefer='JSON')
+            eff = (best.get('시행일자') or best.get('공포일자') or '').strip().replace('-', '') or None
+            body, link = fetch_article_block_by_mst(mst, want_art, prefer="JSON", efYd=eff)
+
             if body:
                 head = f"### 요청하신 {want_article}\n\n"
                 if link:
