@@ -1717,52 +1717,78 @@ def fix_links_with_lawdata(markdown: str, law_data: list[dict]) -> str:
     return pat.sub(repl, markdown)
 
 # =============================
-# Secrets / Clients / Session
+# Secrets / Clients / Session  ← 전체 교체
 # =============================
-LAW_API_KEY, AZURE = load_secrets()
-client = None
-if AZURE:
-    try:
-        client = AzureOpenAI(
-            api_key=AZURE["api_key"],
-            api_version=AZURE["api_version"],
-            azure_endpoint=AZURE["endpoint"],
-        )
-    except Exception as e:
-        st.warning(f"Azure 초기화 실패, OpenAI로 폴백합니다: {e}")
-
-if client is None:                 # ← 예외 숨기지 않음
-    client = get_llm_client()      # 실패 시 RuntimeError 발생
-
 import os
-try:
-    from openai import OpenAI
-    from openai import AzureOpenAI
-except Exception:
-    OpenAI = None
-    AzureOpenAI = None
+from openai import OpenAI, AzureOpenAI
+import streamlit as st
+
+def load_secrets():
+    try:
+        law_key = st.secrets["LAW_API_KEY"]
+    except Exception:
+        law_key = None
+        st.error("`LAW_API_KEY`가 없습니다. Streamlit → App settings → Secrets에 추가하세요.")
+    try:
+        az = st.secrets["azure_openai"]
+        _ = (az["api_key"], az["endpoint"], az["deployment"], az["api_version"])
+    except Exception:
+        az = None
+        st.warning("Azure OpenAI 설정이 없으므로 기본 안내만 제공합니다.")
+    return law_key, az
 
 def get_llm_client():
-    # 기존 load_secrets() 쓰시던 구조면 그대로 사용
+    """
+    - AZURE(OpenAI) 우선, 실패 시 OpenAI 기본으로 폴백
+    - 환경변수: OPENAI_API_KEY / AZURE_OPENAI_* 지원
+    """
+    # 1) Streamlit secrets 우선
     try:
-        from modules.advice_engine import load_secrets  # 프로젝트에 이미 있을 가능성 높음
+        law_key = st.secrets.get("LAW_API_KEY", None)  # 미사용이어도 호출 일관성 보장
     except Exception:
-        load_secrets = lambda: (os.environ.get("OPENAI_API_KEY"), {
-            "api_key": os.environ.get("AZURE_OPENAI_API_KEY"),
-            "api_version": os.environ.get("AZURE_OPENAI_API_VERSION"),
-            "endpoint": os.environ.get("AZURE_OPENAI_ENDPOINT"),
-        })
+        law_key = None
 
-    OPENAI_KEY, AZURE = load_secrets()
-    if AZURE and AzureOpenAI and AZURE.get("api_key"):
+    az = None
+    try:
+        az = st.secrets["azure_openai"]
+    except Exception:
+        # 환경변수 기반 폴백
+        az = {
+            "api_key":    os.environ.get("AZURE_OPENAI_API_KEY"),
+            "endpoint":   os.environ.get("AZURE_OPENAI_ENDPOINT"),
+            "api_version":os.environ.get("AZURE_OPENAI_API_VERSION"),
+            "deployment": os.environ.get("AZURE_OPENAI_DEPLOYMENT"),  # 모델 식별자
+        }
+
+    # 2) Azure 우선 시도
+    if az and az.get("api_key") and az.get("endpoint") and az.get("api_version"):
         return AzureOpenAI(
-            api_key=AZURE["api_key"],
-            api_version=AZURE["api_version"],
-            azure_endpoint=AZURE["endpoint"]
+            api_key=az["api_key"],
+            azure_endpoint=az["endpoint"],
+            api_version=az["api_version"],
         )
-    if OpenAI and (OPENAI_KEY or os.environ.get("OPENAI_API_KEY")):
+
+    # 3) OpenAI 기본
+    if os.environ.get("OPENAI_API_KEY"):
         return OpenAI()
-    raise RuntimeError("LLM client 초기화 실패: 환경변수/시크릿을 확인하세요.")
+
+    # 4) 실패
+    raise RuntimeError("LLM client 초기화 실패: OPENAI_API_KEY 또는 azure_openai 시크릿/환경변수를 확인하세요.")
+
+# --- 실제 초기화 (⚠️ get_llm_client() 정의 '뒤'에서 호출해야 함)
+LAW_API_KEY, AZURE = load_secrets()
+try:
+    if AZURE and AZURE.get("api_key") and AZURE.get("endpoint") and AZURE.get("api_version"):
+        client = AzureOpenAI(
+            api_key=AZURE["api_key"],
+            azure_endpoint=AZURE["endpoint"],
+            api_version=AZURE["api_version"],
+        )
+    else:
+        client = OpenAI()
+except Exception:
+    # 위 초기화 실패 시 안전 폴백
+    client = get_llm_client()
 
 
 # =============================
