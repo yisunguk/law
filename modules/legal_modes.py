@@ -1,135 +1,61 @@
+# modules/legal_modes.py
+from __future__ import annotations
+import re
+from typing import Tuple
 
-import re  # 정규식 상수에서 사용
-_ART_HDR = re.compile(r'^\s*제\d{1,4}조(의\d{1,3})?\s*', re.M)
+# 간단한 의도/모드 정의
+class Intent:
+    QUICK = "quick"        # 일반 질의응답
+    LAWFINDER = "lawfinder"  # 법령/조문 탐색
+    MEMO = "memo"          # 간단 메모/정리
+    DRAFT = "draft"        # 문안/초안 작성
 
-# --- law_fetch.py: 드롭인 패치 (REPLACE) ---
-
-# 1) JSON → 풀텍스트 평문화: "제n조(제목)" 머리줄을 복원
-def _extract_text_from_json(text: str) -> tuple[str, dict]:
-    try:
-        data = json.loads(text)
-    except Exception:
-        return "", {}
-
-    info = {}
-
-    def _walk_pairs(v):
-        if isinstance(v, dict):
-            for k, x in v.items():
-                yield k, x
-                yield from _walk_pairs(x)
-        elif isinstance(v, list):
-            for x in v:
-                yield from _walk_pairs(x)
-
-    # 법령명 추출
-    for k, v in _walk_pairs(data):
-        if k in ("법령명한글", "법령명", "lawName") and isinstance(v, str) and v.strip():
-            info["law_name"] = v.strip()
-            break
-
-    # 조문 트리 → 평문화
-    lines = []
-
-    def _emit_article(n):
-        if not isinstance(n, dict):
-            return
-        num = (n.get("조문번호") or n.get("조문번호_한글") or "").strip()
-        title = (n.get("조문제목") or "").strip()
-        body = (n.get("조문내용") or n.get("내용") or n.get("text") or "").strip()
-        head = (f"{num}{f'({title})' if title else ''}").strip()
-        if head:
-            lines.append(head)
-        if body:
-            lines.append(body)
-
-        # 하위(항/호/목/children 등 일반 케이스 지원)
-        for key in ("항", "호", "목", "조문", "children", "Items"):
-            v = n.get(key)
-            if isinstance(v, list):
-                for c in v:
-                    _emit_article(c)
-            elif isinstance(v, dict):
-                _emit_article(v)
-
-    def _recur(x):
-        if isinstance(x, dict):
-            _emit_article(x)
-            for v in x.values():
-                _recur(v)
-        elif isinstance(x, list):
-            for v in x:
-                _recur(v)
-
-    _recur(data)
-
-    if lines:
-        flat = "\n".join(lines)
-        return flat[:120000], info  # 넉넉한 상한
-    # 폴백(기존 휴리스틱)
-    texts = []
-    for k, v in _walk_pairs(data):
-        if isinstance(v, str) and k in {"조문내용", "조문", "내용", "text"} and len(v.strip()) >= 30:
-            texts.append(v.strip())
-            if len(texts) >= 3:
-                break
-    return ("\n".join(texts[:3]) if texts else ""), info
-
-
-# 2) HTML 파서 선택자 보강(+ 상한 확장)
-def _extract_text_from_html(text: str) -> str:
-    soup = BeautifulSoup(text, "lxml")
-    for tag in soup(["script", "style", "noscript"]):
-        tag.decompose()
-    main = soup.select_one(
-        "#conScroll, .conScroll, .lawSeView, .lawView, "
-        "#contentBody, #content, #wrap, pre, body"
-    )
-    out = (main.get_text("\n", strip=True) if main else soup.get_text("\n", strip=True))
-    return out[:12000]
-
-
-# 3) 조문 블록 슬라이스(기존 유지)
-_ART_HDR = re.compile(r'^\s*제\d{1,4}조(의\d{1,3})?\s*', re.M)
-def extract_article_block(full_text: str, art_label: str, max_chars: int = 4000) -> str:
-    if not full_text or not art_label:
-        return ""
-    m = re.search(rf'^\s*{re.escape(art_label)}[^\n]*$', full_text, re.M)
-    if not m:
-        m = re.search(rf'^\s*{re.escape(art_label)}\s*', full_text, re.M)
-    if not m:
-        return ""
-    start = m.start()
-    n = _ART_HDR.search(full_text, m.end())
-    end = n.start() if n else len(full_text)
-    return full_text[start:end].strip()[:max_chars]
-
-
-# 4) DRF 본문 조회 + 짧은 본문이면 자동 폴백(JSON/HTML 교차)
-def fetch_article_block_by_mst(
-    mst: str,
-    art_label: str | None,
-    prefer: str = "JSON",
-    timeout: float = 8.0
-) -> tuple[str, str]:
+def classify_intent(user_q: str) -> Tuple[str, float]:
     """
-    - prefer 포맷으로 먼저 시도
-    - 결과가 없거나 너무 짧으면 반대 포맷으로 1회 폴백
-    - art_label 없으면 앞부분 일부(미리보기) 반환
+    매우 가벼운 규칙 기반 분류기(최소 동작용).
+    반환: (모드, 신뢰도 0~1)
     """
-    txt, used, _ = fetch_law_detail_text(mst, prefer=prefer)
-    block = ""
-    if txt:
-        block = extract_article_block(txt, art_label) if art_label else txt[:2000]
+    q = (user_q or "").strip()
+    if not q:
+        return Intent.QUICK, 0.0
 
-    # 길이 기준(짧으면 실패 간주)으로 폴백
-    if (not block) or (len(block) < 80):
-        alt = "JSON" if (prefer or "").upper() == "HTML" else "HTML"
-        txt2, _, _ = fetch_law_detail_text(mst, prefer=alt)
-        if txt2:
-            block2 = extract_article_block(txt2, art_label) if art_label else txt2[:2000]
-            if len((block2 or "")) >= max(80, len(block or "")):
-                block = block2
+    # 조문/법령 신호 → LAWFINDER
+    if re.search(r'(법령|조문|제\d{1,4}조(의\d{1,3})?|시행령|시행규칙|.*법\b)', q):
+        return Intent.LAWFINDER, 0.85
 
-    link = _build_drf_link(mst, typ="HTML")
-    return (block or "").strip(), link
+    # 초안/서식 → DRAFT
+    if re.search(r'(초안|문안|서식|작성|draft)', q, re.I):
+        return Intent.DRAFT, 0.7
+
+    # 메모/정리 → MEMO
+    if re.search(r'(메모|정리|노트|note)', q, re.I):
+        return Intent.MEMO, 0.6
+
+    return Intent.QUICK, 0.55
+
+def build_sys_for_mode(mode: str, *, brief: bool = False) -> str:
+    """
+    모드별 시스템 프롬프트(요약형/상세형 선택 가능).
+    """
+    if mode == Intent.LAWFINDER:
+        return (
+            "당신은 한국 법령/조문 검색 보조원입니다. "
+            "사용자가 특정 법령·조문을 찾거나 원문을 요청하면, "
+            "법제처 DRF(OpenAPI)에서 제공되는 본문을 우선으로 근거와 함께 제시하세요. "
+            "추정/창작 금지, 사실만 답변. 필요한 경우 조문 번호와 항·호를 명확히 표기하세요."
+            + (" (간결하게)." if brief else "")
+        )
+    if mode == Intent.DRAFT:
+        return (
+            "당신은 법률 문안 초안 도우미입니다. "
+            "요청한 문서의 구조를 제안하고, 법적 용어는 중립적으로 사용하세요. "
+            "법령 인용 시 정확한 조문 번호를 병기하세요."
+            + (" (핵심만 간결하게)." if brief else "")
+        )
+    if mode == Intent.MEMO:
+        return (
+            "당신은 요점 정리 도우미입니다. 목록화하고, 근거가 있는 부분만 명시하세요."
+            + (" (짧게 요약)." if brief else "")
+        )
+    # 기본값
+    return "당신은 신중하고 정확한 한국어 어시스턴트입니다." + (" (간결히 답변)." if brief else "")
