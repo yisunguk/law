@@ -1,5 +1,7 @@
 from __future__ import annotations
 import streamlit as st
+from html import unescape
+
 from modules.legal_modes import Intent, build_sys_for_mode 
 from modules.router_llm import make_plan_with_llm
 from modules.plan_executor import execute_plan
@@ -8,10 +10,11 @@ from modules.plan_executor import execute_plan
 st.session_state.setdefault('_nonce_done', {})
 # --- cache helpers: suggestions shouldn't jitter on reruns ---
 def cached_suggest_for_tab(tab_key: str):
+    import streamlit as st
     store = st.session_state.setdefault("__tab_suggest__", {})
     if tab_key not in store:
         from modules import suggest_keywords_for_tab
-        store[tab_key] = suggest_keywords_for_tab(tab_key)  # ← 여기!
+        store[tab_key] = cached_suggest_for_tab(tab_key)
     return store[tab_key]
 
 def cached_suggest_for_law(law_name: str):
@@ -137,12 +140,9 @@ def _init_engine_lazy():
     )
     return st.session_state.engine
 
-# app.py 안에: ask_llm_with_tools(...) 전체 교체
+# 기존 ask_llm_with_tools를 얇은 래퍼로 교체
+from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
 
-from modules.legal_modes import Intent, classify_intent, build_sys_for_mode
-from modules.router_llm import make_plan_with_llm
-from modules.plan_executor import execute_plan
-import streamlit as st
 
 def ask_llm_with_tools(
     user_q: str,
@@ -151,16 +151,14 @@ def ask_llm_with_tools(
     forced_mode: str | None = None,
     brief: bool = False,
 ):
-    """
-    ① 의도 판단 → ② (가능하면) 라우터로 DRF 호출하여 조문 즉시 반환 → ③ 실패 시 엔진/직접호출 폴백
-    """
+    """① 의도 판단 → ② (가능하면) 라우터로 DRF 호출하여 조문 즉시 반환 → ③ 실패 시 엔진/직접호출 폴백"""
     import inspect
     import streamlit as st
 
-    # 0) 엔진/클라이언트 준비
+    # 0) 엔진/클라이언트
     engine = _init_engine_lazy() if "_init_engine_lazy" in globals() else globals().get("engine")
-    if engine is None and globals().get("client") is None:
-        # 엔진/클라이언트가 모두 없으면 바로 종료
+    _client = globals().get("client")
+    if engine is None and _client is None:
         yield ("final", "엔진이 아직 초기화되지 않았습니다. (client/AZURE/TOOLS 확인)", [])
         return
 
@@ -176,11 +174,11 @@ def ask_llm_with_tools(
     except Exception:
         mode = det_intent
 
-    # 2) 프롬프트/툴 사용 여부
+    # 2) 프롬프트/툴
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
-    # 2.5) 최근 N개 대화 히스토리 (user/assistant만)
+    # 2.5) 히스토리
     try:
         msgs = st.session_state.get("messages", [])
         _hist = []
@@ -194,23 +192,31 @@ def ask_llm_with_tools(
     except Exception:
         history = []
 
-    # 2.7) LLM 라우팅 → (성공 시) DRF 조문 즉시 출력
+    # 2.7) 라우팅 → DRF → (본문 폴백 포함) 즉시 반환
     try:
-        _client = globals().get("client")
-        if _client:  # 클라이언트가 있을 때만 라우터 사용
-            plan = make_plan_with_llm(_client, user_q)   # 라우터가 GET_ARTICLE 계획 산출
+        if _client:
+            plan = make_plan_with_llm(_client, user_q)
             if (plan.get("action") or "").upper() == "GET_ARTICLE":
-                res = execute_plan(plan)  # DRF 호출하여 조문 텍스트/링크 확보
-                if res.get("type") == "article" and res.get("text"):
-                    txt = f"{res['text']}\n\n원문 링크: {res['link']}"
-                    yield ("final", txt, [])
-                    return  # ★ 여기서 종료 (이미 최종 답변 제공)
+                res = execute_plan(plan)
+
+                law_hint = res.get("law") or plan.get("law_name") or ""
+                art_hint = res.get("article") or plan.get("article_label") or ""
+                link     = res.get("link") or (_deep_article_url(law_hint, art_hint) if (law_hint and art_hint) else "")
+                text     = (res.get("text") or "").strip()
+
+                if not text and law_hint and art_hint:
+                    text2, link2 = fetch_article_text_fallback(law_hint, art_hint, via_url=link)
+                    if text2:
+                        text, link = text2, (link2 or link)
+
+                if text:
+                    out = f"{text}\n\n원문 링크: {link or _deep_article_url(law_hint, art_hint)}".strip()
+                    yield ("final", out, [])
+                    return
     except Exception:
-        # 라우팅 실패 시 조용히 fallback
         pass
 
-    # 3) Fallback: (A) 엔진 시도 → (B) 직접 ChatCompletion → (C) 최종 사과문
-    # A) 엔진 우선 시도 (generate 시그니처를 런타임 확인)
+    # 3) 폴백: (A) 엔진 → (B) 직접 ChatCompletion
     try:
         if engine is not None:
             try:
@@ -218,64 +224,38 @@ def ask_llm_with_tools(
             except Exception:
                 params = set()
 
-            base_kwargs = dict(
-                system_prompt=sys_prompt,
-                allow_tools=use_tools,
-                num_rows=num_rows,
-                stream=stream,
-            )
-            # primer_enable을 지원하는 엔진만 넣기
+            base_kwargs = dict(system_prompt=sys_prompt, allow_tools=use_tools, num_rows=num_rows, stream=stream)
             if "primer_enable" in params:
                 base_kwargs["primer_enable"] = True
 
-            # 히스토리 인자 이름 자동 탐색
-            hist_key = None
-            for key in ("history", "messages", "chat_history", "conversation"):
-                if key in params:
-                    hist_key = key
-                    break
-
+            hist_key = next((k for k in ("history", "messages", "chat_history", "conversation") if k in params), None)
             if hist_key:
                 yield from engine.generate(user_q, **base_kwargs, **{hist_key: history})
             else:
-                # 히스토리 파라미터가 없으면 텍스트로 앞에 붙여 전달
                 if history:
-                    transcript = "\n".join(
-                        f"{'사용자' if h['role']=='user' else '어시스턴트'}: {h['content']}"
-                        for h in history
-                    )
-                    user_q = f"[이전 대화]\n{transcript}\n\n[현재 질문]\n{user_q}"
-                yield from engine.generate(user_q, **base_kwargs)
-            return  # 엔진 경로 성공 시 종료
+                    transcript = "\n".join(f"{'사용자' if h['role']=='user' else '어시스턴트'}: {h['content']}" for h in history)
+                    user_q2 = f"[이전 대화]\n{transcript}\n\n[현재 질문]\n{user_q}"
+                else:
+                    user_q2 = user_q
+                yield from engine.generate(user_q2, **base_kwargs)
+            return
     except Exception:
-        # 엔진 경로 실패 → 아래 B로 폴백
         pass
 
-    # B) 직접 ChatCompletion 폴백
+    # B) 직접 ChatCompletion
     try:
-        _client = globals().get("client")
         if _client is None:
             raise RuntimeError("LLM client not initialized")
 
-        msgs = [{"role": "system", "content": sys_prompt}] + history + [
-            {"role": "user", "content": user_q}
-        ]
+        msgs = [{"role": "system", "content": sys_prompt}] + history + [{"role": "user", "content": user_q}]
         model_id = (globals().get("AZURE") or {}).get("deployment") or "gpt-4o-mini"
-
-        resp = _client.chat.completions.create(
-            model=model_id,
-            messages=msgs,
-            temperature=0.2,
-            max_tokens=1200,
-        )
+        resp = _client.chat.completions.create(model=model_id, messages=msgs, temperature=0.2, max_tokens=1200)
         answer = (resp.choices[0].message.content or "").strip()
         yield ("final", answer, [])
         return
     except Exception:
-        # C) 정말 모두 실패했을 때만 사과문
         yield ("final", "죄송합니다. 내부 오류로 답변을 완료하지 못했습니다.", [])
         return
-
 
 def _esc(s: str) -> str:
     """HTML escape only"""
@@ -1755,78 +1735,52 @@ def fix_links_with_lawdata(markdown: str, law_data: list[dict]) -> str:
     return pat.sub(repl, markdown)
 
 # =============================
-# Secrets / Clients / Session  ← 전체 교체
+# Secrets / Clients / Session
 # =============================
-import os
-from openai import OpenAI, AzureOpenAI
-import streamlit as st
-
-def load_secrets():
-    try:
-        law_key = st.secrets["LAW_API_KEY"]
-    except Exception:
-        law_key = None
-        st.error("`LAW_API_KEY`가 없습니다. Streamlit → App settings → Secrets에 추가하세요.")
-    try:
-        az = st.secrets["azure_openai"]
-        _ = (az["api_key"], az["endpoint"], az["deployment"], az["api_version"])
-    except Exception:
-        az = None
-        st.warning("Azure OpenAI 설정이 없으므로 기본 안내만 제공합니다.")
-    return law_key, az
-
-def get_llm_client():
-    """
-    - AZURE(OpenAI) 우선, 실패 시 OpenAI 기본으로 폴백
-    - 환경변수: OPENAI_API_KEY / AZURE_OPENAI_* 지원
-    """
-    # 1) Streamlit secrets 우선
-    try:
-        law_key = st.secrets.get("LAW_API_KEY", None)  # 미사용이어도 호출 일관성 보장
-    except Exception:
-        law_key = None
-
-    az = None
-    try:
-        az = st.secrets["azure_openai"]
-    except Exception:
-        # 환경변수 기반 폴백
-        az = {
-            "api_key":    os.environ.get("AZURE_OPENAI_API_KEY"),
-            "endpoint":   os.environ.get("AZURE_OPENAI_ENDPOINT"),
-            "api_version":os.environ.get("AZURE_OPENAI_API_VERSION"),
-            "deployment": os.environ.get("AZURE_OPENAI_DEPLOYMENT"),  # 모델 식별자
-        }
-
-    # 2) Azure 우선 시도
-    if az and az.get("api_key") and az.get("endpoint") and az.get("api_version"):
-        return AzureOpenAI(
-            api_key=az["api_key"],
-            azure_endpoint=az["endpoint"],
-            api_version=az["api_version"],
-        )
-
-    # 3) OpenAI 기본
-    if os.environ.get("OPENAI_API_KEY"):
-        return OpenAI()
-
-    # 4) 실패
-    raise RuntimeError("LLM client 초기화 실패: OPENAI_API_KEY 또는 azure_openai 시크릿/환경변수를 확인하세요.")
-
-# --- 실제 초기화 (⚠️ get_llm_client() 정의 '뒤'에서 호출해야 함)
 LAW_API_KEY, AZURE = load_secrets()
-try:
-    if AZURE and AZURE.get("api_key") and AZURE.get("endpoint") and AZURE.get("api_version"):
+client = None
+if AZURE:
+    try:
         client = AzureOpenAI(
             api_key=AZURE["api_key"],
-            azure_endpoint=AZURE["endpoint"],
             api_version=AZURE["api_version"],
+            azure_endpoint=AZURE["endpoint"],
         )
-    else:
-        client = OpenAI()
+    except Exception as e:
+        st.warning(f"Azure 초기화 실패, OpenAI로 폴백합니다: {e}")
+
+if client is None:                 # ← 예외 숨기지 않음
+    client = get_llm_client()      # 실패 시 RuntimeError 발생
+
+import os
+try:
+    from openai import OpenAI
+    from openai import AzureOpenAI
 except Exception:
-    # 위 초기화 실패 시 안전 폴백
-    client = get_llm_client()
+    OpenAI = None
+    AzureOpenAI = None
+
+def get_llm_client():
+    # 기존 load_secrets() 쓰시던 구조면 그대로 사용
+    try:
+        from modules.advice_engine import load_secrets  # 프로젝트에 이미 있을 가능성 높음
+    except Exception:
+        load_secrets = lambda: (os.environ.get("OPENAI_API_KEY"), {
+            "api_key": os.environ.get("AZURE_OPENAI_API_KEY"),
+            "api_version": os.environ.get("AZURE_OPENAI_API_VERSION"),
+            "endpoint": os.environ.get("AZURE_OPENAI_ENDPOINT"),
+        })
+
+    OPENAI_KEY, AZURE = load_secrets()
+    if AZURE and AzureOpenAI and AZURE.get("api_key"):
+        return AzureOpenAI(
+            api_key=AZURE["api_key"],
+            api_version=AZURE["api_version"],
+            azure_endpoint=AZURE["endpoint"]
+        )
+    if OpenAI and (OPENAI_KEY or os.environ.get("OPENAI_API_KEY")):
+        return OpenAI()
+    raise RuntimeError("LLM client 초기화 실패: 환경변수/시크릿을 확인하세요.")
 
 
 # =============================
@@ -2087,6 +2041,55 @@ def extract_law_candidates_llm(q: str) -> list[str]:
 
 # === LLM 플래너 & 플랜 필터 ===
 import re, json
+
+# === Fallback utilities for article text extraction (law.go.kr deep link) ===
+import re as _re_fallback
+from html import unescape as _unescape_fallback
+from urllib.parse import quote as _quote_fallback
+
+def _deep_article_url(law_name: str, article_label: str) -> str:
+    if not (law_name and article_label):
+        return ""
+    return f"https://www.law.go.kr/법령/{_quote_fallback(law_name)}/{_quote_fallback(article_label)}"
+
+def _strip_html_keep_lines(s: str) -> str:
+    if not s:
+        return ""
+    s = _re_fallback.sub(r"(?is)<(script|style)[\s\S]*?</\1>", "", s)
+    s = _re_fallback.sub(r"(?is)<br\s*/?>", "\n", s)
+    s = _re_fallback.sub(r"(?is)</p\s*>", "\n", s)
+    s = _re_fallback.sub(r"(?is)<[^>]+>", "", s)
+    s = _unescape_fallback(s)
+    s = _re_fallback.sub(r"[ \t]+\n", "\n", s)
+    s = _re_fallback.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+def _extract_article_block(html_text: str) -> str:
+    if not html_text:
+        return ""
+    CANDS = [
+        r'(?is)<div[^>]+class="[^"]*(?:lawArticle|article-body|article|law-viewer|con_box|contants)[^"]*"[^>]*>([\s\S]{200,}?)</div>',
+        r'(?is)<table[^>]*class="[^"]*(?:tbl|law)[^"]*"[^>]*>([\s\S]{200,}?)</table>',
+        r'(?is)<body[^>]*>([\s\S]{400,}?)</body>',
+    ]
+    for pat in CANDS:
+        m = _re_fallback.search(pat, html_text)
+        if m:
+            txt = _strip_html_keep_lines(m.group(1))
+            if len(txt) >= 60:
+                return txt
+    return ""
+
+def fetch_article_text_fallback(law_name: str, article_label: str, via_url: str | None = None, timeout: float = 6.0) -> tuple[str, str]:
+    try:
+        url = via_url or _deep_article_url(law_name, article_label)
+        r = requests.get(url, timeout=timeout, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
+        if not (200 <= r.status_code < 400):
+            return "", url
+        return _extract_article_block(r.text), url
+    except Exception:
+        return "", (via_url or _deep_article_url(law_name, article_label))
+
 
 # === LLM 플래너 & 플랜 필터 ===
 def _filter_items_by_plan(user_q: str, items: list[dict], plan: dict) -> list[dict]:
@@ -2409,18 +2412,16 @@ def find_law_with_fallback(user_query: str, num_rows: int = 10):
     return [], endpoint, err, "none"
 
 def _append_message(role: str, content: str, **extra):
-    """어시스턴트/사용자 메시지를 세션에 추가한다.
-    - 코드블록만으로 이루어진 응답도 허용 (이전 가드 제거).
-    - 직전 메시지와 완전히 동일하면 중복 삽입 방지.
-    """
+    
     txt = (content or "").strip()
-    if not txt:
+    is_code_only = (txt.startswith("```") and txt.endswith("```"))
+    if not txt or is_code_only:
         return
     msgs = st.session_state.get("messages", [])
     if msgs and isinstance(msgs[-1], dict) and msgs[-1].get("role")==role and (msgs[-1].get("content") or "").strip()==txt:
+        # skip exact duplicate of the last message (role+content)
         return
     st.session_state.messages.append({"role": role, "content": txt, **extra})
-
 
 
 
