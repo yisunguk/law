@@ -183,10 +183,11 @@ def ask_llm_with_tools(
         msgs = st.session_state.get("messages", [])
         _hist = []
         for _m in msgs:
-            if isinstance(_m, dict) and _m.get("role") in ("user", "assistant"):
+            if isinstance(_m, dict):
+                _r = _m.get("role")
                 _c = (_m.get("content") or "").strip()
-                if _c:
-                    _hist.append({"role": _m["role"], "content": _c})
+                if _r in ("user", "assistant") and _c:
+                    _hist.append({"role": _r, "content": _c})
         HISTORY_LIMIT = int(st.session_state.get("__history_limit__", 6))
         history = _hist[-HISTORY_LIMIT:]
     except Exception:
@@ -194,26 +195,33 @@ def ask_llm_with_tools(
 
     # 2.7) 라우팅 → DRF → (본문 폴백 포함) 즉시 반환
     try:
-        if _client:
-            plan = make_plan_with_llm(_client, user_q)
-            if (plan.get("action") or "").upper() == "GET_ARTICLE":
-                res = execute_plan(plan)
+        if _client is not None:
+            router_model = (
+                getattr(_client, "router_model", None)
+                or ((globals().get("AZURE") or {}).get("router_deployment"))
+                or ((globals().get("AZURE") or {}).get("deployment"))
+            )
+            plan = make_plan_with_llm(_client, user_q, model=router_model)
+
+            if isinstance(plan, dict) and (plan.get("action") or "").upper() == "GET_ARTICLE":
+                res = execute_plan(plan) or {}
 
                 law_hint = res.get("law") or plan.get("law_name") or ""
                 art_hint = res.get("article") or plan.get("article_label") or ""
                 link     = res.get("link") or (_deep_article_url(law_hint, art_hint) if (law_hint and art_hint) else "")
                 text     = (res.get("text") or "").strip()
 
-                if not text and law_hint and art_hint:
+                if (not text) and law_hint and art_hint:
                     text2, link2 = fetch_article_text_fallback(law_hint, art_hint, via_url=link)
                     if text2:
                         text, link = text2, (link2 or link)
 
                 if text:
-                    out = f"{text}\n\n원문 링크: {link or _deep_article_url(law_hint, art_hint)}".strip()
+                    out = f"{text}\n\n원문 링크: {(link or _deep_article_url(law_hint, art_hint)).strip()}".strip()
                     yield ("final", out, [])
                     return
     except Exception:
+        # 라우팅 실패 시 폴백으로 진행
         pass
 
     # 3) 폴백: (A) 엔진 → (B) 직접 ChatCompletion
@@ -247,8 +255,12 @@ def ask_llm_with_tools(
         if _client is None:
             raise RuntimeError("LLM client not initialized")
 
+        model_id = (
+            getattr(_client, "fallback_model", None)
+            or ((globals().get("AZURE") or {}).get("deployment"))
+            or "gpt-4o"
+        )
         msgs = [{"role": "system", "content": sys_prompt}] + history + [{"role": "user", "content": user_q}]
-        model_id = (globals().get("AZURE") or {}).get("deployment") or "gpt-4o-mini"
         resp = _client.chat.completions.create(model=model_id, messages=msgs, temperature=0.2, max_tokens=1200)
         answer = (resp.choices[0].message.content or "").strip()
         yield ("final", answer, [])
@@ -1746,6 +1758,8 @@ if AZURE:
             api_version=AZURE["api_version"],
             azure_endpoint=AZURE["endpoint"],
         )
+        # ✅ 추가: 라우터가 사용할 Azure 배포명(4o) 고정
+        client.router_model = AZURE.get("router_deployment") or AZURE.get("deployment")
     except Exception as e:
         st.warning(f"Azure 초기화 실패, OpenAI로 폴백합니다: {e}")
 
