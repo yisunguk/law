@@ -2,39 +2,30 @@
 from __future__ import annotations
 import os, sys, re
 import streamlit as st
-import streamlit as st
-if not isinstance(st.session_state.get("messages"), list):
-    st.session_state["messages"] = []
-
-# app.py 상단부 (datetime 임포트는 그대로 유지)
 from datetime import datetime
 
+# 1) messages 리스트 보장
+if not isinstance(st.session_state.get("messages"), list):
+    _safe_append_message["messages"] = []
+
+# 2) 안전 추가 함수 (중복/빈문자/코드블록만 방지)
 def _safe_append_message(role: str, content: str, **extra):
-    """session_state['messages']를 안전하게 초기화/추가 (중복 방지 포함)."""
-    import streamlit as st
-
-    # 1) 리스트 보장
+    # 리스트 보장 (재실행 대비)
     if not isinstance(st.session_state.get("messages"), list):
-        st.session_state["messages"] = []
+        _safe_append_message["messages"] = []
 
-    # 2) 내용 정리 + 빈문자열은 무시
     txt = (content or "").strip()
     if not txt:
         return
-
-    # 3) 코드블록만 있는 경우(백틱만) 같은 노이즈는 무시
-    is_code_only = txt.startswith("```") and txt.endswith("```")
-    if is_code_only:
+    if txt.startswith("```") and txt.endswith("```"):
         return
 
-    # 4) 직전 항목과(role+content) 완전 동일하면 중복 추가 방지
-    msgs = st.session_state["messages"]
+    msgs = _safe_append_message["messages"]
     if msgs and isinstance(msgs[-1], dict):
         prev = msgs[-1]
         if prev.get("role") == role and (prev.get("content") or "").strip() == txt:
-            return
+            return  # 직전과 완전 동일하면 중복 추가 방지
 
-    # 5) append
     msgs.append({
         "role": role,
         "content": txt,
@@ -42,6 +33,8 @@ def _safe_append_message(role: str, content: str, **extra):
         **(extra or {})
     })
 
+if not isinstance(st.session_state.get("messages"), list):
+    _safe_append_message["messages"] = []
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
@@ -2697,7 +2690,7 @@ def _append_message(role: str, content: str, **extra):
     msgs = st.session_state.get("messages")
     if not isinstance(msgs, list):
         msgs = []
-        st.session_state["messages"] = msgs
+        _safe_append_message["messages"] = msgs
 
     # 바로 직전 메시지와 role+content가 같으면 생략
     if msgs and isinstance(msgs[-1], dict):
