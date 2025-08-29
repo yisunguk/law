@@ -1,46 +1,27 @@
-# modules/__init__.py (robust)
-# Public API re-exporter for the app to use as: from modules import ...
-# - Tries relative imports first (package layout), then top-level fallbacks.
+# modules/__init__.py  ← 전체 교체
 
-# ---- legal_modes ----
+# 패키지 내부 상대 임포트
 try:
     from .legal_modes import (
+        AdviceEngine,
         Intent,
-        SYS_COMMON,
-        SYS_BRIEF,
-        MODE_SYS,
-        build_sys_for_mode,
-        tidy_memo,
         classify_intent,
-        route_intent,
+        pick_mode,
+        build_sys_for_mode,
     )
-except Exception:  # fallback: flat layout
-    from legal_modes import (
+except ImportError:  # 실행 환경에 따라 폴백
+    from legal_modes import (  # type: ignore
+        AdviceEngine,
         Intent,
-        SYS_COMMON,
-        SYS_BRIEF,
-        MODE_SYS,
-        build_sys_for_mode,
-        tidy_memo,
         classify_intent,
-        route_intent,
+        pick_mode,
+        build_sys_for_mode,
     )
-
-# ---- advice_engine ----
-try:
-    from .advice_engine import AdviceEngine, pick_mode
-except Exception:  # fallback: flat layout
-    from advice_engine import AdviceEngine, pick_mode
 
 __all__ = [
-    "Intent",
-    "SYS_COMMON",
-    "SYS_BRIEF",
-    "MODE_SYS",
-    "build_sys_for_mode",
-    "tidy_memo",
-    "classify_intent",
-    "route_intent",
     "AdviceEngine",
+    "Intent",
+    "classify_intent",
     "pick_mode",
+    "build_sys_for_mode",
 ]
