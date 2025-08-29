@@ -1171,7 +1171,10 @@ def _push_user_from_pending() -> str | None:
         content_final = q.strip()
     # (NEW) content_final이 없으면 질문만으로 초기화
     content_final = locals().get('content_final', (q or "").strip())
-    st.session_state.messages.append({
+    # ensure messages list exists
+    if not isinstance(st.session_state.get("messages"), list):
+        st.session_state["messages"] = []
+        st.session_state["messages"].append({
         "role": "user",
         "content": content_final,
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -2658,7 +2661,10 @@ def _append_message(role: str, content: str, **extra):
     if msgs and isinstance(msgs[-1], dict) and msgs[-1].get("role")==role and (msgs[-1].get("content") or "").strip()==txt:
         # skip exact duplicate of the last message (role+content)
         return
-    st.session_state.messages.append({"role": role, "content": txt, **extra})
+    # ensure messages list exists
+if not isinstance(st.session_state.get("messages"), list):
+    st.session_state["messages"] = []
+st.session_state["messages"].append({"role": role, "content": txt, **extra})
 
 
 
