@@ -2,17 +2,46 @@
 from __future__ import annotations
 import os, sys, re
 import streamlit as st
+import streamlit as st
+if not isinstance(st.session_state.get("messages"), list):
+    st.session_state["messages"] = []
 
+# app.py 상단부 (datetime 임포트는 그대로 유지)
 from datetime import datetime
 
-def _safe_append_message(role, content, **extra):
+def _safe_append_message(role: str, content: str, **extra):
+    """session_state['messages']를 안전하게 초기화/추가 (중복 방지 포함)."""
     import streamlit as st
-    st.session_state["messages"].append({
+
+    # 1) 리스트 보장
+    if not isinstance(st.session_state.get("messages"), list):
+        st.session_state["messages"] = []
+
+    # 2) 내용 정리 + 빈문자열은 무시
+    txt = (content or "").strip()
+    if not txt:
+        return
+
+    # 3) 코드블록만 있는 경우(백틱만) 같은 노이즈는 무시
+    is_code_only = txt.startswith("```") and txt.endswith("```")
+    if is_code_only:
+        return
+
+    # 4) 직전 항목과(role+content) 완전 동일하면 중복 추가 방지
+    msgs = st.session_state["messages"]
+    if msgs and isinstance(msgs[-1], dict):
+        prev = msgs[-1]
+        if prev.get("role") == role and (prev.get("content") or "").strip() == txt:
+            return
+
+    # 5) append
+    msgs.append({
         "role": role,
-        "content": (content or "").strip(),
+        "content": txt,
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         **(extra or {})
     })
+
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
