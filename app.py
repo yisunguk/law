@@ -3,6 +3,19 @@ from __future__ import annotations
 import os, sys, re
 import streamlit as st
 
+from datetime import datetime
+
+def _safe_append_message(role, content, **extra):
+    import streamlit as st
+    if not isinstance(st.session_state.get("messages"), list):
+        st.session_state["messages"] = []
+    st.session_state["messages"].append({
+        "role": role,
+        "content": (content or "").strip(),
+        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        **(extra or {})
+    })
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -1173,12 +1186,9 @@ def _push_user_from_pending() -> str | None:
     content_final = locals().get('content_final', (q or "").strip())
     # ensure messages list exists
     if not isinstance(st.session_state.get("messages"), list):
-        st.session_state["messages"] = []
-        st.session_state["messages"].append({
-        "role": "user",
-        "content": content_final,
-        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    })
+        _safe_append_message("user", content_final)
+
+    
     st.session_state["_last_user_nonce"] = nonce
     st.session_state["current_turn_nonce"] = nonce  # ✅ 이 턴의 nonce 확정
     # reset duplicate-answer guard for a NEW user turn
@@ -2664,7 +2674,8 @@ def _append_message(role: str, content: str, **extra):
     # ensure messages list exists
 if not isinstance(st.session_state.get("messages"), list):
     st.session_state["messages"] = []
-st.session_state["messages"].append({"role": role, "content": txt, **extra})
+_safe_append_message("assistant", answer_text, **extra)   # answer_text 변수명은 실제 코드에 맞게
+
 
 
 
