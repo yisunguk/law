@@ -4,15 +4,15 @@ import os, sys, re
 import streamlit as st
 from datetime import datetime
 
-# 1) messages 리스트 보장
-if not isinstance(st.session_state.get("messages"), list):
-    _safe_append_message["messages"] = []
-
-# 2) 안전 추가 함수 (중복/빈문자/코드블록만 방지)
-def _safe_append_message(role: str, content: str, **extra):
-    # 리스트 보장 (재실행 대비)
+# ----- 세션 안전 부트스트랩 -----
+def _ensure_messages() -> None:
+    """세션에 messages 리스트 보장."""
     if not isinstance(st.session_state.get("messages"), list):
-        _safe_append_message["messages"] = []
+        st.session_state["messages"] = []
+
+def _safe_append_message(role: str, content: str, **extra) -> None:
+    """빈문자/코드블록만/직전중복 방지 + 타임스탬프 포함"""
+    _ensure_messages()
 
     txt = (content or "").strip()
     if not txt:
@@ -20,11 +20,11 @@ def _safe_append_message(role: str, content: str, **extra):
     if txt.startswith("```") and txt.endswith("```"):
         return
 
-    msgs = _safe_append_message["messages"]
+    msgs = st.session_state["messages"]
     if msgs and isinstance(msgs[-1], dict):
         prev = msgs[-1]
         if prev.get("role") == role and (prev.get("content") or "").strip() == txt:
-            return  # 직전과 완전 동일하면 중복 추가 방지
+            return  # 직전과 완전 동일하면 추가 안 함
 
     msgs.append({
         "role": role,
@@ -33,9 +33,15 @@ def _safe_append_message(role: str, content: str, **extra):
         **(extra or {})
     })
 
-if not isinstance(st.session_state.get("messages"), list):
-    _safe_append_message["messages"] = []
+# (레거시 호환) 예전 코드가 _append_message를 부르면 여기로 위임
+def _append_message(role: str, content: str, **extra) -> None:
+    _safe_append_message(role, content, **extra)
 
+# 최초 1회 보장
+_ensure_messages()
+# ---------------------------------
+
+# --- path/setup ---
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -49,6 +55,7 @@ try:
     from law_fetch import fetch_article_block_by_mst
 except Exception:
     from modules.law_fetch import fetch_article_block_by_mst  # noqa
+
 
 # 질문에서 법령명/조문 라벨 뽑기
 _LAW_ALIASES = {"건설산업법": "건설산업기본법"}  # 동음이의/약칭 교정표 필요시 추가
@@ -2678,10 +2685,6 @@ def find_law_with_fallback(user_query: str, num_rows: int = 10):
             if laws2: return laws2, ep2, err2, f"fallback:{law_name}"
     return [], endpoint, err, "none"
 
-def _append_message(role: str, content: str, **extra):
-    """세션 messages에 안전하게 추가(빈문자/중복 방지)."""
-    import streamlit as st
-
     txt = (content or "").strip()
     if not txt:
         return  # 빈 내용은 추가 안 함
@@ -3493,6 +3496,45 @@ if user_q:
         # (추가) 사용자가 '본문/원문/요약하지 말' 요청 + '제n조'가 있으면 DRF 본문을 강제 인용
 from modules.law_fetch import fetch_article_block_by_mst  # 안전하게 여기서 임포트해도 OK
 import re
+
+# === BEGIN: Safe session bootstrap (inserted) ===
+import streamlit as st
+from datetime import datetime
+
+def _ensure_messages() -> None:
+    """Ensure st.session_state['messages'] exists and is a list."""
+    if not isinstance(st.session_state.get("messages"), list):
+        st.session_state["messages"] = []
+
+def _safe_append_message(role: str, content: str, **extra) -> None:
+    """Safely append a message: init list, skip blanks/dup, add timestamp."""
+    _ensure_messages()
+    txt = (content or "").strip()
+    if not txt:
+        return
+    if txt.startswith("```") and txt.endswith("```"):
+        return
+    msgs = st.session_state["messages"]
+    if msgs and isinstance(msgs[-1], dict):
+        prev = msgs[-1]
+        if prev.get("role") == role and (prev.get("content") or "").strip() == txt:
+            return
+    msgs.append({
+        "role": role,
+        "content": txt,
+        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        **(extra or {})
+    })
+
+def _append_message(role: str, content: str, **extra) -> None:
+    """Legacy wrapper used elsewhere in the app."""
+    _safe_append_message(role, content, **extra)
+
+# Initialize once at import time
+_ensure_messages()
+# === END: Safe session bootstrap (inserted) ===
+
+
 
 if re.search(r'(본문|원문|요약\s*하지\s*말)', user_q or '', re.I):
     m = re.search(r'제\d{1,4}조(의\d{1,3})?', user_q or '')
