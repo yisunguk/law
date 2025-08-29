@@ -5,57 +5,6 @@ import streamlit as st
 from modules.legal_modes import Intent, build_sys_for_mode  # 시스템 프롬프트 생성:contentReference[oaicite:6]{index=6}
 from modules.router_llm import make_plan_with_llm
 from modules.plan_executor import execute_plan
-def route_and_answer(user_q: str, client):
-    # 1) 계획 생성
-    plan = make_plan_with_llm(client, user_q)
-
-    # 2) 계획 실행
-    result = execute_plan(plan)
-
-    # 3) 최종 답변 합성
-    sys_prompt = build_sys_for_mode(Intent.LAWFINDER)
-    extra_context = ""
-    if result.get("type") == "article" and result.get("text"):
-        extra_context = f"<<원문>>\n{result['text']}\n<</원문>>\n원문 링크: {result['link']}"
-
-    final = client.chat.completions.create(
-        model=getattr(client, "answer_model", None) or "gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": user_q},
-            {"role": "assistant", "content": extra_context} if extra_context else
-            {"role": "assistant", "content": "원문 링크만 확보되었습니다."}
-        ],
-        temperature=0.2
-    )
-    return final.choices[0].message.content
-# ... user_q = ... (사용자 질문 확보)
-
-# 1) LLM 라우팅 계획 생성
-plan = make_plan_with_llm(client, user_q)
-
-# 2) 계획 실행 (본문/링크 확보)
-result = execute_plan(plan)
-
-# 3) 최종 답변 합성(원문을 주입)
-sys_prompt = build_sys_for_mode(Intent.LAWFINDER)
-
-extra_context = ""
-if result.get("type") == "article" and result.get("text"):
-    extra_context = f"<<원문>>\n{result['text']}\n<</원문>>\n원문 링크: {result['link']}"
-
-final = client.chat.completions.create(
-    model=getattr(client, "answer_model", None) or "gpt-4o-mini",
-    messages=[
-        {"role": "system", "content": sys_prompt},
-        {"role": "user", "content": user_q},
-        {"role": "assistant", "content": extra_context} if extra_context else
-        {"role": "assistant", "content": "원문 링크만 확보되었습니다."}
-    ],
-    temperature=0.2
-)
-answer = final.choices[0].message.content
-# → Streamlit에 출력
 
 # --- per-turn nonce ledger (prevents double appends)
 st.session_state.setdefault('_nonce_done', {})
@@ -1786,9 +1735,11 @@ if AZURE:
             azure_endpoint=AZURE["endpoint"],
         )
     except Exception as e:
-        st.error(f"Azure OpenAI 초기화 실패: {e}")
+        st.warning(f"Azure 초기화 실패, OpenAI로 폴백합니다: {e}")
 
-        # app.py 상단 어딘가 (imports 아래)
+if client is None:                 # ← 예외 숨기지 않음
+    client = get_llm_client()      # 실패 시 RuntimeError 발생
+
 import os
 try:
     from openai import OpenAI
