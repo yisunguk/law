@@ -7,8 +7,6 @@ from datetime import datetime
 
 def _safe_append_message(role, content, **extra):
     import streamlit as st
-    if not isinstance(st.session_state.get("messages"), list):
-        st.session_state["messages"] = []
     st.session_state["messages"].append({
         "role": role,
         "content": (content or "").strip(),
@@ -1185,10 +1183,7 @@ def _push_user_from_pending() -> str | None:
     # (NEW) content_final이 없으면 질문만으로 초기화
     content_final = locals().get('content_final', (q or "").strip())
     # ensure messages list exists
-    if not isinstance(st.session_state.get("messages"), list):
-        _safe_append_message("user", content_final)
-
-    
+    _safe_append_message("user", content_final)
     st.session_state["_last_user_nonce"] = nonce
     st.session_state["current_turn_nonce"] = nonce  # ✅ 이 턴의 nonce 확정
     # reset duplicate-answer guard for a NEW user turn
@@ -2662,23 +2657,29 @@ def find_law_with_fallback(user_query: str, num_rows: int = 10):
     return [], endpoint, err, "none"
 
 def _append_message(role: str, content: str, **extra):
-    
+    """세션 messages에 안전하게 추가(빈문자/중복 방지)."""
+    import streamlit as st
+
     txt = (content or "").strip()
-    is_code_only = (txt.startswith("```") and txt.endswith("```"))
-    if not txt or is_code_only:
-        return
-    msgs = st.session_state.get("messages", [])
-    if msgs and isinstance(msgs[-1], dict) and msgs[-1].get("role")==role and (msgs[-1].get("content") or "").strip()==txt:
-        # skip exact duplicate of the last message (role+content)
-        return
-    # ensure messages list exists
-if not isinstance(st.session_state.get("messages"), list):
-    st.session_state["messages"] = []
-_safe_append_message("assistant", answer_text, **extra)   # answer_text 변수명은 실제 코드에 맞게
+    if not txt:
+        return  # 빈 내용은 추가 안 함
 
+    # 리스트 초기화
+    msgs = st.session_state.get("messages")
+    if not isinstance(msgs, list):
+        msgs = []
+        st.session_state["messages"] = msgs
 
+    # 바로 직전 메시지와 role+content가 같으면 생략
+    if msgs and isinstance(msgs[-1], dict):
+        last = msgs[-1]
+        if last.get("role") == role and (last.get("content") or "").strip() == txt:
+            return
 
+    # 실제 추가(타임스탬프 등은 _safe_append_message가 처리)
+    _safe_append_message(role, txt, **(extra or {}))
 
+    
 def format_law_context(law_data: list[dict]) -> str:
     """
     검색된 법령 목록을 안전하게 문자열로 포맷한다.
@@ -2720,7 +2721,8 @@ def format_law_context(law_data: list[dict]) -> str:
             f"   - 링크: {link if link else '없음'}"
         )
 
-    return "\n\n".join(rows)
+    return "\n\n".join(rows) if rows else "관련 법령 검색 결과가 없습니다."
+
 
 
 def animate_law_results(law_data: list[dict], delay: float = 1.0):
@@ -3356,7 +3358,7 @@ st.markdown("""
 
 with st.container():
     st.session_state['_prev_assistant_txt'] = ''  # reset per rerun
-    for i, m in enumerate(st.session_state.messages):
+    for i, m in enumerate(st.session_state.get("messages", [])):
         # --- UI dedup guard: skip if same assistant content as previous ---
         if isinstance(m, dict) and m.get('role')=='assistant':
             _t = (m.get('content') or '').strip()
