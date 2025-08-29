@@ -1,9 +1,172 @@
-# === app.py: import block (맨 위로 교체) ===
+# === BEGIN: bootstrap shims to avoid NameError and keep UX working ===
 from __future__ import annotations
-import os, sys, re
-# === 세션 안전 부트스트랩: 이 블록만 남기세요 ===
-import streamlit as st
+import os, sys, re, time, uuid, hashlib
+import urllib.parse as up
 from datetime import datetime
+import streamlit as st
+
+# ── 메시지 상태 보장 ─────────────────────────────────────────────
+if "_ensure_messages" not in globals():
+    def _ensure_messages() -> None:
+        if not isinstance(st.session_state.get("messages"), list):
+            st.session_state["messages"] = []
+
+if "_safe_append_message" not in globals():
+    def _safe_append_message(role: str, content: str, **extra) -> None:
+        _ensure_messages()
+        txt = (content or "").strip()
+        if not txt:
+            return
+        if txt.startswith("```") and txt.endswith("```"):
+            # 빈 코드블록/중복 방지
+            return
+        msgs = st.session_state["messages"]
+        if msgs and isinstance(msgs[-1], dict):
+            prev = msgs[-1]
+            if prev.get("role") == role and (prev.get("content") or "").strip() == txt:
+                return
+        msgs.append({
+            "role": role,
+            "content": txt,
+            "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+            **(extra or {})
+        })
+
+if "_append_message" not in globals():
+    def _append_message(role: str, content: str, **extra) -> None:
+        _safe_append_message(role, content, **extra)
+
+# ── 이름 보정: 부처 선택 값 ──────────────────────────────────────
+if "MINISTRIES" not in globals():
+    MINISTRIES = [
+        "부처 선택(선택)",
+        "국무조정실", "기획재정부", "교육부", "과학기술정보통신부",
+        "외교부", "통일부", "법무부", "행정안전부", "문화체육관광부",
+        "농림축산식품부", "산업통상자원부", "보건복지부", "환경부",
+        "고용노동부", "여성가족부", "국토교통부", "해양수산부",
+        "중소벤처기업부", "금융위원회", "방송통신위원회", "공정거래위원회",
+        "국가보훈부", "인사혁신처", "원자력안전위원회", "질병관리청",
+    ]
+
+# ── 검색/링크 유틸 폴백 ─────────────────────────────────────────
+if "normalize_law_link" not in globals():
+    def normalize_law_link(url: str) -> str:
+        return (url or "").strip()
+
+if "build_fallback_search" not in globals():
+    def build_fallback_search(kind: str, q: str) -> str:
+        base = {
+            "law":   "https://www.law.go.kr/LSW/lsSc.do",
+            "admrul":"https://www.law.go.kr/admRulSc.do",
+            "ordin":"https://www.law.go.kr/ordinSc.do",
+            "trty": "https://www.law.go.kr/trtySc.do",
+            "prec": "https://www.law.go.kr/precSc.do",
+            "cc":   "https://www.law.go.kr/precSc.do",
+            "expc": "https://www.law.go.kr/expcInfoSc.do",
+            "term": "https://www.law.go.kr/LSW/termInfoR.do",
+            "file": "https://www.law.go.kr/LSW/lsBylInfoR.do",
+        }.get(kind, "https://www.law.go.kr/LSW/lsSc.do")
+        sep = "&" if "?" in base else "?"
+        return f"{base}{sep}query={up.quote((q or '').strip())}"
+
+if "present_url_with_fallback" not in globals():
+    def present_url_with_fallback(url: str, kind: str, q: str, label_main: str = "열기"):
+        u = (url or "").strip() or build_fallback_search(kind, q)
+        st.link_button(f"🔗 {label_main}", u, use_container_width=True)
+        st.caption(u)
+
+# ── 간단 링크 빌더(이름+키워드) ─────────────────────────────────
+if "hangul_by_name" not in globals():
+    def hangul_by_name(kind: str, name: str) -> str:
+        return build_fallback_search(kind.lower(), name)
+
+if "hangul_law_with_keys" not in globals():
+    def hangul_law_with_keys(name: str, keys: list[str]) -> str:
+        q = " ".join([name] + (keys or []))
+        return build_fallback_search("law", q)
+
+if "hangul_admrul_with_keys" not in globals():
+    def hangul_admrul_with_keys(name: str, issue_no: str = "", issue_dt: str = "") -> str:
+        q = " ".join([x for x in [name, issue_no, issue_dt] if x])
+        return build_fallback_search("admrul", q)
+
+if "hangul_ordin_with_keys" not in globals():
+    def hangul_ordin_with_keys(name: str, no: str = "", dt: str = "") -> str:
+        q = " ".join([x for x in [name, no, dt] if x])
+        return build_fallback_search("ordin", q)
+
+if "hangul_trty_with_keys" not in globals():
+    def hangul_trty_with_keys(no: str, eff_dt: str) -> str:
+        q = " ".join([x for x in [no, eff_dt] if x])
+        return build_fallback_search("trty", q)
+
+if "build_scourt_link" not in globals():
+    def build_scourt_link(case_no: str) -> str:
+        # 대법원/법제처 검색으로 폴백
+        return build_fallback_search("prec", case_no)
+
+if "expc_public_by_id" not in globals():
+    def expc_public_by_id(expc_id: str) -> str:
+        return build_fallback_search("expc", expc_id)
+
+if "licbyl_file_download" not in globals():
+    def licbyl_file_download(flseq: str) -> str:
+        # 별표·서식 파일: 검색 폴백(직접 다운로드 링크는 케이스별로 상이)
+        return build_fallback_search("file", flseq)
+
+# ── 채팅 입력/진행 관련 ─────────────────────────────────────────
+if "_hash_text" not in globals():
+    def _hash_text(s: str) -> str:
+        return hashlib.sha256((s or "").encode("utf-8")).hexdigest()
+
+if "_chat_started" not in globals():
+    def _chat_started() -> bool:
+        _ensure_messages()
+        if (st.session_state.get("_pending_user_q") or "").strip():
+            return True
+        for m in st.session_state["messages"]:
+            if isinstance(m, dict) and m.get("role") == "user" and (m.get("content") or "").strip():
+                return True
+        return False
+
+if "_push_user_from_pending" not in globals():
+    def _push_user_from_pending() -> str:
+        """하단 입력창 또는 프리챗 입력의 임시 버퍼를 대화로 편입"""
+        q = (st.session_state.pop("_pending_user_q", "") or "").strip()
+        if q:
+            nonce = st.session_state.pop("_pending_user_nonce", str(uuid.uuid4()))
+            st.session_state["current_turn_nonce"] = nonce
+            _append_message("user", q)
+        return q
+
+if "render_post_chat_simple_ui" not in globals():
+    def render_post_chat_simple_ui():
+        txt = st.chat_input("질문을 입력하세요. (예: 민법 제83조 본문 보여줘 — 요약하지 말고)")
+        if txt:
+            st.session_state["_pending_user_q"] = txt.strip()
+            st.session_state["_pending_user_nonce"] = str(uuid.uuid4())
+            st.rerun()
+
+if "render_pre_chat_center" not in globals():
+    def render_pre_chat_center():
+        st.markdown("## ⚖️ 법제처 법무 상담사\n원하시는 법령/조문을 입력해 보세요.")
+        render_post_chat_simple_ui()
+
+if "render_bubble_with_copy" not in globals():
+    def render_bubble_with_copy(text: str, key: str | None = None):
+        st.markdown(text)
+
+if "render_api_diagnostics" not in globals():
+    def render_api_diagnostics():
+        # 디버그용(필요시 확장)
+        return
+
+# ── 디버그 플래그 기본값 ────────────────────────────────────────
+if "SHOW_SEARCH_DEBUG" not in globals():
+    SHOW_SEARCH_DEBUG = False
+if "SHOW_STREAM_PREVIEW" not in globals():
+    SHOW_STREAM_PREVIEW = False
+# === END: bootstrap shims ===
 
 # ✅ ROOT 반드시 먼저 정의 후 sys.path에 추가
 ROOT = os.path.dirname(os.path.abspath(__file__))
