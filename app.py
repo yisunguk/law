@@ -1,8 +1,6 @@
 from __future__ import annotations
-# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
-# app.py (요지 스니펫)
 import streamlit as st
-from modules.legal_modes import Intent, build_sys_for_mode  # 시스템 프롬프트 생성:contentReference[oaicite:6]{index=6}
+from modules.legal_modes import Intent, build_sys_for_mode 
 from modules.router_llm import make_plan_with_llm
 from modules.plan_executor import execute_plan
 
@@ -163,7 +161,7 @@ def ask_llm_with_tools(
     det_intent, conf = classify_intent(user_q)
     try:
         valid = {m.value for m in Intent}
-        mode = Intent(forced_mode) if forced_mode in valid else pick_mode(det_intent, conf)
+        mode = Intent(forced_mode) if (forced_mode in valid) else pick_mode(det_intent, conf)
     except Exception:
         mode = pick_mode(det_intent, conf)
 
@@ -171,65 +169,61 @@ def ask_llm_with_tools(
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
-    # 2.5) 최근 N개 대화 히스토리 준비 (user/assistant만)
+    # >>> 2.7) LLM 라우팅 → DRF 실행 → 근거/조문 우선 출력 (함수 내부 들여쓰기 유지!)
+    _inserted = False
     try:
-        msgs = st.session_state.get("messages", [])
-        _hist = []
-        for _m in msgs:
-            if not isinstance(_m, dict):
-                continue
-            _r = _m.get("role")
-            _c = (_m.get("content") or "").strip()
-            if _r in ("user", "assistant") and _c:
-                _hist.append({"role": _r, "content": _c})
-        HISTORY_LIMIT = int(st.session_state.get("__history_limit__", 6))
-        history = _hist[-HISTORY_LIMIT:]
+        _client = globals().get("client")
+        if _client is not None:
+            plan = make_plan_with_llm(_client, user_q)
+            res  = execute_plan(plan)
+
+            # ADVICE: 법령 근거 먼저 + 상담 설명 생성
+            if res.get("type") == "advice" and res.get("cites"):
+                basis = "\n\n".join(
+                    f"【{i+1}】{c['law_name']} {c['article']}\n{c['text']}\n원문: {c['link']}"
+                    for i, c in enumerate(res["cites"][:3])
+                )
+                completion = _client.chat.completions.create(
+                    model=getattr(_client, "answer_model", None) or "gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user", "content": user_q},
+                        {"role": "assistant", "content": f"다음 법령 근거를 토대로 상담 설명을 작성해줘:\n{basis}"},
+                    ],
+                    temperature=0.2,
+                )
+                answer = "### 법령 근거\n" + basis + "\n\n" + (completion.choices[0].message.content or "")
+                yield ("final", answer, [])
+                _inserted = True
+
+            # ARTICLE: 조문 단건은 요약 없이 원문 그대로
+            elif res.get("type") == "article" and res.get("text"):
+                txt = f"{res['text']}\n\n원문 링크: {res['link']}"
+                yield ("final", txt, [])
+                _inserted = True
     except Exception:
-        history = []
+        _inserted = False
 
-    # 3) 엔진 호출 (히스토리 전달 시도 + 안전한 폴백)
-    import inspect
-    try:
-        _sig = inspect.signature(engine.generate)
-        _params = set(_sig.parameters.keys())
-    except Exception:
-        _params = set()
+    if _inserted:
+        return
+    # <<< 2.7) 끝
 
-    _called = False
-    for _kw in ("history", "messages", "chat_history", "conversation"):
-        if _kw in _params:
-            yield from engine.generate(
-                user_q,
-                system_prompt=sys_prompt,
-                allow_tools=use_tools,
-                num_rows=num_rows,
-                stream=stream,
-                primer_enable=True,
-                **{_kw: history},
-            )
-            _called = True
-            break
-
-    if not _called:
-        # fallback: 히스토리를 system prompt 앞에 텍스트로 주입
-        def _as_transcript(items):
-            _lines = []
-            for it in items:
-                _lines.append(f"{'사용자' if it['role']=='user' else '어시스턴트'}: {it['content']}")
-            return "\n".join(_lines)
-
-        _hist_text = _as_transcript(history)
-        _uq = user_q
-        if _hist_text:
-            _uq = f"[이전 대화]\n{_hist_text}\n\n[현재 질문]\n{user_q}"
-        yield from engine.generate(
-            _uq,
-            system_prompt=sys_prompt,
-            allow_tools=use_tools,
-            num_rows=num_rows,
-            stream=stream,
-            primer_enable=True,
-        )
+# 2.5) 최근 N개 대화 히스토리 준비 (user/assistant만)
+try:
+    msgs = st.session_state.get("messages", [])
+    _hist = []
+    for _m in msgs:
+        if not isinstance(_m, dict):
+            continue
+        _r = _m.get("role")
+        _c = (_m.get("content") or "").strip()
+        if _r in ("user", "assistant") and _c:
+            _hist.append({"role": _r, "content": _c})
+    HISTORY_LIMIT = int(st.session_state.get("__history_limit__", 6))
+    history = _hist[-HISTORY_LIMIT:]
+except Exception:
+    history = []
+# --------------------------------------------------------------
 
 import io, os, re, json, time, html
 
