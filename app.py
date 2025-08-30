@@ -20,17 +20,25 @@ except Exception:
 # === Chat memory helpers ======================================================
 import streamlit as st
 
+# ─────────────────────────────────────────────────────────────
+# 대화 컨텍스트 유틸 (imports 바로 아래에 한 번만 정의)
+# 필요: import streamlit as st, (선택) globals()["AZURE"], globals()["client"]
+# ─────────────────────────────────────────────────────────────
+
 def _recent_msgs(max_turns: int = 6, max_chars: int = 3500):
     """
     최근 대화를 (user/assistant만) 역할/내용 그대로 리스트로 반환.
     - user 기준 max_turns 턴까지만
     - 총 글자수 max_chars 초과 시 앞쪽부터 잘라냄
     """
-    raw = st.session_state.get("messages", [])
-    buf = []
-    chars = 0
-    user_turns = 0
+    try:
+        raw = st.session_state.get("messages", []) or []
+    except Exception:
+        raw = []
+    buf, chars, user_turns = [], 0, 0
     for m in reversed(raw):
+        if not isinstance(m, dict):
+            continue
         r = m.get("role")
         c = (m.get("content") or "").strip()
         if r not in ("user", "assistant") or not c:
@@ -47,50 +55,71 @@ def _recent_msgs(max_turns: int = 6, max_chars: int = 3500):
 
 def _to_transcript(msgs):
     """역할 라벨을 붙인 간단한 대화문으로 변환."""
+    if not msgs:
+        return ""
     label = {"user": "사용자", "assistant": "어시스턴트"}
-    return "\n".join(f"{label.get(m['role'], m['role'])}: {m['content']}" for m in msgs)
+    lines = []
+    for m in msgs:
+        try:
+            lines.append(f"{label.get(m['role'], m['role'])}: {m['content']}")
+        except Exception:
+            continue
+    return "\n".join(lines)
 
 def _ensure_running_summary(client, transcript: str, max_len: int = 900):
     """
     대화가 길어지면 빠르게 요약(LLM 1회)하여 세션에 저장.
     - 요약은 시스템 메모리 용도로만 사용
+    - client 없으면 기존 요약 사용
     """
-    if not transcript:
+    try:
+        if not transcript:
+            return st.session_state.get("__summary__", "")
+        if st.session_state.get("__summary__") and len(transcript) < 1200:
+            return st.session_state["__summary__"]
+    except Exception:
+        pass
+
+    if client is None:
         return st.session_state.get("__summary__", "")
-    # 이미 요약이 있고 길이가 충분하면 재요약 생략
-    if st.session_state.get("__summary__") and len(transcript) < 1200:
-        return st.session_state["__summary__"]
 
     try:
+        AZURE = globals().get("AZURE") or {}
+        model_name = (
+            getattr(client, "router_model", None)
+            or AZURE.get("router_deployment")
+            or AZURE.get("deployment")
+            or "gpt-4o-mini"
+        )
         resp = client.chat.completions.create(
-            model=(getattr(client, "router_model", None)
-                   or ((globals().get("AZURE") or {}).get("router_deployment"))
-                   or ((globals().get("AZURE") or {}).get("deployment"))
-                   or "gpt-4o-mini"),
+            model=model_name,
             messages=[
                 {"role": "system", "content": "다음을 8줄 이내의 불릿 요약으로 만들어라. 핵심 결론과 사용자의 요구만 남겨라."},
                 {"role": "user", "content": transcript[:4000]},
             ],
             temperature=0.1,
-            max_tokens=max_len // 2,
+            max_tokens=max(200, max_len // 2),
         )
         summ = (resp.choices[0].message.content or "").strip()
         if summ:
             st.session_state["__summary__"] = summ[:max_len]
     except Exception:
+        # 요약 실패 시 이전 값 유지
         pass
     return st.session_state.get("__summary__", "")
 
 def _compose_with_context(user_q: str, transcript: str, summary: str = "") -> str:
-    """라우터/계획 수립에 쓰는 컨텍스트 포함 사용자 프롬프트."""
+    """LLM에 보낼 컨텍스트 포함 사용자 프롬프트."""
     parts = []
     if summary:
         parts.append(f"[이전 대화 요약]\n{summary}")
     if transcript:
         parts.append(f"[최근 대화]\n{transcript}")
     parts.append(f"[현재 질문]\n{user_q}")
-    return "\n\n".join(parts)
-# =============================================================================
+    out = "\n\n".join(parts)
+    # 보호: 과도한 길이 컷
+    return out[-5000:]
+
 
 # --- per-turn nonce ledger (prevents double appends)
 st.session_state.setdefault('_nonce_done', {})
@@ -324,6 +353,7 @@ def ask_llm_with_tools(
     """
     import inspect as _insp
     import json as _json
+    import streamlit as st  # 추가
 
     # --- 환경 준비 ----------------------------------------------------------------
     engine  = globals().get("engine")
@@ -334,30 +364,59 @@ def ask_llm_with_tools(
         yield ("final", "엔진/클라이언트가 초기화되지 않았습니다. (AZURE/TOOLS 확인)", [])
         return
 
-    # 모드/프롬프트
+    # === [NEW] 대화 컨텍스트 구성: 최근 대화 → 전사 → 러닝요약 → 합성질문 ==========
+    # 다른 기능은 건드리지 않고, LLM 입력에만 사용합니다.
+    def _safe_recent_transcript() -> str:
+        try:
+            return _to_transcript(_recent_msgs(max_turns=8, max_chars=4000))
+        except Exception:
+            # 폴백: 세션 메시지에서 간단 전사
+            raw = st.session_state.get("messages", [])
+            return "\n".join(
+                f"{m.get('role')}: {(m.get('content') or '').strip()}"
+                for m in raw if m.get("role") in ("user","assistant") and (m.get("content") or "").strip()
+            )[-4000:]
+
+    transcript = _safe_recent_transcript()
     try:
-        det_intent, _conf = classify_intent(user_q)  # noqa: F821 (프로젝트 내 제공)
+        summary = _ensure_running_summary(_client or globals().get("client"), transcript, max_len=900)
     except Exception:
-        det_intent, _conf = (Intent.QUICK, 0.0)       # noqa: F821
+        summary = st.session_state.get("__summary__", "")
 
     try:
-        values = {m.value for m in Intent}           # noqa: F821
-        mode = Intent(forced_mode) if (forced_mode in values) else det_intent  # noqa: F821
+        user_ctx = _compose_with_context(user_q, transcript, summary)
+    except Exception:
+        user_ctx = f"[이전 대화 요약]\n{summary}\n\n[최근 대화]\n{transcript}\n\n[현재 질문]\n{user_q}"
+    if isinstance(user_ctx, str) and len(user_ctx) > 4500:
+        user_ctx = user_ctx[-4500:]
+
+    # 컨텍스트 사용 스위치(기본: 라우터는 원문만, 답변은 컨텍스트 사용)
+    st.session_state.setdefault("__ctx_router__", False)
+    st.session_state.setdefault("__ctx_answer__", True)
+
+    # --- 모드/프롬프트 ----------------------------------------------------------------
+    try:
+        det_intent, _conf = classify_intent(user_q)  # noqa
+    except Exception:
+        det_intent, _conf = (Intent.QUICK, 0.0)      # noqa
+
+    try:
+        values = {m.value for m in Intent}           # noqa
+        mode = Intent(forced_mode) if (forced_mode in values) else det_intent  # noqa
     except Exception:
         mode = det_intent
 
-    use_tools  = mode in (Intent.LAWFINDER, Intent.MEMO)  # noqa: F821
-    sys_prompt = build_sys_for_mode(mode, brief=brief)    # noqa: F821
+    use_tools  = mode in (Intent.LAWFINDER, Intent.MEMO)  # noqa
+    sys_prompt = build_sys_for_mode(mode, brief=brief)    # noqa
 
-    # 최근 대화(간단 정제) — 폴백 경로에서 사용
+    # 최근 짧은 히스토리(폴백 경로용; 기존 동작 유지)
     try:
-        import streamlit as st  # type: ignore
         raw = st.session_state.get("messages", [])
         history = [
             {"role": m["role"], "content": (m.get("content") or "").strip()}
             for m in raw
             if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
-        ][-6:]  # 최근 6개만
+        ][-6:]
     except Exception:
         history = []
 
@@ -369,11 +428,11 @@ def ask_llm_with_tools(
                 or AZURE.get("router_deployment")
                 or AZURE.get("deployment")
             )
-            plan = make_plan_with_llm(_client, user_q, model=router_model)  # noqa: F821
+            router_input = user_ctx if st.session_state.get("__ctx_router__", False) else user_q
+            plan = make_plan_with_llm(_client, router_input, model=router_model)  # noqa
 
             # (옵션) 사이드바 디버그
             try:
-                import streamlit as st  # type: ignore
                 if st.sidebar.checkbox("DRF 디버그", value=False, key="__debug_drf__"):
                     st.sidebar.caption("Router plan")
                     st.sidebar.code(_json.dumps(plan, ensure_ascii=False, indent=2), language="json")
@@ -387,7 +446,7 @@ def ask_llm_with_tools(
                 ef_hint  = (plan.get("efYd") or plan.get("eff_date") or "").replace("-", "").strip()
 
                 # DRF(JSON) 한 번으로 구조화 조문 확보
-                bundle, used_url = fetch_article_via_api_struct(  # noqa: F821
+                bundle, used_url = fetch_article_via_api_struct(  # noqa
                     law_hint, art_hint, mst=mst_hint, efYd=ef_hint
                 )
 
@@ -396,16 +455,20 @@ def ask_llm_with_tools(
                     "너는 한국의 변호사다. 제공된 [법령 메타/조문 본문/항·호]만 근거로 정확히 해석하고, "
                     "답변에는 인용한 조문·항·호를 괄호로 명시하라. 근거가 부족하면 추가 조문을 요구하라."
                 )
-                context_bundle = render_article_context_for_llm(bundle)  # noqa: F821
+                context_bundle = render_article_context_for_llm(bundle)  # noqa
 
                 model_id = (
                     getattr(_client, "advice_model", None)
                     or AZURE.get("deployment")
                     or "gpt-4o"
                 )
+
+                # ⬇︎ [핵심] 답변 생성 입력: 기본적으로 컨텍스트 사용(기능 영향 최소화)
+                content_input = user_ctx if st.session_state.get("__ctx_answer__", True) else user_q
+                content = content_input if not context_bundle else f"{content_input}\n\n[참고자료]\n{context_bundle}"
                 msgs2 = [
                     {"role": "system", "content": sys_for_lawyer},
-                    {"role": "user", "content": f"{user_q}\n\n[참고자료]\n{context_bundle}"},
+                    {"role": "user", "content": content},
                 ]
                 resp = _client.chat.completions.create(
                     model=model_id, messages=msgs2, temperature=0.1, max_tokens=1600
@@ -425,6 +488,7 @@ def ask_llm_with_tools(
             if "primer_enable" in params:
                 base_kwargs["primer_enable"] = True
             hist_key = next((k for k in ("history", "messages", "chat_history", "conversation") if k in params), None)
+            # 엔진은 기존대로 user_q 사용(기능 영향 최소화)
             ret = engine.generate(user_q, **({**base_kwargs, hist_key: history} if hist_key else base_kwargs))
             if _insp.isgenerator(ret):
                 yield from ret
@@ -444,7 +508,9 @@ def ask_llm_with_tools(
             or AZURE.get("deployment")
             or "gpt-4o"
         )
-        msgs3 = [{"role": "system", "content": sys_prompt}] + history + [{"role": "user", "content": user_q}]
+        # ✅ 폴백B에서는 컨텍스트를 user 메시지로 사용하여 기억 보강
+        content_input = user_ctx if st.session_state.get("__ctx_answer__", True) else user_q
+        msgs3 = [{"role": "system", "content": sys_prompt}] + history + [{"role": "user", "content": content_input}]
         resp = _client.chat.completions.create(
             model=model_id, messages=msgs3, temperature=0.2, max_tokens=1400
         )
@@ -454,6 +520,7 @@ def ask_llm_with_tools(
     except Exception:
         yield ("final", "죄송합니다. 내부 오류로 답변을 완료하지 못했습니다.", [])
         return
+
 
 
 def _esc(s: str) -> str:
