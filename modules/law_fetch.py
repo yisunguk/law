@@ -5,16 +5,34 @@ from typing import Tuple, Optional
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlencode
+# --- add to top of law_fetch.py (imports 아래) ---
+def _get_oc() -> str:
+    """
+    DRF OC 코드를 한 군데에서 안전하게 가져온다.
+    - 우선순위: 환경변수 → streamlit secrets → 빈 값
+    """
+    oc = (os.environ.get("LAW_API_OC") or "").strip()
+    if oc:
+        return oc
+    try:
+        # streamlit 환경(Cloud)에서는 secrets에만 있고 env에는 없다.
+        import streamlit as st  # type: ignore
+        oc = (st.secrets.get("LAW_API_OC") or "").strip()
+    except Exception:
+        oc = ""
+    return oc
 
-# -------------------------
-# DRF 링크 빌더
-# -------------------------
-# law_fetch.py - _build_drf_link 수정
-def _build_drf_link(mst: str, typ: str = "HTML", *, efYd: Optional[str] = None,
-                    lang: str = "KO", jo: Optional[str] = None) -> str:
+def _build_drf_link(
+    mst: str,
+    typ: str = "HTML",
+    *,
+    efYd: Optional[str] = None,
+    lang: str = "KO",
+    jo: Optional[str] = None
+) -> str:
     base = "https://www.law.go.kr/DRF/lawService.do"
     q = {
-        "OC": os.environ.get("LAW_API_OC", ""),
+        "OC": _get_oc(),         # <-- 핵심 수정: env만 보지 않고 secrets까지
         "target": "law",
         "type": typ,
     }
@@ -26,7 +44,8 @@ def _build_drf_link(mst: str, typ: str = "HTML", *, efYd: Optional[str] = None,
         q["LANG"] = lang
     if jo:
         q["JO"] = jo
-    return base + "?" + urlencode(q)
+    from urllib.parse import urlencode
+    return base + "?" + urlencode(q, doseq=False, encoding="utf-8")
 
 
 # ---------------------------------
@@ -69,59 +88,116 @@ def _extract_text_from_json(json_text: str) -> str:
 # law_fetch.py
 from urllib.parse import urlencode
 
-def find_mst_by_law_name(law_name: str, efYd: Optional[str] = None, timeout: float = 8.0) -> str:
+def find_mst_by_law_name(
+    law_name: str,
+    efYd: Optional[str] = None,
+    timeout: float = 8.0
+) -> str:
     """
     DRF lawSearch API로 법령명을 검색해 MST(법령일련번호)를 찾아준다.
-    - 정확 일치 우선, 없으면 첫 후보 반환
+    - 정확 일치 우선, 없으면 첫 후보
     """
-    if not (law_name or "").strip():
+    law_name = (law_name or "").strip()
+    if not law_name:
         return ""
+
     base = "https://www.law.go.kr/DRF/lawSearch.do"
     q = {
-        "OC": os.environ.get("LAW_API_OC", ""),
+        "OC": _get_oc(),         # <-- 핵심 수정
         "target": "law",
         "type": "JSON",
-        "query": law_name.strip(),
+        "query": law_name,
     }
     if efYd:
         q["efYd"] = efYd
+
     url = base + "?" + urlencode(q)
     try:
-        r = requests.get(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
+        r = requests.get(
+            url, timeout=timeout,
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
         r.raise_for_status()
-        data = json.loads(r.text)
+        data = json.loads(r.text or "{}")
     except Exception:
         return ""
 
     items = data.get("법령목록") or data.get("laws") or []
-    if isinstance(items, dict):  # 단일 객체 방어
+    if isinstance(items, dict):
         items = [items]
 
-    # 1) 정확 일치 우선
+    # 1) 정확 일치
     for it in items:
         nm = (it.get("법령명한글") or it.get("법령명") or "").strip()
-        if nm == law_name.strip():
+        if nm == law_name:
             return (it.get("법령일련번호") or it.get("MST") or "").strip()
 
-    # 2) 없으면 첫 번째 MST
+    # 2) 첫 후보
     for it in items:
         m = (it.get("법령일련번호") or it.get("MST") or "").strip()
         if m:
             return m
     return ""
 
+
 # ---------------------------------
 # DRF 호출
 # ---------------------------------
-def _drf_get(mst: str, *, typ: str = "JSON", jo: Optional[str] = None,
-             efYd: Optional[str] = None, timeout: float = 10.0) -> tuple[str,str]:
+from typing import Optional, Tuple
+
+def _drf_get(
+    mst: str,
+    *,
+    typ: str = "JSON",
+    jo: Optional[str] = None,
+    efYd: Optional[str] = None,
+    timeout: float = 10.0,
+) -> Tuple[str, str]:
+    """
+    DRF lawService 호출(문자열 응답, 에러페이지 감지 포함)
+    반환: (text, used_url)
+      - 에러/차단/파라미터 문제로 보이면 text="" 로 반환
+    """
     url = _build_drf_link(mst, typ=typ, efYd=efYd, jo=jo)
-    s = requests.Session()
-    r = s.get(url, timeout=timeout, headers={
-        "User-Agent":"Mozilla/5.0","Accept":"*/*","Referer":"https://www.law.go.kr/DRF/index.do"
-    })
-    r.raise_for_status()
-    return r.text or "", url
+
+    try:
+        r = requests.get(
+            url,
+            timeout=timeout,
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "*/*",
+                "Referer": "https://www.law.go.kr/DRF/index.do",
+            },
+        )
+    except Exception:
+        return "", url
+
+    if not (200 <= r.status_code < 300):
+        return "", url
+
+    text = r.text or ""
+    head = text[:2000]
+
+    # DRF가 에러를 HTML로 200과 함께 돌려줄 때를 방어
+    bad_signatures = (
+        "접근이 제한되었습니다",
+        "페이지 접속에 실패하였습니다",
+        "URL에 MST 요청값이 없습니다",
+        "일치하는 법령이 없습니다",
+        "로그인한 사용자 OC만 사용가능합니다",
+    )
+    if any(sig in head for sig in bad_signatures):
+        return "", url
+
+    # JSON 요청인데 HTML 형태로 내려오면 에러로 간주
+    if typ.upper() == "JSON":
+        ct = (r.headers.get("Content-Type") or "").lower()
+        if "json" not in ct and "<html" in head.lower():
+            return "", url
+
+    return text, url
+
 
 def fetch_law_detail_text(mst: str, *, prefer: str = "JSON",
                           jo: Optional[str] = None, efYd: Optional[str] = None,
