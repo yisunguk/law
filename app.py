@@ -503,7 +503,9 @@ def ask_llm_with_tools(
                 base_kwargs["primer_enable"] = True
             hist_key = next((k for k in ("history", "messages", "chat_history", "conversation") if k in params), None)
             # 엔진은 기존대로 user_q 사용(기능 영향 최소화)
-            ret = engine.generate(user_q, **({**base_kwargs, hist_key: history} if hist_key else base_kwargs))
+            ret = engine.generate(user_ctx if st.session_state.get("__ctx_answer__", True) else user_q,
+                                  **({**base_kwargs, hist_key: history} if hist_key else base_kwargs)
+)
             if _insp.isgenerator(ret):
                 yield from ret
             else:
