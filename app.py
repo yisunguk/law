@@ -3042,6 +3042,34 @@ with st.sidebar:
             d = st.session_state["gen_file"]
             present_url_with_fallback(d["url"], d["kind"], d["q"])
 
+# app.py (사이드바 섹션 어딘가)
+import requests, streamlit as st
+from urllib.parse import urlencode
+import os, re
+
+def _jo(label:str)->str:
+    m = re.search(r'(\d+)\s*조', label or "")
+    return f"{int(m.group(1)):06d}" if m else ""
+
+if st.sidebar.button("DRF 연결 테스트"):
+    q = {
+        "OC": os.environ.get("LAW_API_OC",""),
+        "target":"law", "type":"HTML", "LANG":"KO",
+        "MST":"",                 # 모르면 비워두고
+        "efYd":"20250828",        # 시행일자(예: 건설산업기본법 최신)
+        "JO": _jo("제83조"),
+    }
+    url = "https://www.law.go.kr/DRF/lawService.do?" + urlencode({k:v for k,v in q.items() if v})
+    try:
+        r = requests.get(url, timeout=6, headers={"User-Agent":"Mozilla/5.0"})
+        ok = r.ok and ("페이지 접속에 실패하였습니다" not in r.text)
+        st.sidebar.write("URL:", url)
+        st.sidebar.success("DRF access OK ✅" if ok else "DRF access DENIED ❌")
+        st.sidebar.write("status:", r.status_code, " length:", len(r.text))
+    except Exception as e:
+        st.sidebar.error(f"요청 실패: {e}")
+
+
 # 1) pending → messages 먼저 옮김
 user_q = _push_user_from_pending()
 
