@@ -214,37 +214,35 @@ def ask_llm_with_tools(
     forced_mode: str | None = None,
     brief: bool = False,
 ):
-    """① 의도 판단 → ② (가능하면) 라우터로 DRF 호출하여 조문 즉시 반환 → ③ 실패 시 엔진/직접호출 폴백"""
-    import inspect
-    import streamlit as st
-    import os
+    """① 의도 판단 → ② (가능하면) 라우터로 본문 수집(깊은링크→DRF) → ③ 실패 시 엔진/직접호출 폴백"""
+    import inspect as _insp
     import json as _json
+    import os
+    import streamlit as st
 
-    # 0) 엔진/클라이언트
+    # ─────────────────── 0) 엔진/클라이언트 ───────────────────
     engine = _init_engine_lazy() if "_init_engine_lazy" in globals() else globals().get("engine")
     _client = globals().get("client")
-
     if engine is None and _client is None:
         yield ("final", "엔진이 아직 초기화되지 않았습니다. (client/AZURE/TOOLS 확인)", [])
         return
 
-    # 1) 모드 결정
+    # ─────────────────── 1) 모드 결정 ───────────────────
     try:
         det_intent, _conf = classify_intent(user_q)
     except Exception:
         det_intent, _conf = (Intent.QUICK, 0.0)
-
     try:
         valid_values = {m.value for m in Intent}
         mode = Intent(forced_mode) if (forced_mode in valid_values) else det_intent
     except Exception:
         mode = det_intent
 
-    # 2) 프롬프트/툴
+    # ─────────────────── 2) 프롬프트/툴 ───────────────────
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
-    # 2.5) 히스토리
+    # ─────────────────── 2.5) 히스토리 ───────────────────
     try:
         msgs = st.session_state.get("messages", [])
         _hist = []
@@ -262,7 +260,7 @@ def ask_llm_with_tools(
     # (옵션) 사이드바 디버그 스위치
     DEBUG = st.sidebar.checkbox("DRF 디버그", value=False, key="__debug_drf__")
 
-    # 2.7) 라우팅 → DRF → (본문 폴백 포함) 즉시 반환
+    # ─────────────────── 2.7) 라우팅 → (깊은링크 → DRF) 본문 즉시 반환 ───────────────────
     try:
         if _client is not None:
             router_model = (
@@ -276,17 +274,15 @@ def ask_llm_with_tools(
                 st.sidebar.caption("Router plan")
                 st.sidebar.code(_json.dumps(plan, ensure_ascii=False, indent=2), language="json")
 
-            # ── MST 보강기: 플랜에 mst가 없으면 통합검색으로 즉시 보강 ──
+            # MST 보강기: 플랜에 mst 없으면 통합검색으로 확보
             def _resolve_mst_for(law_name: str) -> str:
                 try:
                     if not law_name:
                         return ""
                     items, _, _ = _call_moleg_list("law", law_name, num_rows=5)
-                    # 정확 일치 우선
                     for it in (items or []):
                         if (it.get("법령명") or "").strip() == law_name.strip():
                             return (it.get("MST") or "").strip()
-                    # 없으면 첫 후보
                     return ((items or [{}])[0].get("MST") or "").strip()
                 except Exception:
                     return ""
@@ -301,46 +297,75 @@ def ask_llm_with_tools(
                     st.sidebar.text(f"OC(env): {_oc_masked}")
                     st.sidebar.text(f"MST(resolved): {plan.get('mst','')}")
 
+                # 라우터 실행 결과
                 res = execute_plan(plan) or {}
-
                 law_hint = res.get("law") or plan.get("law_name") or ""
                 art_hint = res.get("article") or plan.get("article_label") or ""
-                link = res.get("link") or (_deep_article_url(law_hint, art_hint) if (law_hint and art_hint) else "")
                 text = (res.get("text") or "").strip()
 
-                if (not text) and law_hint and art_hint:
-                    text2, link2 = fetch_article_text_fallback(law_hint, art_hint, via_url=link)
-                    if text2:
-                        text, link = text2, (link2 or link)
+                # 링크 준비
+                deep_link = _deep_article_url(law_hint, art_hint) if (law_hint and art_hint) else ""
+                drf_link = (res.get("link") or "").strip()
+                if not drf_link:
+                    drf_link = build_drf_link(
+                        law_name=law_hint,
+                        article_label=art_hint,
+                        mst=(plan.get("mst") or ""),
+                        efYd=(plan.get("eff_date") or "")
+                    )
+
+                link_used = deep_link or drf_link
+
+                # ① 깊은링크 먼저 시도
+                if not text and law_hint and art_hint:
+                    t2, u2 = fetch_article_text_fallback(law_hint, art_hint, via_url=None)
+                    if t2:
+                        text, link_used = t2, (u2 or link_used)
+                    else:
+                        # ② DRF 폴백
+                        t3, u3 = fetch_article_text_fallback(law_hint, art_hint, via_url=drf_link)
+                        if t3:
+                            text, link_used = t3, (u3 or drf_link)
 
                 if DEBUG:
-                    st.sidebar.caption("DRF link tried")
-                    st.sidebar.code(link or "(no link)", language="text")
+                    st.sidebar.caption("Link used")
+                    st.sidebar.code(link_used or "(no link)", language="text")
                     st.sidebar.text(f"text length: {len(text)}")
 
                 if text:
-                    out = f"{text}\n\n원문 링크: {(link or _deep_article_url(law_hint, art_hint)).strip()}".strip()
+                    out = f"{text}\n\n원문 링크: { (link_used or deep_link or drf_link).strip() }".strip()
                     yield ("final", out, [])
                     return
     except Exception:
-        # 라우팅 실패 시 폴백으로 진행
+        # 라우팅 실패 시 폴백 계속
         pass
 
-    # 3) 폴백: (A) 엔진 → (B) 직접 ChatCompletion
+    # ─────────────────── 3) 폴백: (A) 엔진 → (B) 직접 ChatCompletion ───────────────────
     try:
         if engine is not None:
+            # 3-1) 엔진 시그니처 조사
             try:
-                params = set(inspect.signature(engine.generate).parameters)
+                params = set(_insp.signature(engine.generate).parameters)
             except Exception:
                 params = set()
 
-            base_kwargs = dict(system_prompt=sys_prompt, allow_tools=use_tools, num_rows=num_rows, stream=stream)
+            # 3-2) 엔진이 받는 인자만 선별
+            all_kwargs = dict(
+                system_prompt=sys_prompt,
+                allow_tools=use_tools,
+                num_rows=num_rows,
+                stream=stream,
+            )
+            base_kwargs = {k: v for k, v in all_kwargs.items() if k in params}
             if "primer_enable" in params:
                 base_kwargs["primer_enable"] = True
 
+            # 3-3) 히스토리 키 감지
             hist_key = next((k for k in ("history", "messages", "chat_history", "conversation") if k in params), None)
+
+            # 3-4) 호출 (제너레이터/비제너레이터 모두 대응)
             if hist_key:
-                yield from engine.generate(user_q, **{**base_kwargs, hist_key: history})
+                ret = engine.generate(user_q, **{**base_kwargs, hist_key: history})
             else:
                 if history:
                     transcript = "\n".join(
@@ -350,70 +375,24 @@ def ask_llm_with_tools(
                     user_q2 = f"[이전 대화]\n{transcript}\n\n[현재 질문]\n{user_q}"
                 else:
                     user_q2 = user_q
-                yield from engine.generate(user_q2, **base_kwargs)
-            return
-    except Exception:
-        pass
+                ret = engine.generate(user_q2, **base_kwargs)
 
-    # B) 직접 ChatCompletion
-    try:
-        if _client is None:
-            raise RuntimeError("LLM client not initialized")
-
-        model_id = (
-            getattr(_client, "fallback_model", None)
-            or ((globals().get("AZURE") or {}).get("deployment"))
-            or "gpt-4o"
-        )
-        msgs = [{"role": "system", "content": sys_prompt}] + history + [{"role": "user", "content": user_q}]
-        resp = _client.chat.completions.create(
-            model=model_id,
-            messages=msgs,
-            temperature=0.2,
-            max_tokens=1200,
-        )
-        answer = (resp.choices[0].message.content or "").strip()
-        yield ("final", answer, [])
-        return
-    except Exception:
-        yield ("final", "죄송합니다. 내부 오류로 답변을 완료하지 못했습니다.", [])
-        return
-
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # 3) 폴백: (A) 엔진 → (B) 직접 ChatCompletion
-    # ──────────────────────────────────────────────────────────────────────────
-    try:
-        if engine is not None:
+            # 3-5) 반환형 안전 처리
             try:
-                params = set(inspect.signature(engine.generate).parameters)
-            except Exception:
-                params = set()
-
-            base_kwargs = dict(system_prompt=sys_prompt, allow_tools=use_tools, num_rows=num_rows, stream=stream)
-            if "primer_enable" in params:
-                base_kwargs["primer_enable"] = True
-
-            hist_key = next((k for k in ("history", "messages", "chat_history", "conversation") if k in params), None)
-            if hist_key:
-                yield from engine.generate(user_q, **{**base_kwargs, hist_key: history})
-            else:
-                if history:
-                    transcript = "\n".join(
-                        f"{'사용자' if h['role']=='user' else '어시스턴트'}: {h['content']}"
-                        for h in history
-                    )
-                    user_q2 = f"[이전 대화]\n{transcript}\n\n[현재 질문]\n{user_q}"
+                if _insp.isgenerator(ret):
+                    yield from ret
                 else:
-                    user_q2 = user_q
-                yield from engine.generate(user_q2, **base_kwargs)
+                    if isinstance(ret, tuple) and len(ret) >= 2:
+                        yield ret
+                    else:
+                        yield ("final", str(ret), [])
+            except Exception:
+                yield ("final", str(ret), [])
             return
     except Exception:
         pass
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # B) 직접 ChatCompletion
-    # ──────────────────────────────────────────────────────────────────────────
+    # ─────────────────── B) 직접 ChatCompletion ───────────────────
     try:
         if _client is None:
             raise RuntimeError("LLM client not initialized")
@@ -2278,15 +2257,147 @@ def _extract_article_block(html_text: str) -> str:
                 return txt
     return ""
 
-def fetch_article_text_fallback(law_name: str, article_label: str, via_url: str | None = None, timeout: float = 6.0) -> tuple[str, str]:
-    try:
-        url = via_url or _deep_article_url(law_name, article_label)
-        r = requests.get(url, timeout=timeout, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
-        if not (200 <= r.status_code < 400):
+def fetch_article_text_fallback(
+    law_name: str,
+    article_label: str,
+    via_url: str | None = None,
+    timeout: float = 7.0,
+) -> tuple[str, str]:
+    """
+    1) 공개 한글주소(깊은 링크) 먼저 시도
+    2) 실패하면 DRF URL 시도
+    3) DRF의 '기관/IP 차단'·'오류 페이지'를 본문으로 오인하지 않도록 필터링
+    4) 어느 쪽이든 본문 파싱 실패 시 공백 반환(링크만 돌려줌)
+    """
+    import re, requests
+    from bs4 import BeautifulSoup
+
+    BAD_SNIPPETS = [
+        "페이지 접속에 실패하였습니다",
+        "접속하신 기관에 문의하여 주시기 바랍니다",
+        "유지보수팀(02-2109-6446)",
+        "접근이 제한되었습니다",  # 빈도 제한 메시지 대응
+    ]
+
+# ─────────────────────────────────────────────────────────────────
+# JO 코드 생성기 (모듈 레벨; 함수 밖)
+# ─────────────────────────────────────────────────────────────────
+import re
+import requests
+from bs4 import BeautifulSoup
+from typing import Optional, Tuple
+
+def jo_from_label(label: str) -> str:
+    """'제83조' → '008300' (6자리, 뒤 두 자리는 00)"""
+    m = re.search(r'(\d+)\s*조', label or "")
+    return f"{int(m.group(1)):06d}" if m else ""
+
+
+# ─────────────────────────────────────────────────────────────────
+# 공개 한글주소(깊은 링크) → DRF 순서로 본문 파싱 (견고 버전)
+# ─────────────────────────────────────────────────────────────────
+def fetch_article_text_fallback(
+    law_name: str,
+    article_label: str,
+    via_url: Optional[str] = None,
+    timeout: float = 7.0,
+) -> Tuple[str, str]:
+    """
+    1) 공개 한글주소(깊은 링크) 먼저 시도
+    2) 실패하면 DRF URL 시도
+    3) DRF 차단/오류 페이지를 본문으로 오인하지 않도록 필터링
+    반환: (본문텍스트, 사용한URL)
+    """
+
+    BAD_SNIPPETS = [
+        "페이지 접속에 실패하였습니다",
+        "접속하신 기관에 문의하여 주시기 바랍니다",
+        "유지보수팀(02-2109-6446)",
+        "접근이 제한되었습니다",
+    ]
+
+    def _extract_from_html(html: str, label: str) -> str:
+        """
+        레이아웃 변화에 덜 민감한 범용 파서:
+        - '제83조'가 나타난 지점부터 다음 '제N조' 직전까지 수집
+        - 태그/공백 정리
+        """
+        soup = BeautifulSoup(html, "lxml")
+
+        # '제83조' 같은 표기를 정규화하여 탐색
+        norm_label = re.sub(r"\s+", "", label or "")
+        target = None
+
+        # 1) '제83조' 문자열이 들어있는 텍스트 노드를 탐색
+        for t in soup.find_all(string=True):
+            if norm_label and norm_label in re.sub(r"\s+", "", str(t)):
+                target = t.parent
+                break
+        if not target:
+            # 백업: 숫자만 뽑아 '제 83 조' 패턴으로 탐색
+            m = re.search(r"(\d+)", label or "")
+            if m:
+                here_pat = re.compile(rf"제\s*{int(m.group(1))}\s*조")
+                for el in soup.find_all(True):
+                    if here_pat.search(el.get_text(" ", strip=True)):
+                        target = el
+                        break
+        if not target:
+            return ""
+
+        # 2) 다음 '제N조'가 나오기 전까지의 형제 노드 텍스트 수집
+        parts = []
+        node = target
+        MAX_NODES = 80
+        cnt = 0
+        next_art_pat = re.compile(r"제\s*\d+\s*조")
+        while node is not None and cnt < MAX_NODES:
+            txt = node.get_text(" ", strip=True)
+            if cnt > 0 and next_art_pat.search(txt):
+                break
+            if txt:
+                parts.append(txt)
+            node = node.find_next_sibling()
+            cnt += 1
+
+        out = "\n".join(parts).strip()
+        out = re.sub(r"\s{2,}", " ", out)
+        return out.strip()
+
+    def _try(url: Optional[str]) -> Tuple[str, str]:
+        if not url:
+            return "", ""
+        try:
+            r = requests.get(
+                url,
+                timeout=timeout,
+                allow_redirects=True,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            if not (200 <= r.status_code < 400):
+                return "", url
+            head = r.text[:4000]
+            if any(sig in head for sig in BAD_SNIPPETS):
+                return "", url
+            text = _extract_from_html(r.text, article_label)
+            return (text, url) if text else ("", url)
+        except Exception:
             return "", url
-        return _extract_article_block(r.text), url
-    except Exception:
-        return "", (via_url or _deep_article_url(law_name, article_label))
+
+    # 1) 공개 한글주소(깊은 링크) 먼저
+    deep_url = _deep_article_url(law_name, article_label)  # <- 모듈 내 기존 헬퍼 사용
+    text, used = _try(deep_url)
+    if text:
+        return text, used
+
+    # 2) DRF(라우터/계획에서 온 via_url 우선)
+    text, used = _try(via_url)
+    if text:
+        return text, used
+
+    return "", (via_url or deep_url or "")
+
+
 
 
 # === LLM 플래너 & 플랜 필터 ===
