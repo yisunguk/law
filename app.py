@@ -17,6 +17,18 @@ try:
     AZURE = st.secrets.get("azure_openai", {})
 except Exception:
     AZURE = {}
+
+import streamlit as st
+
+# (선택) 페이지 설정들...
+# st.set_page_config(...)
+
+# 세션 초기화 시 1회만 실행
+if "__boot__" not in st.session_state:
+    st.session_state["__ctx_router__"] = True   # 라우터에도 문맥 주입 ON
+    # st.session_state["__ctx_answer__"] = True # (이미 기본 True지만 확실히 하려면)
+    st.session_state["__boot__"] = True
+
 # === Chat memory helpers ======================================================
 import streamlit as st
 
@@ -337,6 +349,8 @@ from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_
 
 from typing import Optional
 
+from typing import Optional
+
 def ask_llm_with_tools(
     user_q: str,
     num_rows: int = 5,
@@ -364,7 +378,7 @@ def ask_llm_with_tools(
         yield ("final", "엔진/클라이언트가 초기화되지 않았습니다. (AZURE/TOOLS 확인)", [])
         return
 
-    # === [NEW] 대화 컨텍스트 구성: 최근 대화 → 전사 → 러닝요약 → 합성질문 ==========
+    # === [NEW] 대화 컨텍스트 구성: 최근 대화 → 전사 → 러닝요약 → 합성질문 ==========#
     # 다른 기능은 건드리지 않고, LLM 입력에만 사용합니다.
     def _safe_recent_transcript() -> str:
         try:
@@ -420,7 +434,7 @@ def ask_llm_with_tools(
     except Exception:
         history = []
 
-    # --- 1) Router → DRF(JSON) → LLM (선호 경로) -----------------------------------
+    # --- 1) Router → DRF(JSON) → LLM (선호 경로) ----------------------------------- #
     try:
         if _client is not None:
             router_model = (
@@ -480,7 +494,7 @@ def ask_llm_with_tools(
         # 라우팅/DRF 단계 실패 → 폴백 진행
         pass
 
-    # --- 2) Fallback A: custom engine (tools OK) -----------------------------------
+    # --- 2) Fallback A: custom engine (tools OK) ----------------------------------- #
     try:
         if engine is not None:
             params = set(_insp.signature(engine.generate).parameters)
@@ -498,7 +512,7 @@ def ask_llm_with_tools(
     except Exception:
         pass
 
-    # --- 3) Fallback B: direct ChatCompletion with short history -------------------
+    # --- 3) Fallback B: direct ChatCompletion with short history ------------------- #
     try:
         if _client is None:
             raise RuntimeError("LLM client not initialized")
