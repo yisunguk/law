@@ -173,15 +173,27 @@ def _resolve_mst(law_name: str) -> tuple[str, str]:
     except Exception:
         return "", ""
 
-def build_drf_link(*, law_name: str = "", article_label: str = "",
-                   mst: str = "", law_id: str = "", efYd: str = "") -> str:
+# JO 생성기는 별도로 정의되어 있어야 합니다.
+# def jo_from_label(label: str) -> str:
+#     m = re.search(r'(\d+)\s*조', label or "")
+#     return f"{int(m.group(1)):04d}00" if m else ""
+
+from urllib.parse import urlencode
+import os, re
+
+def build_drf_link(
+    *, law_name: str = "", article_label: str = "",
+    mst: str = "", law_id: str = "", efYd: str = ""
+) -> str:
     """
-    DRF 본문 링크를 최대한 안전하게 만든다.
-    1) mst 없으면 통합검색으로 보강
-    2) efYd 없으면 검색 결과의 시행일자 사용
-    3) mst/ID 둘 다 없으면 빈 문자열
+    DRF 본문 링크 생성:
+      1) mst 없으면 통합검색으로 보강(_resolve_mst)
+      2) efYd 없으면 검색 결과의 시행일자 사용
+      3) JO는 '제83조' -> '008300' 규칙 적용(jo_from_label)
     """
-    jo = _to_jo_code(article_label)
+    jo = jo_from_label(article_label)  # ✅ 여기만 바꾸면 됨
+
+    # mst/efYd 보강
     if not mst and not law_id:
         mst2, eff2 = _resolve_mst(law_name)
         mst = mst or mst2
@@ -196,10 +208,10 @@ def build_drf_link(*, law_name: str = "", article_label: str = "",
         "type": "HTML",
         "LANG": "KO",
     }
-    if mst: q["MST"] = mst
-    if law_id: q["ID"] = law_id
+    if mst: q["MST"] = str(mst)
+    if law_id: q["ID"] = str(law_id)
     if jo: q["JO"] = jo
-    if efYd: q["efYd"] = re.sub(r"\D", "", efYd)
+    if efYd: q["efYd"] = re.sub(r"\D", "", str(efYd))
 
     return "https://www.law.go.kr/DRF/lawService.do?" + urlencode(q, doseq=False, encoding="utf-8")
 
@@ -2288,9 +2300,13 @@ from bs4 import BeautifulSoup
 from typing import Optional, Tuple
 
 def jo_from_label(label: str) -> str:
-    """'제83조' → '008300' (6자리, 뒤 두 자리는 00)"""
+    """
+    '제83조' → '008300'
+    규칙: (조 번호를 4자리로 zero-pad) + '00'
+    """
     m = re.search(r'(\d+)\s*조', label or "")
-    return f"{int(m.group(1)):06d}" if m else ""
+    return f"{int(m.group(1)):04d}00" if m else ""
+
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -3153,6 +3169,23 @@ with st.sidebar:
             d = st.session_state["gen_file"]
             present_url_with_fallback(d["url"], d["kind"], d["q"])
 
+
+# app.py 사이드바 어딘가
+import streamlit as st
+
+law_name_for_mst = st.sidebar.text_input("MST 찾기 - 법령명", value="건설산업기본법")
+if st.sidebar.button("MST 조회"):
+    try:
+        items, _, _ = _call_moleg_list("law", law_name_for_mst, num_rows=5)
+        if items:
+            # 정확 일치 우선
+            mst = next((it.get("MST") for it in items if (it.get("법령명") or "").strip()==law_name_for_mst.strip()), items[0].get("MST"))
+            st.sidebar.success(f"MST: {mst}")
+        else:
+            st.sidebar.warning("검색 결과가 없습니다.")
+    except Exception as e:
+        st.sidebar.error(f"조회 실패: {e}")
+
 # app.py (사이드바 섹션 어딘가)
 import requests, streamlit as st
 from urllib.parse import urlencode
@@ -3162,13 +3195,19 @@ def _jo(label:str)->str:
     m = re.search(r'(\d+)\s*조', label or "")
     return f"{int(m.group(1)):06d}" if m else ""
 
+# 사이드바 DRF 연결 테스트 (교체)
+import os, requests
+from urllib.parse import urlencode
+
 if st.sidebar.button("DRF 연결 테스트"):
     q = {
         "OC": os.environ.get("LAW_API_OC",""),
-        "target":"law", "type":"HTML", "LANG":"KO",
-        "MST":"",                 # 모르면 비워두고
-        "efYd":"20250828",        # 시행일자(예: 건설산업기본법 최신)
-        "JO": _jo("제83조"),
+        "target":"law",
+        "type":"HTML",
+        "LANG":"KO",
+        "MST": st.session_state.get("__test_mst__", ""),   # 위 MST 조회 결과를 복사/붙여넣기 해도 됨
+        "efYd":"20250828",                                 # 시행일자 필요시
+        "JO": jo_from_label("제83조"),                     # ← 이제 008300이 됩니다
     }
     url = "https://www.law.go.kr/DRF/lawService.do?" + urlencode({k:v for k,v in q.items() if v})
     try:
@@ -3179,6 +3218,7 @@ if st.sidebar.button("DRF 연결 테스트"):
         st.sidebar.write("status:", r.status_code, " length:", len(r.text))
     except Exception as e:
         st.sidebar.error(f"요청 실패: {e}")
+
 
 
 # 1) pending → messages 먼저 옮김
