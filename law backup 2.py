@@ -1,5 +1,28 @@
+# app.py — fixed header
 from __future__ import annotations
-# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
+
+import streamlit as st
+# app.py
+from law_fetch import _summarize_laws_for_primer as summarize_with_capsules
+
+# 엔진 생성부
+engine = AdviceEngine(
+    client=client,
+    model=AZURE["deployment"],
+    tools=TOOLS,
+    safe_chat_completion=safe_chat_completion,
+    tool_search_one=tool_search_one,
+    tool_search_multi=tool_search_multi,
+    prefetch_law_context=prefetch_law_context,
+    summarize_laws_for_primer=summarize_with_capsules,  # ✅ 본문 포함 버전
+    temperature=0.2,
+)
+
+
+
+from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
+
+
 
 import streamlit as st
 
@@ -575,7 +598,10 @@ def _sanitize_plan_q(user_q: str, q: str) -> str:
     return q
 
 # ---- 오른쪽 플로팅 패널 렌더러 ----
-def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | None = None, show_debug: bool = False):
+def render_search_flyout(user_q: str, num_rows: int = 8,
+                         hint_laws: list[str] | None = None,
+                         hint_articles: list[tuple[str,str]] | None = None,
+                         show_debug: bool = False):
     results = find_all_law_data(user_q, num_rows=num_rows, hint_laws=hint_laws)
 
     def _pick(*cands):
@@ -583,15 +609,38 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
             if isinstance(c, str) and c.strip():
                 return c.strip()
         return ""
-
+    
     def _build_law_link(it, eff):
-        link = _pick(it.get("url"), it.get("link"), it.get("detail_url"), it.get("상세링크"))
-        if link: return link
+        link = _pick(
+            it.get("법령상세링크"),
+            it.get("상세링크"),
+            it.get("url"), it.get("link"), it.get("detail_url"),
+        )
+        if link:
+            return normalize_law_link(link)
         mst = _pick(it.get("MST"), it.get("mst"), it.get("LawMST"))
         if mst:
-            return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={eff}"
+            ef = (eff or "").replace("-", "")
+            return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={ef}"
         return ""
 
+    # ── 여기부터는 기존 HTML 조립부 ─────────────────────────────
+    html: list[str] = []
+    html.append('<div class="flyout">')
+    html.append('<h3>🧠 통합 검색 결과</h3>')
+
+    # ▼▼▼ (NEW) 조문 바로가기: '카테고리 렌더' 들어가기 직전에 삽입 ▼▼▼
+    if hint_articles:
+        html.append('<h4>🔗 조문 바로가기</h4>')
+        html.append('<ol class="law-list">')
+        for law, art in hint_articles:
+            # 예: law="주택임대차보호법", art="제6조" 또는 "제6조의2"
+            url = _deep_article_url(law, art)  # 실패 시 법령 메인으로 폴백하는 기존 함수
+            html.append(
+                f'<li><a href="{url}" target="_blank" rel="noreferrer">{law} {art}</a></li>'
+            )
+        html.append('</ol>')
+ 
     def _law_item_li(it):
         title = _pick(it.get("법령명한글"), it.get("법령명"), it.get("title_kr"), it.get("title"), it.get("name_ko"), it.get("name"))
         dept  = _pick(it.get("소관부처"), it.get("부처명"), it.get("dept"), it.get("department"))
@@ -796,8 +845,8 @@ def render_pre_chat_center():
     # ✅ 대화 스타터 버튼 (2줄 2줄)
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("근로계약 해지 시 절차는?", use_container_width=True):
-            st.session_state["_pending_user_q"] = "근로계약 해지 시 절차는?"
+        if st.button("건설현장 중대재해 발생시 처리 절차는?", use_container_width=True):
+            st.session_state["_pending_user_q"] = "건설현장 중대재해 발생시 처리 절차는?"
             st.session_state["_pending_user_nonce"] = time.time_ns()
             st.rerun()
     with col2:
@@ -808,8 +857,8 @@ def render_pre_chat_center():
 
     col3, col4 = st.columns(2)
     with col3:
-        if st.button("개인정보 유출 시 법적 책임은?", use_container_width=True):
-            st.session_state["_pending_user_q"] = "개인정보 유출 시 법적 책임은?"
+        if st.button("유료주차장에 주차된 차에서 도난 사건이 났어", use_container_width=True):
+            st.session_state["_pending_user_q"] = "유료주차장에 주차된 차에서 도난 사건이 났어?"
             st.session_state["_pending_user_nonce"] = time.time_ns()
             st.rerun()
     with col4:
@@ -1052,6 +1101,27 @@ def extract_law_names_from_answer(md: str) -> list[str]:
             out.append(n2)
     return out[:6]
 
+# ===== 조문 추출: 답변에서 (법령명, 제n조[의m]) 페어 추출 =====
+import re as _re_art
+
+_ART_INLINE = _re_art.compile(
+    r'(?P<law>[가-힣A-Za-z0-9·\s]{2,40}?(?:법|령|규칙|조례))\s*제(?P<num>\d{1,4})조(?P<ui>의\d{1,3})?'
+)
+
+def extract_article_pairs_from_answer(md: str) -> list[tuple[str, str]]:
+    pairs = []
+    for m in _ART_INLINE.finditer(md or ""):
+        law = (m.group("law") or "").strip()
+        art = f"제{m.group('num')}조{m.group('ui') or ''}"
+        if law:
+            pairs.append((law, art))
+    # 순서 유지 중복 제거
+    seen = set(); out = []
+    for p in pairs:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out[:8]
 
 def normalize_law_link(u: str) -> str:
     """상대/스킴누락 링크를 www.law.go.kr 절대 URL로 교정"""
@@ -1130,10 +1200,27 @@ def autolink_bare_urls_in_explain(md: str) -> str:
         return f'<{url}>'
     block = _URL_BARE.sub(_wrap, block)
     return md[:start] + block + md[end:]
-st.markdown("""
-인공지능 법률 상담가 챗봇은 국가법령정보 DB를 직접 접속하여 최신 법령과 행정규칙, 자치법규, 조약, 법령해석례, 헌재결정례, 법령용어를 신뢰성 있게 해석합니다.  
+st.markdown(
+    """
+    <div style="text-align:center; padding: 6px 0 2px;">
+      <h1 style="
+          margin:0;
+          font-size:48px;
+          font-weight:800;
+          line-height:1.1;
+          letter-spacing:-0.5px;">
+        인공지능 <span style="color:#2F80ED">법률 상담가</span>
+      </h1>
+    </div>
+    <hr style="margin: 12px 0 20px; border: 0; height: 1px; background: #eee;">
+    """,
+    unsafe_allow_html=True
+)
 
-본 챗봇은 내부 DB를 사용하지 않아 채팅 기록, 첨부파일 등 사용자의 기록을 저장하지 않습니다.             
+# 본문
+st.markdown("""
+국가법령정보 DB를 직접 접속하여 최신 법령을 조회하여 답변합니다.  
+저는 내부 DB를 사용하지 않아 채팅 기록, 첨부파일 등 사용자의 기록을 저장하지 않습니다.             
 """)
 
 # 하위 법령 소제목(예: "1) 산업안전보건법")
@@ -2946,10 +3033,26 @@ def _current_q_and_answer():
 
 # 🔽 대화가 시작된 뒤에만 우측 패널 노출
 # ✅ 로딩(스트리밍) 중에는 패널을 렌더링하지 않음
+# 🔽 대화가 시작된 뒤에만 우측 패널 노출
+# ✅ 로딩(스트리밍) 중에는 패널을 렌더링하지 않음
 if chat_started and not st.session_state.get("__answering__", False):
     q_for_panel, ans_for_panel = _current_q_and_answer()
-    hints = extract_law_names_from_answer(ans_for_panel) if ans_for_panel else None
-    render_search_flyout(q_for_panel or user_q, num_rows=8, hint_laws=hints, show_debug=SHOW_SEARCH_DEBUG)
+
+    # 함수들이 파일의 더 아래에서 정의되어 있을 수 있으므로 안전 가드
+    _ext_names = globals().get("extract_law_names_from_answer")
+    _ext_arts  = globals().get("extract_article_pairs_from_answer")
+
+    hints = _ext_names(ans_for_panel) if (_ext_names and ans_for_panel) else None
+    arts  = _ext_arts(ans_for_panel)  if (_ext_arts  and ans_for_panel) else None
+
+    render_search_flyout(
+        q_for_panel or user_q,
+        num_rows=8,
+        hint_laws=hints,
+        hint_articles=arts,   # ← 조문 힌트도 함께 전달
+        show_debug=SHOW_SEARCH_DEBUG,
+    )
+
 
 # ===============================
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)

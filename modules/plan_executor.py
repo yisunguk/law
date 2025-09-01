@@ -1,4 +1,4 @@
-# modules/plan_executor.py
+# === [REPLACE] modules/plan_executor.py : execute_plan() 전체 교체 블록 ===
 from __future__ import annotations
 from typing import Dict, Any, Optional, List, Tuple
 
@@ -9,13 +9,16 @@ try:
     from .law_fetch import (
         fetch_article_block_by_mst,
         jo_from_art_label,
-        _build_drf_link,  # for SEARCH_LAW items (HTML link)
+        find_mst_by_law_name,
     )
-except ImportError:
-    # Fallback when relative import is not available (dev/hot-reload)
-    from law_fetch import fetch_article_block_by_mst, jo_from_art_label, _build_drf_link
+except ImportError:  # dev/hot-reload fallback
+    from law_fetch import (
+        fetch_article_block_by_mst,
+        jo_from_art_label,
+        find_mst_by_law_name,
+    )
 
-# 목록 검색 유틸 (법령명 → 후보 리스트)
+# 목록 검색 유틸 (법령명 → 후보 리스트) — 선택적
 _find_all_law_data = None
 try:
     from .linking import find_all_law_data as _find_all_law_data  # project utility
@@ -24,6 +27,27 @@ except Exception:
         from linking import find_all_law_data as _find_all_law_data
     except Exception:
         _find_all_law_data = None  # graceful fallback
+
+# ──────────────────────────────────────────────────────────────────────────────
+# [NEW] 최후 폴백(스크랩)용 의존성: 실패해도 앱은 계속 동작하도록 안전하게 로드
+# ──────────────────────────────────────────────────────────────────────────────
+try:
+    from .linking import make_pretty_article_url  # 한글 조문 딥링크 생성기
+except Exception:
+    try:
+        from linking import make_pretty_article_url
+    except Exception:
+        make_pretty_article_url = None  # type: ignore
+
+try:
+    import requests  # 최후 폴백 시 페이지 요청
+except Exception:    # requests 미설치 환경에서도 죽지 않게
+    requests = None  # type: ignore
+
+try:
+    from bs4 import BeautifulSoup  # HTML → 텍스트 추출
+except Exception:
+    BeautifulSoup = None  # type: ignore
 
 __all__ = ["execute_plan"]
 
@@ -52,9 +76,8 @@ def _get_name_from_item(it: Dict[str, Any]) -> str:
 
 def _resolve_mst_by_name(law_name: str) -> str:
     """
-    목록 검색으로 정확한 MST를 알아냅니다.
-    - 프로젝트의 linking.find_all_law_data(...) 가 있으면 활용
-    - 없으면 빈 문자열 반환
+    프로젝트 유틸이 있으면 목록 검색으로 MST를 보강.
+    없으면 빈 문자열 반환.
     """
     if not law_name or not _find_all_law_data:
         return ""
@@ -71,130 +94,120 @@ def _resolve_mst_by_name(law_name: str) -> str:
         pass
     return ""
 
-def _fetch_article_text_with_retry(
-    mst: str,
-    article_label: str,
-    *,
-    efYd: Optional[str] = None
-) -> Tuple[str, str]:
-    """
-    DRF에서 조문 블록을 안정적으로 받아옵니다.
-    - JSON 우선, 실패 시 HTML 폴백 (law_fetch.fetch_article_block_by_mst 내부도 폴백 포함)
-    - 반환: (text, html_link)
-    """
-    text, link = fetch_article_block_by_mst(mst, article_label, prefer="JSON", efYd=efYd)
-    if not (text and text.strip()):
-        text2, link2 = fetch_article_block_by_mst(mst, article_label, prefer="HTML", efYd=efYd)
-        if text2 and text2.strip():
-            return text2.strip(), link2
-    return (text or "").strip(), link
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Public: execute_plan
-# plan 스키마(예): {
+# plan 예:
+# {
 #   "action": "ADVICE" | "GET_ARTICLE" | "SEARCH_LAW",
-#   "law_name": "...",
-#   "mst": "...",
-#   "article_label": "제83조의2",
+#   "law_name": "민법",
+#   "mst": "",
+#   "article_label": "제839조의2",
 #   "jo": "008302",
-#   "efYd": "20250828",
+#   "efYd": "20250708",
 #   "notes": "",
-#   "candidates": [{"law_name":"민법","article_label":"제839조의2","mst":"","jo":""}, ...]
+#   "candidates": [...]
 # }
 # ──────────────────────────────────────────────────────────────────────────────
-from typing import Any, Dict
-
-try:
-    # 패키지/단일파일 양쪽에서 동작하도록 이중 import
-    from .law_fetch import (
-        fetch_article_block_by_mst,
-        jo_from_art_label,
-        find_mst_by_law_name,
-    )
-except Exception:  # pragma: no cover
-    from law_fetch import (
-        fetch_article_block_by_mst,
-        jo_from_art_label,
-        find_mst_by_law_name,
-    )
-
-
 def execute_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     """
     LLM 라우터가 만든 plan을 실행한다.
 
-    하드닝(중요):
-      - GET_ARTICLE 액션에서 mst(법령일련번호)가 비어 있으면
-        법령명으로 DRF 검색을 돌려 mst를 반드시 보강한다.
-      - jo(조문 6자리)가 비어 있으면 article_label로부터 계산한다.
-      - DRF 본문 호출은 law_fetch.fetch_article_block_by_mst가 담당
-        (JSON 우선, 내부에서 HTML 폴백/평문화/조문 슬라이스 처리)
-
-    반환 형식(성공 시):
-      {
-        "type": "article",
-        "law": <법령명>,
-        "article": <조문라벨>,
-        "mst": <MST>,
-        "jo": <JO>,
-        "efYd": <시행일자YYYYMMDD>,
-        "text": <조문본문(평문화)>,
-        "link": <원문링크>
-      }
+    하드닝:
+      - GET_ARTICLE에서 mst가 비면 법령명으로 DRF 검색하여 mst를 보강(find_mst_by_law_name)
+      - jo가 비면 article_label로부터 계산(jo_from_art_label)
+      - DRF 본문은 JSON 우선, 필요시 HTML 폴백(fetch_article_block_by_mst 내부에 폴백 포함)
+      - 🔴 최후 폴백: DRF 본문이 완전히 비면 '법령 한글주소' 조문 페이지를 스크랩(딥링크 우선)
     """
     action = ((plan or {}).get("action") or "").upper()
 
-    if action == "GET_ARTICLE":
-        # 1) 입력 정규화
-        law_name: str = (plan.get("law_name") or "").strip()
-        article_label: str = (plan.get("article_label") or "").strip()
+    if action != "GET_ARTICLE":
+        # 이 구현은 GET_ARTICLE 전용. 다른 액션은 기존 경로에서 처리하거나
+        # 간단한 메시지만 반환합니다.
+        return {
+            "type": "noop",
+            "action": action or "QUICK",
+            "message": "execute_plan: GET_ARTICLE 외 액션은 외부 경로에서 처리하세요.",
+        }
 
-        mst: str = (plan.get("mst") or "").strip()
-        jo: str = (plan.get("jo") or "").strip()
-        efYd_raw: str = (plan.get("efYd") or plan.get("eff_date") or "").strip()
-        efYd: str = "".join(ch for ch in efYd_raw if ch.isdigit())
+    # 1) 입력 정규화
+    law_name: str = (plan.get("law_name") or "").strip()
+    article_label: str = (plan.get("article_label") or "").strip()
 
-        # 2) JO 보강 (예: '제83조' -> '008300')
-        if (not jo) and article_label:
-            try:
-                jo = jo_from_art_label(article_label) or ""
-            except Exception:
-                jo = ""
+    mst: str = (plan.get("mst") or "").strip()
+    jo: str = (plan.get("jo") or "").strip()
+    efYd_raw: str = (plan.get("efYd") or plan.get("eff_date") or "").strip()
+    efYd: str = "".join(ch for ch in efYd_raw if ch.isdigit())
 
-        # 3) MST 보강 (법령명으로 DRF 검색 → 정확 일치 우선)
-        if (not mst) and law_name:
-            try:
-                mst = find_mst_by_law_name(law_name, efYd=efYd) or ""
-            except Exception:
-                mst = ""
+    # 2) JO 보강 (예: '제83조' -> '008300')
+    if (not jo) and article_label:
+        try:
+            jo = jo_from_art_label(article_label) or ""
+        except Exception:
+            jo = ""
 
-        # 4) MST 없으면 실패 반환
+    # 3) MST 보강 (우선: DRF lawSearch → 보조: 프로젝트 목록검색)
+    if (not mst) and law_name:
+        try:
+            mst = find_mst_by_law_name(law_name, efYd=efYd) or ""  # DRF 직접
+        except Exception:
+            mst = ""
         if not mst:
-            return {
-                "type": "article",
-                "law": law_name,
-                "article": article_label,
-                "mst": "",
-                "jo": jo,
-                "efYd": efYd,
-                "text": "",
-                "link": "",
-                "error": "MST(법령일련번호) 해석 실패",
-            }
+            mst = _resolve_mst_by_name(law_name) or ""
 
-        # 5) DRF 본문 호출 (JSON 우선, 내부에서 폴백/슬라이스 처리)
-        text, link = fetch_article_block_by_mst(mst, article_label, prefer="JSON", efYd=efYd)
-
+    # 4) MST 없으면 실패 반환
+    if not mst:
         return {
             "type": "article",
             "law": law_name,
             "article": article_label,
-            "mst": mst,
+            "mst": "",
             "jo": jo,
             "efYd": efYd,
-            "text": (text or "").strip(),
-            "link": (link or ""),
+            "text": "",
+            "link": "",
+            "error": "MST(법령일련번호) 해석 실패",
         }
 
-    # 알 수 없는 액션은 그대로 에코(또는 필요 시 확장)
-    return dict(plan or {})
+    # 5) DRF 본문 호출 (JSON 우선, 내부에서 HTML 폴백/슬라이스 처리)
+    text, link = fetch_article_block_by_mst(mst, article_label, prefer="JSON", efYd=efYd)
+    if not (text and text.strip()):
+        text2, link2 = fetch_article_block_by_mst(mst, article_label, prefer="HTML", efYd=efYd)
+        if text2 and text2.strip():
+            text, link = text2.strip(), link2
+
+    # 6) 🔴 최후 폴백: DRF가 모두 실패한 경우, 한글주소 조문 페이지 스크랩
+    if not (text and text.strip()):
+        if make_pretty_article_url and requests and BeautifulSoup and law_name and article_label:
+            try:
+                url = make_pretty_article_url(law_name, article_label)
+                r = requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+                if 200 <= r.status_code < 400 and "존재하지 않는 조문" not in (r.text or ""):
+                    soup = BeautifulSoup(r.text, "lxml")
+                    # 사이트 구조 변화에 대비해 여러 후보를 순차 탐색
+                    main = (
+                        soup.select_one("#contentBody")
+                        or soup.select_one("#conBody")
+                        or soup.select_one("#conScroll")
+                        or soup.select_one(".conScroll")
+                        or soup.select_one("#content")
+                        or soup
+                    )
+                    scraped = (main.get_text("\n", strip=True) or "").strip()
+                    if scraped:
+                        text = scraped[:4000]
+                        link = url
+            except Exception:
+                # 스크랩 실패는 조용히 무시 (최종적으로 빈 본문 반환)
+                pass
+
+    # 7) 결과 반환
+    return {
+        "type": "article",
+        "law": law_name,
+        "article": article_label,
+        "mst": mst,
+        "jo": jo,
+        "efYd": efYd,
+        "text": (text or "").strip(),
+        "link": link or "",
+    }

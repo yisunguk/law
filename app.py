@@ -18,7 +18,16 @@ try:
 except Exception:
     AZURE = {}
 
-import streamlit as st
+# ✅ [PATCH] app.py — 최상단 import에 공용 링크 생성기 추가
+from modules.linking import resolve_article_url  # ← 추가
+
+# ✅ [PATCH] app.py — 기존 안전 링크 헬퍼를 공용 생성기로 위임
+def _deep_article_url(law: str, art_label: str) -> str:
+    """
+    '법령 한글주소' 직링크가 살아 있으면 그대로,
+    실패 시 DRF(공공데이터포털 키 있으면) → 법령 메인으로 폴백.
+    """
+    return resolve_article_url(law, art_label)
 
 # (선택) 페이지 설정들...
 # st.set_page_config(...)

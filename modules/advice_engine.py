@@ -43,12 +43,15 @@ def _extract_article_citations(text: str) -> List[Tuple[str, str]]:
     # 유니크 보장
     return list({(l, a) for (l, a) in found})
 
-def _render_article_links_block(citations: List[Tuple[str, str]]) -> str:
+# ✅ [PATCH] modules/advice_engine.py — 블록 하단의 참고 링크 생성기 교체
+from modules.linking import resolve_article_url  # ← 추가
+
+def _render_article_links_block(citations):
     if not citations:
         return ""
     lines = ["", "### 참고 링크(조문)"]
     for law, art in sorted(citations):
-        url = _make_deep_article_url(law, art)
+        url = resolve_article_url(law, art)  # ← 딥링크 → DRF → 메인
         lines.append(f"- [{law} {art}]({url})")
     return "\n".join(lines)
 
