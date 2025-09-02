@@ -569,21 +569,26 @@ def ask_llm_with_tools(
     try:
         if _client is not None:
             router_model = (
-                getattr(_client, "router_model", None)
-                or (AZURE or {}).get("router_deployment")
-                or (AZURE or {}).get("deployment")
-            )
-            router_input = user_ctx if use_ctx_router else user_q
-            plan = make_plan_with_llm(_client, router_input, model=router_model)  # noqa
+            getattr(_client, "router_model", None)
+            or (AZURE or {}).get("router_deployment")
+            or (AZURE or {}).get("deployment")
+        )
+        router_input = user_ctx if use_ctx_router else user_q
+        plan = make_plan_with_llm(_client, router_input, model=router_model)  # noqa
 
-            # (옵션) 사이드바 디버그
-            try:
-                if 'st' in globals() and st.sidebar.checkbox("DRF 디버그", value=False, key="__debug_drf__"):  # type: ignore
-                    st.sidebar.caption("Router plan")  # type: ignore
-                    import json as _json
-                    st.sidebar.code(_json.dumps(plan, ensure_ascii=False, indent=2), language="json")  # type: ignore
-            except Exception:
-                pass
+        # ✅ 사이드바 디버그 출력
+        try:
+            if 'st' in globals():
+                st.sidebar.write("router_model =", router_model)  # 모델명 확인
+                st.sidebar.caption("Router plan")
+                import json as _json
+                st.sidebar.code(
+                    _json.dumps(plan, ensure_ascii=False, indent=2),
+                    language="json"
+                )
+        except Exception:
+            pass
+
 
             if isinstance(plan, dict) and (plan.get("action") or "").upper() == "GET_ARTICLE":
                 law_hint = (plan.get("law_name") or "").strip()
@@ -599,6 +604,7 @@ def ask_llm_with_tools(
                             law_hint, art_hint, mst=mst_hint, efYd=ef_hint
                         )
                     except Exception:
+                        st.sidebar.error(f"DRF(JSON) 실패: {e}")
                         bundle, used_url = None, ""
 
                 # 2) DRF가 실패/비어있으면: 한글 조문 딥링크 스크랩 폴백
@@ -2264,7 +2270,7 @@ except Exception:
 if _oc and not os.environ.get("LAW_API_OC"):
     os.environ["LAW_API_OC"] = _oc  # DRF 호출용
 
-# Azure 클라이언트 초기화 (그대로 두되, 예외 시 폴백 로깅 유지)
+# Azure 클라이언트 초기화 (그대로 두되, 예외 시 폴백 로깅 유지 + 헬스체크 추가)
 client = None
 if AZURE:
     try:
@@ -2274,9 +2280,32 @@ if AZURE:
             api_version=AZURE["api_version"],
             azure_endpoint=AZURE["endpoint"],
         )
-        client.router_model = AZURE.get("router_deployment") or AZURE.get("deployment") or "gpt-4o-mini"
+        client.router_model = (
+            AZURE.get("router_deployment")
+            or AZURE.get("deployment")
+            or "gpt-4o-mini"
+        )
+
+        # ✅ 헬스체크: 간단한 ChatCompletion 호출
+        try:
+            resp = client.chat.completions.create(
+                model=AZURE.get("deployment"),
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=4,
+                temperature=0.0,
+            )
+            _ok = (resp.choices[0].message.content or "").strip()
+            st.sidebar.success(f"Azure LLM 연결 OK: {_ok}")
+        except Exception as e:
+            st.sidebar.error(f"Azure LLM 헬스체크 실패: {e}")
+
     except Exception as e:
         st.warning(f"Azure 초기화 실패, OpenAI로 폴백합니다: {e}")
+
+if client is None:
+    client = get_llm_client()
+
+        
 
 if client is None:
     client = get_llm_client()
