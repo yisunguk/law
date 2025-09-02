@@ -94,6 +94,7 @@ def _scrape_deeplink(law_name: str, article_label: str, timeout: float = 6.0) ->
         return "", ""
 
 
+
 def execute_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     """
     LLM 라우터가 만든 plan을 실행한다.
