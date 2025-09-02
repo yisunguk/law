@@ -64,54 +64,59 @@ def _scrape_deeplink(law_name: str, article_label: str, timeout: float = 6.0) ->
     except Exception:
         return "", ""
 
+# === [REPLACE ONLY THIS FUNCTION] modules/plan_executor.py ===
 def execute_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     """
-    GET_ARTICLE:
-      1) DRF(JSON→HTML) 우선
-      2) DRF 실패/차단 or MST 없음 → 한글 조문 딥링크 스크랩 폴백
+    GET_ARTICLE (딥링크 전용):
+      - 한글 조문 딥링크 스크랩만 사용 (OC/DRF 호출 없음)
+      - 공공데이터포털 '법령상세링크'가 있으면 표시 링크로 우선 사용
     """
     action = ((plan or {}).get("action") or "").upper()
     if action != "GET_ARTICLE":
-        return {"type":"noop","action":action or "QUICK","message":"execute_plan: GET_ARTICLE 외 액션은 외부 경로에서 처리하세요."}
+        return {
+            "type": "noop",
+            "action": action or "QUICK",
+            "message": "execute_plan: GET_ARTICLE 외 액션은 외부 경로에서 처리하세요."
+        }
 
     law_name  = (plan.get("law_name") or "").strip()
     art_label = (plan.get("article_label") or "").strip()
-    mst       = (plan.get("mst") or "").strip()
-    jo        = (plan.get("jo") or "").strip()
-    efYd_raw  = (plan.get("efYd") or plan.get("eff_date") or "").strip()
-    efYd      = "".join(ch for ch in efYd_raw if ch.isdigit())
 
-    if (not jo) and art_label:
-        try: jo = _jo_from_label(art_label) or ""
-        except Exception: jo = ""
+    # 1) 조문 본문: 한글주소(딥링크) 스크랩
+    text, link = _scrape_deeplink(law_name, art_label)
 
-    # (가능하면) MST 보강 → DRF 본문 시도
-    if (not mst) and law_name:
-        try: mst = find_mst_by_law_name(law_name, efYd=efYd) or ""
-        except Exception: mst = ""
+    # 2) 표시 링크 보강: 공공데이터포털 → 실패 시 조문 딥링크
+    try:
+        from .linking import fetch_drf_law_link_by_name, make_pretty_article_url
+    except Exception:
+        try:
+            from linking import fetch_drf_law_link_by_name, make_pretty_article_url  # type: ignore
+        except Exception:
+            fetch_drf_law_link_by_name = None  # type: ignore
+            make_pretty_article_url = None     # type: ignore
 
-    text, link = "", ""
+    if not link and fetch_drf_law_link_by_name:
+        try:
+            api_link = fetch_drf_law_link_by_name(law_name)  # MOLEG_SERVICE_KEY 사용
+        except Exception:
+            api_link = ""
+        if api_link:
+            link = api_link
 
-    # 1) DRF(JSON→HTML)
-    if mst:
-        t1, l1 = fetch_article_block_by_mst(mst, art_label, prefer="JSON", efYd=efYd)
-        if not (t1 and t1.strip()):
-            t1b, l1b = fetch_article_block_by_mst(mst, art_label, prefer="HTML", efYd=efYd)
-            if t1b and t1b.strip():
-                t1, l1 = t1b.strip(), l1b
-        text, link = (t1 or "").strip(), (l1 or "")
-
-    # 2) 🔴 최후 폴백 — MST가 없거나 DRF가 비었으면 조문 딥링크 스크랩
-    if not (text and text.strip()):
-        t2, l2 = _scrape_deeplink(law_name, art_label)
-        if t2:
-            text, link = t2, l2
-        elif not link and make_pretty_article_url:
+    if not link and make_pretty_article_url:
+        try:
             link = make_pretty_article_url(law_name, art_label)
+        except Exception:
+            link = ""
 
     return {
-        "type":"article","law":law_name,"article":art_label,
-        "mst":mst,"jo":jo,"efYd":efYd,
-        "text":(text or "").strip(),
-        "link":link or "",
+        "type": "article",
+        "law": law_name,
+        "article": art_label,
+        "mst": "",   # DRF 제거
+        "jo": "",    # DRF 제거
+        "efYd": "",  # DRF 제거
+        "text": (text or "").strip(),
+        "link": link or "",
     }
+
