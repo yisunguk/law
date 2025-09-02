@@ -2305,6 +2305,7 @@ if AZURE:
 if client is None:
     client = get_llm_client()
 
+
         
 
 if client is None:
