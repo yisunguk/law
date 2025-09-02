@@ -6,21 +6,23 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlencode
 # --- add to top of law_fetch.py (imports 아래) ---
+# 교체블록: law_fetch.py 내 _get_oc 함수 전체 교체
 def _get_oc() -> str:
     """
     DRF OC 코드를 한 군데에서 안전하게 가져온다.
-    - 우선순위: 환경변수 → streamlit secrets → 빈 값
+    - 우선순위: 환경변수(LAW_API_OC/LAW_API_KEY) → streamlit secrets → 빈 값
     """
-    oc = (os.environ.get("LAW_API_OC") or "").strip()
+    import os
+    oc = (os.environ.get("LAW_API_OC") or os.environ.get("LAW_API_KEY") or "").strip()
     if oc:
         return oc
     try:
-        # streamlit 환경(Cloud)에서는 secrets에만 있고 env에는 없다.
         import streamlit as st  # type: ignore
-        oc = (st.secrets.get("LAW_API_OC") or "").strip()
+        oc = (st.secrets.get("LAW_API_OC") or st.secrets.get("LAW_API_KEY") or "").strip()
     except Exception:
         oc = ""
     return oc
+
 
 def _build_drf_link(
     mst: str,
