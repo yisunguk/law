@@ -23,32 +23,76 @@ except Exception:
     except Exception:
         make_pretty_article_url = None  # type: ignore
 
+# === [REPLACE] modules/plan_executor.py : _scrape_deeplink 함수 교체 ===
 def _scrape_deeplink(law_name: str, article_label: str, timeout: float = 6.0) -> tuple[str, str]:
-    """law.go.kr 한글 조문 딥링크에서 본문을 긁어오는 최후 폴백."""
+    """
+    한글 조문 딥링크 페이지에서 텍스트를 가져온 뒤,
+    law_fetch.extract_article_block()으로 '해당 조문'만 잘라서 반환한다.
+    """
     if not (law_name and article_label and make_pretty_article_url):
         return "", ""
     try:
         import requests
         from bs4 import BeautifulSoup
+        try:
+            # 슬라이싱 유틸(있으면 사용)
+            from .law_fetch import extract_article_block as _slice_article
+        except Exception:
+            from law_fetch import extract_article_block as _slice_article  # type: ignore
+
         url = make_pretty_article_url(law_name, article_label)
-        r = requests.get(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"}, allow_redirects=True)
+        r = requests.get(
+            url, timeout=timeout,
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "ko-KR,ko;q=0.9",
+            },
+            allow_redirects=True,
+        )
         if not (200 <= r.status_code < 400):
             return "", url
+
         html = r.text or ""
         # 유지보수/차단/오류 페이지 방어
         head = html[:4000]
-        bad = ("존재하지 않는 조문", "해당 한글주소명을 찾을 수 없습니다", "페이지 접속에 실패하였습니다",
-               "접근이 제한되었습니다", "lawService는 page 요청변수를 사용하지 않습니다")
+        bad = ("존재하지 않는 조문", "해당 한글주소명을 찾을 수 없습니다",
+               "페이지 접속에 실패하였습니다", "접근이 제한되었습니다")
         if any(b in head for b in bad):
             return "", url
+
         soup = BeautifulSoup(html, "lxml")
-        main = (soup.select_one("#contentBody") or soup.select_one("#conBody")
-                or soup.select_one("#conScroll") or soup.select_one(".conScroll")
-                or soup.select_one("#content") or soup)
-        text = (main.get_text("\n", strip=True) or "").strip()
-        return (text[:4000] if text else ""), url
+        main = (
+            soup.select_one("#contentBody")
+            or soup.select_one("#conBody")
+            or soup.select_one("#conScroll")
+            or soup.select_one(".conScroll")
+            or soup.select_one("#content")
+            or soup
+        )
+        full_text = (main.get_text("\n", strip=True) or "").strip()
+
+        # ★ 핵심: 페이지 전체가 아니라 '요청 조문'만 슬라이스
+        try:
+            piece = _slice_article(full_text, article_label) or ""
+        except Exception:
+            piece = ""
+
+        if not piece:
+            # 슬라이스 실패 시 간이 정규식으로라도 구간 추출
+            import re
+            art = (article_label or "").strip()
+            num = re.sub(r"\D", "", art)  # 83
+            # '제83조' ~ 다음 '제84조' 직전까지
+            p = re.compile(rf"(제{num}조(?:의\d+)?[^\\n]*)(.*?)(?=\\n제\d+조|\\n부칙|\\Z)", re.S)
+            m = p.search(full_text)
+            if m:
+                piece = (m.group(0) or "").strip()
+
+        return (piece[:4000] if piece else ""), url
     except Exception:
         return "", ""
+
 
 def execute_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     """

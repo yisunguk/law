@@ -1,15 +1,8 @@
-# ✅ [DROP-IN] modules/linking.py — 공용 링크 생성기(딥링크 우선 → DRF → 메인)
-from __future__ import annotations
-import os, re, html, contextlib
-from typing import Dict, List, Tuple, Optional
+# === [REPLACE] modules/linking.py : resolve_article_url 및 보조함수 교체 ===
 from urllib.parse import quote
+import os, contextlib
 
-try:
-    import requests
-except Exception:
-    requests = None
-
-ALIAS_MAP: Dict[str, str] = {
+ALIAS_MAP = {
     "형소법": "형사소송법",
     "민소법": "민사소송법",
     "민집법": "민사집행법",
@@ -18,81 +11,72 @@ ALIAS_MAP: Dict[str, str] = {
 def _normalize_law_name(name: str) -> str:
     return ALIAS_MAP.get((name or "").strip(), (name or "").strip())
 
+def _normalize_article_label(s: str) -> str:
+    s = (s or "").strip()
+    if not s:
+        return ""
+    # "83", "83조" → "제83조"; "제83조의2" 유지
+    if s.isdigit():
+        return f"제{s}조"
+    if s.startswith("제") and "조" in s:
+        return s
+    if s.endswith("조") and s[:-1].isdigit():
+        return "제" + s
+    return s
+
 def make_pretty_article_url(law_name: str, article_label: str) -> str:
     return f"https://law.go.kr/법령/{quote(law_name)}/{quote(article_label)}"
 
 def make_pretty_law_main_url(law_name: str) -> str:
     return f"https://law.go.kr/법령/{quote(law_name)}"
 
-def _moleg_service_key() -> Optional[str]:
+def _moleg_service_key() -> str:
     key = (os.getenv("MOLEG_SERVICE_KEY") or "").strip()
     if key:
         return key
     with contextlib.suppress(Exception):
         import streamlit as st  # type: ignore
-        val = st.secrets.get("MOLEG_SERVICE_KEY")
-        if val:
-            return str(val).strip()
-    return None
+        v = st.secrets.get("MOLEG_SERVICE_KEY")
+        if v:
+            return str(v).strip()
+    return ""
 
-def fetch_drf_law_link_by_name(law_name: str) -> Optional[str]:
+def fetch_drf_law_link_by_name(law_name: str) -> str:
     """
-    공공데이터포털(OpenAPI)로 '법령상세링크'를 조회하여
-    https://www.law.go.kr/DRF/lawService.do?... 형태의 DRF HTML 링크를 받는다.
-    키가 없거나 실패하면 None.
+    (옵션) 공공데이터포털 키가 있으면 DRF '법령상세링크'를 사용.
+    키가 없거나 실패해도 조용히 빈 문자열 반환.
     """
     svc_key = _moleg_service_key()
-    if not svc_key or not requests:
-        return None
-    base = "https://apis.data.go.kr/1170000/law/lawSearchList.do"
-    params = {"ServiceKey": svc_key, "target": "law", "query": law_name, "numOfRows": 1, "pageNo": 1}
+    if not svc_key:
+        return ""
     try:
+        import requests, re, html
+        base = "https://apis.data.go.kr/1170000/law/lawSearchList.do"
+        params = {"ServiceKey": svc_key, "target": "law", "query": law_name, "numOfRows": 1, "pageNo": 1}
         r = requests.get(base, params=params, timeout=3.5)
         if r.status_code != 200:
-            return None
-        text = r.text
-        m = re.search(r"<법령상세링크>\s*<!\[CDATA\[(.*?)\]\]>\s*</법령상세링크>|<법령상세링크>(.*?)</법령상세링크>", text, re.S)
-        path = (m.group(1) or m.group(2) or "").strip() if m else ""
+            return ""
+        m = re.search(r"<법령상세링크>\s*<!\[CDATA\[(.*?)\]\]>", r.text, re.S)
+        path = (m.group(1) or "").strip() if m else ""
         if not path:
-            return None
-        if not path.startswith("/"):
-            path = "/" + path
+            return ""
+        if not path.startswith("/"): path = "/" + path
         return "https://www.law.go.kr" + html.unescape(path)
     except Exception:
-        return None
-
-def _url_is_ok(url: str) -> bool:
-    if not requests:
-        return True
-    try:
-        r = requests.get(url, timeout=3.5, headers={"User-Agent":"Mozilla/5.0"})
-        if r.status_code != 200:
-            return False
-        head = (r.text or "")[:3000]
-        bad = ("삭제", "존재하지 않는", "현행법이 아닙니다")
-        return not any(s in head for s in bad)
-    except Exception:
-        return False
+        return ""
 
 def resolve_article_url(law_name: str, article_label: str) -> str:
     """
-    우선순위:
-      1) 한글 조문 딥링크 (검증 통과 시)
-      2) DRF 법령 메인(공공데이터포털 키 있을 때)
+    우선순위(네트워크 검증 없이 즉시 반환):
+      1) 한글 조문 딥링크 (항상 우선)
+      2) (있다면) DRF 법령 메인 링크
       3) 한글 법령 메인
     """
-    law_name = _normalize_law_name(law_name)
-    art = (article_label or "").strip()
+    law = _normalize_law_name(law_name)
+    art = _normalize_article_label(article_label)
+    if art:
+        # ★ 검증용 HTTP 요청을 제거하여 DRF로 폴백되는 일을 방지
+        return make_pretty_article_url(law, art)
 
-    # 1) 조문 딥링크
-    pretty = make_pretty_article_url(law_name, art)
-    if _url_is_ok(pretty):
-        return pretty
-
-    # 2) DRF 메인(항상 열림) — 키가 있으면 활용
-    drf = fetch_drf_law_link_by_name(law_name)
-    if drf:
-        return drf
-
-    # 3) 최후 폴백: 법령 메인
-    return make_pretty_law_main_url(law_name)
+    drf = fetch_drf_law_link_by_name(law)
+    return drf or make_pretty_law_main_url(law)
