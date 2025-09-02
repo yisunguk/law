@@ -364,7 +364,7 @@ def build_drf_link(
 
 
 # === [REPLACE BLOCK START] app.py : ask_llm_with_tools (DRF 제거·딥링크 전용) ===
-from __future__ import annotations
+
 from typing import Optional, Dict, Any, Generator
 
 # ─────────────────────────────────────────────────────────────────────────────
