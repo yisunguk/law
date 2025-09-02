@@ -2274,6 +2274,7 @@ if AZURE:
             api_version=AZURE["api_version"],
             azure_endpoint=AZURE["endpoint"],
         )
+        client.router_model = AZURE.get("router_deployment") or AZURE.get("deployment") or "gpt-4o-mini"
     except Exception as e:
         st.warning(f"Azure 초기화 실패, OpenAI로 폴백합니다: {e}")
 
