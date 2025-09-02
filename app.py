@@ -1,10 +1,10 @@
 from __future__ import annotations
 import streamlit as st
 from html import unescape
-
 from modules.legal_modes import Intent, build_sys_for_mode 
 from modules.router_llm import make_plan_with_llm
 from modules.plan_executor import execute_plan
+import html  # ← 추가: _esc()에서 html.escape 사용
 # === secrets → env bridge (put near top of app.py) ===
 import os
 try:
@@ -404,6 +404,23 @@ def ask_llm_with_tools(
     - 사용자가 '본문/원문/그대로'를 요구하면, LLM이 [조문 본문]을 그대로 출력
     """
     AZURE = AZURE or {}
+      # [PATCH] 안전 기본값: 전역 client/AZURE/engine 주입
+    try:
+        if _client is None:
+            # 전역 client가 있으면 쓰고, 없으면 유틸로 생성
+            _client = globals().get("client") or get_llm_client()
+    except Exception:
+        _client = globals().get("client")  # 그래도 없으면 None 유지
+
+    if not AZURE:
+        AZURE = globals().get("AZURE") or {}
+
+    try:
+        if engine is None:
+            engine = _init_engine_lazy()  # 전역 의존성 검사 포함
+    except Exception:
+        engine = None
+
 
     # ─────────────────────────────────────────────────────────────────────────────
     # 안전 전사 유틸
@@ -3968,7 +3985,14 @@ if user_q:
         if stream_box is not None:
             stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
 
-        for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
+        for kind, payload, law_list in ask_llm_with_tools(
+            user_q,
+            num_rows=5,
+            stream=True,
+            _client=client,       # ← 전역 client 주입
+            AZURE=AZURE           # ← Azure 설정 주입(키워드 추출 등 내부 경로에서 사용)
+):
+
             if kind == "delta":
                 if payload:
                     deltas_only += payload
