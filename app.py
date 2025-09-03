@@ -401,38 +401,36 @@ def ask_llm_with_tools(
     메인 질의 처리기 (generator).
     - Router → DRF(JSON) → LLM 경로(선호)
     - DRF 실패/차단 시 한글 조문 딥링크 스크랩 폴백으로 본문 확보
-    - 사용자가 '본문/원문/그대로'를 요구하면, LLM이 [조문 본문]을 그대로 출력
+    - '원문/본문/그대로' 요청이면 조문 본문을 그대로 출력
     """
-    AZURE = AZURE or {}
-      # [PATCH] 안전 기본값: 전역 client/AZURE/engine 주입
+    AZURE = (AZURE or {}) or (globals().get("AZURE") or {})
+
+    # 0) 안전한 클라이언트/엔진 주입
+    def get_llm_client():
+        # 프로젝트에 이미 동일 유틸이 있으면 자동 사용
+        return globals().get("client")
+
     try:
         if _client is None:
-            # 전역 client가 있으면 쓰고, 없으면 유틸로 생성
-            _client = globals().get("client") or get_llm_client()
+            _client = get_llm_client()
     except Exception:
-        _client = globals().get("client")  # 그래도 없으면 None 유지
-
-    if not AZURE:
-        AZURE = globals().get("AZURE") or {}
+        _client = globals().get("client")
 
     try:
         if engine is None:
-            engine = _init_engine_lazy()  # 전역 의존성 검사 포함
+            engine = _init_engine_lazy()  # 프로젝트에 이미 있음
     except Exception:
         engine = None
 
-
-    # ─────────────────────────────────────────────────────────────────────────────
-    # 안전 전사 유틸
-    # ─────────────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────
+    # 최근 대화 전사 + 요약 컨텍스트
+    # ─────────────────────────────────────────────────────────────
     def _safe_recent_transcript() -> str:
         try:
-            # 프로젝트 헬퍼(있으면 사용)
-            return _to_transcript(_recent_msgs(max_turns=8, max_chars=4000))  # noqa: F821
+            return _to_transcript(_recent_msgs(max_turns=8, max_chars=4000))  # 프로젝트 헬퍼
         except Exception:
-            # Streamlit 세션에서 폴백
             try:
-                import streamlit as st  # type: ignore
+                import streamlit as st  # 폴백
                 raw = st.session_state.get("messages", [])
             except Exception:
                 raw = []
@@ -445,9 +443,6 @@ def ask_llm_with_tools(
                         lines.append(f"{role}: {text}")
             return "\n".join(lines)[-4000:]
 
-    # ─────────────────────────────────────────────────────────────────────────────
-    # '원문/본문/그대로' 요청 감지
-    # ─────────────────────────────────────────────────────────────────────────────
     import re as _re
     _VERBATIM_PAT = _re.compile(
         r"(원문|본문|전문)\s*(보여|출력|줘|보여줘|보여주)|조문\s*(그대로|원문)|그대로\s*(보내|출력)",
@@ -457,60 +452,49 @@ def ask_llm_with_tools(
     def wants_verbatim(text: str) -> bool:
         return bool(_VERBATIM_PAT.search((text or "").strip()))
 
-    # ─────────────────────────────────────────────────────────────────────────────
-    # 외부 의존 모듈 안전 임포트
-    # ─────────────────────────────────────────────────────────────────────────────
-    # ① Router LLM
+    # 외부 모듈 (안전 임포트)
     try:
         from modules.router_llm import make_plan_with_llm  # type: ignore
     except Exception:
-        from router_llm import make_plan_with_llm  # type: ignore
+        from router_llm import make_plan_with_llm          # type: ignore
 
-    # ② 모드/프롬프트(legal_modes)
     try:
         from modules.legal_modes import classify_intent, Intent, build_sys_for_mode  # type: ignore
     except Exception:
-        from legal_modes import classify_intent, Intent, build_sys_for_mode  # type: ignore
+        from legal_modes import classify_intent, Intent, build_sys_for_mode          # type: ignore
 
-    # ③ DRF(JSON) → 구조화 번들
     try:
         from modules.law_fetch import fetch_article_via_api_struct  # type: ignore
     except Exception:
         try:
-            from law_fetch import fetch_article_via_api_struct  # type: ignore
+            from law_fetch import fetch_article_via_api_struct       # type: ignore
         except Exception:
-            fetch_article_via_api_struct = None  # type: ignore
+            fetch_article_via_api_struct = None                      # type: ignore
 
-    # ④ 대화요약/컨텍스트
     try:
         from modules.external_content import _ensure_running_summary, _compose_with_context  # type: ignore
     except Exception:
         try:
-            from external_content import _ensure_running_summary, _compose_with_context  # type: ignore
+            from external_content import _ensure_running_summary, _compose_with_context       # type: ignore
         except Exception:
-            _ensure_running_summary = None  # type: ignore
-            _compose_with_context = None  # type: ignore
+            _ensure_running_summary = None
+            _compose_with_context = None
 
-    # ⑤ LLM 컨텍스트 렌더러
     try:
         from modules.advice_engine import render_article_context_for_llm  # type: ignore
     except Exception:
         try:
-            from advice_engine import render_article_context_for_llm  # type: ignore
+            from advice_engine import render_article_context_for_llm       # type: ignore
         except Exception:
-            def render_article_context_for_llm(_bundle):  # type: ignore
+            def render_article_context_for_llm(_bundle):                   # type: ignore
                 return ""
 
-    # ─────────────────────────────────────────────────────────────────────────────
-    # 전사 / 요약 / 사용자 컨텍스트 조립
-    # ─────────────────────────────────────────────────────────────────────────────
     transcript = _safe_recent_transcript()
-
     try:
         summary = _ensure_running_summary(_client or globals().get("client"), transcript, max_len=900) if _ensure_running_summary else ""
     except Exception:
         try:
-            import streamlit as st  # type: ignore
+            import streamlit as st
             summary = st.session_state.get("__summary__", "")
         except Exception:
             summary = ""
@@ -522,11 +506,11 @@ def ask_llm_with_tools(
     if isinstance(user_ctx, str) and len(user_ctx) > 4500:
         user_ctx = user_ctx[-4500:]
 
-    # 컨텍스트 사용 스위치
+    # 컨텍스트 플래그
     use_ctx_router = False
     use_ctx_answer = True
     try:
-        import streamlit as st  # type: ignore
+        import streamlit as st
         st.session_state.setdefault("__ctx_router__", False)
         st.session_state.setdefault("__ctx_answer__", True)
         use_ctx_router = st.session_state.get("__ctx_router__", False)
@@ -534,27 +518,25 @@ def ask_llm_with_tools(
     except Exception:
         pass
 
-    # ─────────────────────────────────────────────────────────────────────────────
     # 모드/프롬프트
-    # ─────────────────────────────────────────────────────────────────────────────
     try:
-        det_intent, _conf = classify_intent(user_q)  # noqa
+        det_intent, _conf = classify_intent(user_q)
     except Exception:
-        det_intent, _conf = (Intent.QUICK, 0.0)      # noqa
-
+        det_intent, _conf = (Intent.QUICK, 0.0)
     try:
-        values = {m.value for m in Intent}           # noqa
-        mode = Intent(forced_mode) if (forced_mode in values) else det_intent  # noqa
+        values = {m.value for m in Intent}
+        mode = Intent(forced_mode) if (forced_mode in values) else det_intent
     except Exception:
         mode = det_intent
 
-    use_tools  = mode in (Intent.LAWFINDER, Intent.MEMO)  # noqa
-    sys_prompt = build_sys_for_mode(mode, brief=brief)    # noqa
+    use_tools  = mode in (Intent.LAWFINDER, Intent.MEMO)
+    sys_prompt = build_sys_for_mode(mode, brief=brief)
 
-    # 최근 히스토리(폴백용)
+    # 간단 히스토리 (Fallback C용)
     history = []
     try:
-        raw = st.session_state.get("messages", [])  # type: ignore
+        import streamlit as st
+        raw = st.session_state.get("messages", [])
         history = [
             {"role": m.get("role", ""), "content": (m.get("content") or "").strip()}
             for m in raw
@@ -563,32 +545,28 @@ def ask_llm_with_tools(
     except Exception:
         pass
 
-    # ─────────────────────────────────────────────────────────────────────────────
-    # 1) Router → DRF(JSON) → LLM (선호 경로)  +  DRF 실패시 딥링크 스크랩 폴백
-    # ─────────────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────
+    # 1) Router → DRF(JSON) → LLM  (+ DRF 실패시 딥링크 스크랩 폴백)
+    # ─────────────────────────────────────────────────────────────
     try:
         if _client is not None:
             router_model = (
-            getattr(_client, "router_model", None)
-            or (AZURE or {}).get("router_deployment")
-            or (AZURE or {}).get("deployment")
-        )
-        router_input = user_ctx if use_ctx_router else user_q
-        plan = make_plan_with_llm(_client, router_input, model=router_model)  # noqa
+                getattr(_client, "router_model", None)
+                or AZURE.get("router_deployment")
+                or AZURE.get("deployment")
+            )
+            router_input = user_ctx if use_ctx_router else user_q
+            plan = make_plan_with_llm(_client, router_input, model=router_model)
 
-        # ✅ 사이드바 디버그 출력
-        try:
-            if 'st' in globals():
-                st.sidebar.write("router_model =", router_model)  # 모델명 확인
+            # 사이드바 디버그
+            try:
+                import streamlit as st
+                st.sidebar.write("router_model =", router_model)
                 st.sidebar.caption("Router plan")
                 import json as _json
-                st.sidebar.code(
-                    _json.dumps(plan, ensure_ascii=False, indent=2),
-                    language="json"
-                )
-        except Exception:
-            pass
-
+                st.sidebar.code(_json.dumps(plan, ensure_ascii=False, indent=2), language="json")
+            except Exception:
+                pass
 
             if isinstance(plan, dict) and (plan.get("action") or "").upper() == "GET_ARTICLE":
                 law_hint = (plan.get("law_name") or "").strip()
@@ -596,38 +574,37 @@ def ask_llm_with_tools(
                 mst_hint = (plan.get("mst") or "").strip()
                 ef_hint  = (plan.get("efYd") or plan.get("eff_date") or "").replace("-", "").strip()
 
-                # 1) DRF(JSON)으로 구조화 조문 확보 시도
+                # 1) DRF(JSON) 구조화 조문
                 bundle, used_url = None, ""
                 if fetch_article_via_api_struct is not None:
                     try:
-                        bundle, used_url = fetch_article_via_api_struct(  # noqa
-                            law_hint, art_hint, mst=mst_hint, efYd=ef_hint
-                        )
-                    except Exception:
-                        st.sidebar.error(f"DRF(JSON) 실패: {e}")
+                        bundle, used_url = fetch_article_via_api_struct(law_hint, art_hint, mst=mst_hint, efYd=ef_hint)
+                    except Exception as e:
+                        try:
+                            import streamlit as st
+                            st.sidebar.error(f"DRF(JSON) 실패: {e}")
+                        except Exception:
+                            pass
                         bundle, used_url = None, ""
 
-                # 2) DRF가 실패/비어있으면: 한글 조문 딥링크 스크랩 폴백
+                # 2) 실패 시: 한글 조문 딥링크 스크랩
                 if not (bundle and (bundle.get("body_text") or bundle.get("clauses"))):
                     try:
-                        # 딥링크 생성 + 조문 슬라이스 유틸
                         try:
                             from modules.linking import make_pretty_article_url  # type: ignore
                         except Exception:
-                            from linking import make_pretty_article_url  # type: ignore
-
+                            from linking import make_pretty_article_url          # type: ignore
                         try:
                             from modules.law_fetch import extract_article_block as _slice_article  # type: ignore
                         except Exception:
-                            from law_fetch import extract_article_block as _slice_article  # type: ignore
+                            from law_fetch import extract_article_block as _slice_article          # type: ignore
 
                         import requests
                         from bs4 import BeautifulSoup
 
                         deeplink = make_pretty_article_url(law_hint, art_hint)
                         r = requests.get(
-                            deeplink,
-                            timeout=6,
+                            deeplink, timeout=6,
                             headers={"User-Agent": "Mozilla/5.0"},
                             allow_redirects=True,
                         )
@@ -644,7 +621,6 @@ def ask_llm_with_tools(
                                 or soup
                             )
                             full_text = (main.get_text("\n", strip=True) or "").strip()
-                            # 요청 조문만 슬라이스
                             try:
                                 body_text = _slice_article(full_text, art_hint) or ""
                             except Exception:
@@ -672,12 +648,12 @@ def ask_llm_with_tools(
                         try:
                             from modules.linking import make_pretty_article_url  # type: ignore
                         except Exception:
-                            from linking import make_pretty_article_url  # type: ignore
+                            from linking import make_pretty_article_url          # type: ignore
                         deeplink = make_pretty_article_url(law_hint, art_hint)
                         yield ("final", f"조문 원문을 불러오지 못했습니다. 링크만 제공합니다:\n{deeplink}", [])
                         return
 
-                # 3) '원문/본문/그대로' 요청이면 그대로 출력하도록 시스템 프롬프트 전환
+                # 3) 표기 규칙(원문 그대로 / 요약)
                 verbatim = wants_verbatim(user_q)
                 sys_for_lawyer = (
                     "너는 한국의 변호사다. 제공된 [법령 메타/조문 본문/항·호]만 근거로 답한다. "
@@ -688,29 +664,26 @@ def ask_llm_with_tools(
                         "- 줄바꿈/번호/괄호 등 서식을 보존하고, 임의로 생략·요약하지 않는다.\n"
                         "- 추가 해설/서론/후기 문구를 덧붙이지 않는다.\n"
                         "- 마지막 줄에 한 줄로 한글 조문 직링크만 덧붙인다(예: 원문: https://www.law.go.kr/법령/건설산업기본법/제83조)."
-                        if verbatim
-                        else
+                        if verbatim else
                         "\n\n[표시 규칙]\n"
                         "- 원문을 그대로 붙여넣지 말고, 핵심 요건·효과를 구조화해 요약한다(필요 시 짧은 인용만 사용).\n"
                         "- 답변 말미에 한 줄로 한글 조문 직링크를 제공한다."
                     )
                 )
 
-                # LLM 호출(컨텍스트 주입)
-                context_bundle = render_article_context_for_llm(bundle)  # noqa
+                # 4) LLM 호출
+                context_bundle = render_article_context_for_llm(bundle)
                 model_id = (
                     getattr(_client, "advice_model", None)
-                    or (AZURE or {}).get("deployment")
+                    or AZURE.get("deployment")
                     or "gpt-4o"
                 )
-                use_ctx = use_ctx_answer
-                content_input = user_ctx if use_ctx else user_q
+                content_input = (user_ctx if use_ctx_answer else user_q)
                 content = content_input if not context_bundle else f"{content_input}\n\n[참고자료]\n{context_bundle}"
                 msgs2 = [
                     {"role": "system", "content": sys_for_lawyer},
                     {"role": "user", "content": content},
                 ]
-                # NOTE: 프로젝트 SDK 형태에 맞춰 호출자만 바꾸세요.
                 resp = _client.chat.completions.create(
                     model=model_id, messages=msgs2, temperature=0.1, max_tokens=1600
                 )
@@ -718,12 +691,12 @@ def ask_llm_with_tools(
                 yield ("final", answer + f"\n\n근거(법제처 원문): {bundle.get('source_url') or used_url}", [])
                 return
     except Exception:
-        # 라우팅/DRF 단계 실패 → 폴백
+        # 라우팅/DRF 단계 실패 → 폴백으로 진행
         pass
 
-    # ─────────────────────────────────────────────────────────────────────────────
-    # 2) Fallback A: custom engine (tools OK)
-    # ─────────────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────
+    # 2) Fallback A: 커스텀 엔진 (tools 허용)
+    # ─────────────────────────────────────────────────────────────
     try:
         if engine is not None:
             import inspect as _insp
@@ -733,9 +706,9 @@ def ask_llm_with_tools(
                 base_kwargs["primer_enable"] = True
             hist_key = next((k for k in ("history", "messages", "chat_history", "conversation") if k in params), None)
 
-            use_ctx = use_ctx_answer
+            content_input = (user_ctx if use_ctx_answer else user_q)
             ret = engine.generate(
-                user_ctx if use_ctx else user_q,
+                content_input,
                 **({**base_kwargs, hist_key: history} if hist_key else base_kwargs),
             )
             if _insp.isgenerator(ret):
@@ -746,20 +719,19 @@ def ask_llm_with_tools(
     except Exception:
         pass
 
-    # ─────────────────────────────────────────────────────────────────────────────
-    # 3) Fallback B: direct ChatCompletion with short history
-    # ─────────────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────
+    # 3) Fallback B: Direct ChatCompletion
+    # ─────────────────────────────────────────────────────────────
     try:
         if _client is None:
             raise RuntimeError("LLM client not initialized")
 
         model_id = (
             getattr(_client, "fallback_model", None)
-            or (AZURE or {}).get("deployment")
+            or AZURE.get("deployment")
             or "gpt-4o"
         )
-        use_ctx = use_ctx_answer
-        content_input = user_ctx if use_ctx else user_q
+        content_input = (user_ctx if use_ctx_answer else user_q)
         msgs3 = [{"role": "system", "content": sys_prompt}] + history + [{"role": "user", "content": content_input}]
         resp = _client.chat.completions.create(
             model=model_id, messages=msgs3, temperature=0.2, max_tokens=1400
@@ -770,7 +742,6 @@ def ask_llm_with_tools(
     except Exception:
         yield ("final", "죄송합니다. 내부 오류로 답변을 완료하지 못했습니다.", [])
         return
-
 
 
 def _esc(s: str) -> str:
