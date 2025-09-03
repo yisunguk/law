@@ -1,6 +1,3 @@
-# app.py — clean imports
-from __future__ import annotations
-
 # --- Path bootstrap ---
 import os, sys
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,6 +26,7 @@ try:
     AZURE = st.secrets.get("azure_openai", {})
 except Exception:
     AZURE = {}
+
 
 
 # ✅ [PATCH] app.py — 최상단 import에 공용 링크 생성기 추가
