@@ -2052,6 +2052,56 @@ def copy_url_button(url: str, key: str, label: str = "링크 복사"):
                 .replace("__LABEL__", html.escape(label)))
     components.html(html_out, height=40)
 
+# === 안전 렌더러: 말풍선 하단 '참고 법령 요약'을 깨짐 없이 출력 ===
+def _render_law_summary_rows(law_list):
+    """여러 형태(dict)의 법령/링크 항목을 안전하게 요약 출력."""
+    import re as _re
+    import streamlit as st
+
+    if not law_list:
+        st.write("참고한 링크/법령 정보가 없습니다.")
+        return
+    if isinstance(law_list, dict):
+        law_list = [law_list]
+
+    def _name_from_title(t: str) -> str:
+        # "건설산업기본법 제83조" → "건설산업기본법"
+        m = _re.search(r"^(?P<name>.+?)\s+제\d{1,4}조(의\d{1,3})?", t or "")
+        return (m.group("name").strip() if m else (t or "")).strip()
+
+    for j, law in enumerate(law_list, 1):
+        if not isinstance(law, dict):
+            st.write(f"{j}. (알 수 없는 항목)")
+            continue
+
+        # 이름(법령명) 후보들 → 하나라도 있으면 사용, 없으면 title에서 추출
+        name = (
+            (law.get("법령명") or law.get("법령명한글") or law.get("name") or law.get("law") or "").strip()
+            or _name_from_title(law.get("title", ""))
+            or "법령"
+        )
+
+        # 메타 정보
+        kind = (law.get("법령구분") or law.get("kind") or "").strip()
+        eff  = (law.get("시행일자") or law.get("eff") or law.get("시행") or "").strip()
+        pub  = (law.get("공포일자") or law.get("pub") or law.get("공포") or "").strip()
+
+        # 링크
+        url  = (law.get("법령상세링크") or law.get("url") or law.get("link") or "").strip()
+
+        head = f"**{j}. {name}**"
+        meta_bits = []
+        if kind: meta_bits.append(kind)
+        if eff:  meta_bits.append(f"시행 {eff}")
+        if pub:  meta_bits.append(f"공포 {pub}")
+        if meta_bits:
+            head += " (" + " | ".join(meta_bits) + ")"
+        st.write(head)
+        if url:
+            st.write(f"- 링크: {url}")
+
+
+
 def load_secrets():
     try:
         law_key = st.secrets["LAW_API_KEY"]
@@ -3892,10 +3942,8 @@ with st.container():
                 render_bubble_with_copy(content, key=f"past-{i}")
                 if m.get("law"):
                     with st.expander("📋 이 턴에서 참고한 법령 요약"):
-                        for j, law in enumerate(m["law"], 1):
-                            st.write(f"**{j}. {law['법령명']}** ({law['법령구분']})  | 시행 {law['시행일자']}  | 공포 {law['공포일자']}")
-                            if law.get("법령상세링크"):
-                                st.write(f"- 링크: {law['법령상세링크']}")
+                        _render_law_summary_rows(m["law"])
+
             else:
                 st.markdown(content)
 
