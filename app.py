@@ -675,6 +675,113 @@ def ask_llm_with_tools(
     use_tools  = mode in (Intent.LAWFINDER, Intent.MEMO)
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
+        # ─────────────────────────────────────────────────────────────
+    # 1) Router → DRF(JSON) → LLM  (+ DRF 실패시 딥링크 스크랩 폴백)  [PATCH B: start]
+    # ─────────────────────────────────────────────────────────────
+    try:
+        if _client is not None:
+            # 라우터 모델 선택: client.router_model > secrets.azure_openai.router_deployment > 기본
+            router_model = (
+                getattr(_client, "router_model", None)
+                or AZURE.get("router_deployment")
+                or AZURE.get("deployment")
+            )
+            router_input = user_ctx if use_ctx_router else user_q
+            plan = make_plan_with_llm(_client, router_input, model=router_model)  # JSON dict 반환
+
+            # 사이드바 디버그 출력 (모델/플랜 확인용)
+            try:
+                import streamlit as st, json as _json
+                st.sidebar.write("router_model =", router_model)
+                st.sidebar.caption("Router plan")
+                st.sidebar.code(_json.dumps(plan, ensure_ascii=False, indent=2), language="json")
+            except Exception:
+                pass
+
+            # 조문 가져오기 플로우
+            if isinstance(plan, dict) and (plan.get("action") or "").upper() == "GET_ARTICLE":
+                law_hint = (plan.get("law_name") or "").strip()
+                art_hint = (plan.get("article_label") or "").strip()
+                mst_hint = (plan.get("mst") or "").strip()
+                ef_hint  = (plan.get("efYd") or plan.get("eff_date") or "").replace("-", "").strip()
+
+                # 1) DRF(JSON) 구조화 조문 시도
+                bundle, used_url = None, ""
+                if fetch_article_via_api_struct is not None:
+                    try:
+                        bundle, used_url = fetch_article_via_api_struct(
+                            law_hint, art_hint, mst=mst_hint, efYd=ef_hint
+                        )
+                    except Exception as e:
+                        try:
+                            import streamlit as st
+                            st.sidebar.error(f"DRF(JSON) 실패: {e}")
+                        except Exception:
+                            pass
+                        bundle, used_url = None, ""
+
+                # 2) 실패 시: 한글 조문 딥링크 페이지에서 본문 스크랩
+                if not (bundle and (bundle.get("body_text") or bundle.get("clauses"))):
+                    try:
+                        try:
+                            from modules.linking import make_pretty_article_url  # type: ignore
+                        except Exception:
+                            from linking import make_pretty_article_url          # type: ignore
+                        try:
+                            from modules.law_fetch import extract_article_block as _slice_article  # type: ignore
+                        except Exception:
+                            from law_fetch import extract_article_block as _slice_article          # type: ignore
+
+                        import requests
+                        from bs4 import BeautifulSoup
+
+                        deeplink = make_pretty_article_url(law_hint, art_hint)
+                        r = requests.get(
+                            deeplink, timeout=6,
+                            headers={"User-Agent": "Mozilla/5.0"},
+                            allow_redirects=True,
+                        )
+
+                        body_text = ""
+                        if 200 <= r.status_code < 400:
+                            soup = BeautifulSoup(r.text or "", "lxml")
+                            main = (
+                                soup.select_one("#contentBody")
+                                or soup.select_one("#conBody")
+                                or soup.select_one("#conScroll")
+                                or soup.select_one(".conScroll")
+                                or soup.select_one("#content")
+                                or soup
+                            )
+                            full_text = (main.get_text("\n", strip=True) or "").strip()
+                            try:
+                                body_text = _slice_article(full_text, art_hint) or ""
+                            except Exception:
+                                import re
+                                num = re.sub(r"\D", "", art_hint)
+                                m = re.search(rf"(제\s*{num}\s*조[^\n]*)([\s\S]*?)(?:\n제\s*\d+\s*조|\Z)", full_text)
+                                body_text = (m.group(0) if m else full_text)[:2000]
+
+                        # 구조 동일화
+                        if body_text:
+                            bundle = {
+                                "law_name": law_hint,
+                                "article_label": art_hint,
+                                "body_text": body_text,
+                                "source_url": deeplink,
+                            }
+                            used_url = deeplink
+                    except Exception:
+                        pass
+
+                # 여기까지 오면 bundle에 조문 본문이 들어 있음 → 이후 답변 생성 로직으로 이어가세요
+                # (bundle을 render_article_context_for_llm 등에 넘겨 컨텍스트에 녹이는 부분은 기존 코드 재사용)
+    except Exception:
+        # 라우팅 실패 시도는 조용히 무시하고 기존 LLM 경로로 진행
+        pass
+    # ─────────────────────────────────────────────────────────────
+    # [PATCH B: end]
+
     # 간단 히스토리 (Fallback C용)
     history = []
     try:
