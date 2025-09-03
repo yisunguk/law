@@ -652,6 +652,11 @@ def ask_llm(user_q: str):
 
     return
 
+# --- compat shim: 기존 코드가 ask_llm_with_tools를 부를 때를 대비
+def ask_llm_with_tools(user_q: str, **kwargs):
+    # 전달 인자는 ask_llm가 globals에서 읽으므로 굳이 넘기지 않아도 됩니다.
+    yield from ask_llm(user_q)
+
 def _esc(s: str) -> str:
     """HTML escape only"""
     return html.escape("" if s is None else str(s))
