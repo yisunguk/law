@@ -1,53 +1,35 @@
-# app.py — cleaned import header
+# app.py — clean imports
 from __future__ import annotations
 
 # --- Path bootstrap ---
 import os, sys
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MOD_DIR  = os.path.join(BASE_DIR, "modules")
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
-if os.path.isdir(MOD_DIR) and MOD_DIR not in sys.path:
-    sys.path.insert(0, MOD_DIR)
+if BASE_DIR not in sys.path: sys.path.insert(0, BASE_DIR)
+if os.path.isdir(MOD_DIR) and MOD_DIR not in sys.path: sys.path.insert(0, MOD_DIR)
 
 # --- Stdlib ---
-import html  # _esc()에서 html.escape 사용
+import html
 
 # --- Third-party ---
 import streamlit as st
 
-# --- Local (safe imports with fallbacks) ---
-try:
-    from modules.plan_executor import execute_plan
-except Exception:
-    from plan_executor import execute_plan  # 로컬 단일파일 폴백
-
-try:
-    from modules.legal_modes import Intent, build_sys_for_mode, classify_intent
-except Exception:
-    from legal_modes import Intent, build_sys_for_mode, classify_intent
-
-try:
-    from modules.router_llm import make_plan_with_llm
-except Exception:
-    from router_llm import make_plan_with_llm
-
-try:
-    from modules.linking import resolve_article_url, make_pretty_article_url
-except Exception:
-    from linking import resolve_article_url, make_pretty_article_url
+# --- Local (package-only; no local-file fallback) ---
+from modules.plan_executor import execute_plan
+from modules.legal_modes import Intent, build_sys_for_mode
+from modules.router_llm import make_plan_with_llm
+from modules.linking import resolve_article_url, make_pretty_article_url
 
 # --- secrets → env bridge ---
 try:
     _oc  = str(st.secrets.get("LAW_API_OC",  "")).strip()
     _key = str(st.secrets.get("LAW_API_KEY", "")).strip()
-    if _oc:
-        os.environ["LAW_API_OC"]  = _oc
-    if _key:
-        os.environ["LAW_API_KEY"] = _key
+    if _oc:  os.environ["LAW_API_OC"]  = _oc
+    if _key: os.environ["LAW_API_KEY"] = _key
     AZURE = st.secrets.get("azure_openai", {})
 except Exception:
     AZURE = {}
+
 
 # ✅ [PATCH] app.py — 최상단 import에 공용 링크 생성기 추가
 from modules.linking import resolve_article_url  # ← 추가
