@@ -2051,6 +2051,70 @@ def copy_url_button(url: str, key: str, label: str = "링크 복사"):
                 .replace("__LABEL__", html.escape(label)))
     components.html(html_out, height=40)
 
+# === LLM-first helpers (URL/정규식 폴백) ===
+import re as _re
+from urllib.parse import unquote
+
+_HANGUL_LAW_URL = _re.compile(
+    r'https?://(?:www\.)?law\.go\.kr/법령/(?P<law>[^/\s]+)/(?P<art>제\d{1,4}조(?:의\d{1,3})?)'
+)
+
+def _pick_law_art_from_text(text: str) -> tuple[str, str] | None:
+    """사용자 입력에 법령 한글주소가 있으면 (법령명, 조문라벨) 추출."""
+    m = _HANGUL_LAW_URL.search(text or '')
+    if not m:
+        return None
+    return unquote(m.group('law')).strip(), unquote(m.group('art')).strip()
+
+@st.cache_data(show_spinner=False, ttl=300)
+def choose_law_queries_llm_first(q: str, top_k: int = 4) -> list[str]:
+    """
+    100% LLM 우선: 라우터/추출기 기반으로 법령명 후보를 뽑고,
+    실패 시에만 정규식 폴백. 키워드 맵은 쓰지 않음.
+    """
+    names: list[str] = []
+
+    # 1) 라우터가 만들어준 plan에서 law_name 뽑기
+    try:
+        try:
+            from modules.router_llm import make_plan_with_llm as _mk  # type: ignore
+        except Exception:
+            from router_llm import make_plan_with_llm as _mk          # type: ignore
+        plan = _mk(globals().get("client"), q, model=None) or {}
+        cand = (plan.get("law_name") or "").strip()
+        if cand:
+            names.append(cand)
+    except Exception:
+        pass
+
+    # 2) LLM 후보 추출기
+    if len(names) < top_k:
+        try:
+            more = extract_law_candidates_llm(q) or []
+            for nm in more:
+                if nm and nm not in names:
+                    names.append(nm)
+                    if len(names) >= top_k: break
+        except Exception:
+            pass
+
+    # 3) 폴백: 정규식으로 "…법/령/규칙/조례" 뽑기
+    if not names:
+        m = _re.search(r'([가-힣A-Za-z0-9·()\s]{2,40}?(?:법|령|규칙|조례))', q or '')
+        if m:
+            names = [m.group(1).strip()]
+
+    # 유니크 + 길이 정리
+    seen, out = set(), []
+    for nm in names:
+        nm = (nm or "").strip()[:40]
+        if nm and nm not in seen:
+            seen.add(nm)
+            out.append(nm)
+        if len(out) >= top_k:
+            break
+    return out
+
 # === 안전 렌더러: 말풍선 하단 '참고 법령 요약'을 깨짐 없이 출력 ===
 def _render_law_summary_rows(law_list):
     """여러 형태(dict)의 법령/링크 항목을 안전하게 요약 출력."""
