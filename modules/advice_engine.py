@@ -1,101 +1,151 @@
-# modules/advice_engine.py  (통합버전: 스트리밍 + 조문 직링크 후처리 포함)
+# modules/advice_engine.py — 깨끗한 통합 버전 (툴콜 + 스트리밍 + 조문 직링크 후처리)
 from __future__ import annotations
-from typing import Callable, Dict, List, Optional, Tuple, Generator, Any
 
-# =========================
-# 조문 직링크 생성 유틸 (내장)
-# =========================
+from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
+import json
 import re
-from urllib.parse import quote
 
-# 자주 쓰는 약칭 보정(필요 시 추가)
-ALIAS_MAP: Dict[str, str] = {
-    "형소법": "형사소송법",
-    "민소법": "민사소송법",
-    "민집법": "민사집행법",
-    # "형법": "형법",
-}
+# =========================
+# 외부 유틸 안전 임포트 (resolve_article_url)
+# =========================
+try:
+    from modules.linking import resolve_article_url  # type: ignore
+except Exception:  # pragma: no cover
+    try:
+        from linking import resolve_article_url  # type: ignore
+    except Exception:
+        # 최후 폴백: 무해한 더미
+        def resolve_article_url(law: str, art_label: str) -> str:
+            law_q = law.strip().replace(" ", "+")
+            art_q = art_label.strip().replace(" ", "+")
+            return f"https://www.law.go.kr/{law_q}/{art_q}"
 
-# "민법 제839조의2" / "민사소송법 제163조" 등 패턴
-ARTICLE_PAT = re.compile(
-    r'(?P<law>[가-힣A-Za-z0-9·()\s]{2,40})\s*제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})'
+# =========================
+# "참고 링크(조문)" 블록 생성기
+# =========================
+_LINK_PATTERN = re.compile(
+    r"(?P<law>[가-힣A-Za-z0-9·\(\) ]{2,40})\s+(?P<art>제\s*\d+\s*조(?:의\s*\d+)?)(?![^\n]*\])"
 )
 
-def _normalize_law_name(name: str) -> str:
-    name = (name or "").strip()
-    return ALIAS_MAP.get(name, name)
-
-def _make_deep_article_url(law_name: str, article_label: str) -> str:
-    """
-    law.go.kr 조문 슬러그:
-      https://law.go.kr/법령/<법령명>/<제N조(의M)>
-    예) 민법 제839조의2 -> .../법령/민법/제839조의2
-        민사소송법 제163조 -> .../법령/민사소송법/제163조
-    """
-    return f"https://law.go.kr/법령/{quote(law_name)}/{quote(article_label)}"
-
-def _extract_article_citations(text: str) -> List[Tuple[str, str]]:
-    found: List[Tuple[str, str]] = []
-    for m in ARTICLE_PAT.finditer(text or ""):
-        law = _normalize_law_name(m.group("law"))
-        art = f"제{m.group('num')}조{m.group('ui') or ''}"
-        found.append((law, art))
-    # 유니크 보장
-    return list({(l, a) for (l, a) in found})
-
-# ✅ [PATCH] modules/advice_engine.py — 블록 하단의 참고 링크 생성기 교체
-from modules.linking import resolve_article_url  # ← 추가
-
-def _render_article_links_block(citations):
+def _render_article_links_block(citations: List[Tuple[str, str]]) -> str:
     if not citations:
         return ""
     lines = ["", "### 참고 링크(조문)"]
-    for law, art in sorted(citations):
-        url = resolve_article_url(law, art)  # ← 딥링크 → DRF → 메인
-        lines.append(f"- [{law} {art}]({url})")
+    # 중복 제거 + 정렬
+    seen = set()
+    for law, art in citations:
+        key = (law.strip(), art.strip())
+        if key in seen:
+            continue
+        seen.add(key)
+    items = sorted(seen, key=lambda x: (x[0], x[1]))
+    for law, art in items:
+        try:
+            url = resolve_article_url(law, art)
+        except Exception:
+            url = ""
+        if url:
+            lines.append(f"- [{law} {art}]({url})")
+        else:
+            lines.append(f"- {law} {art}")
     return "\n".join(lines)
 
-def merge_article_links_block(text: str) -> str:
+def _collect_citations_from_text(text: str) -> List[Tuple[str, str]]:
+    out: List[Tuple[str, str]] = []
+    if not text:
+        return out
+    for m in _LINK_PATTERN.finditer(text):
+        law = (m.group("law") or "").strip()
+        art = (m.group("art") or "").strip()
+        if law and art:
+            # 표기 정리
+            art = re.sub(r"\s+", "", art)  # "제 83 조" → "제83조"
+            art = art.replace("의", "의")  # idempotent
+            out.append((law, art))
+    return out
+
+def merge_article_links_block(body: str, seed_citations: Optional[List[Tuple[str, str]]] = None) -> str:
     """
-    본문 내 '법령명 제N조(의M)' 패턴을 수집하여
+    본문 내 '법령명 제N조(의M)' 패턴과 seed_citations를 합쳐
     문서 끝에 '### 참고 링크(조문)' 블록을 추가/갱신.
     """
-    citations = _extract_article_citations(text)
+    text = (body or "").rstrip()
+    citations: List[Tuple[str, str]] = []
+    if seed_citations:
+        citations.extend(seed_citations)
+    citations.extend(_collect_citations_from_text(text))
+
     block = _render_article_links_block(citations)
     if not block:
         return text
-
-    # 기존 블록이 있으면 교체, 없으면 추가
-    pat_block = re.compile(r'\n### 참고 링크\(조문\)[\s\S]*$', re.M)
-    if pat_block.search(text or ""):
-        return pat_block.sub(block, text or "")
-    return (text or "").rstrip() + "\n" + block + "\n"
-
+    # 기존 블록 제거 후 재부착 (중복 방지)
+    text = re.sub(r"\n+### 참고 링크\(조문\)[\s\S]*$", "", text, flags=re.MULTILINE)
+    return text + "\n" + block + "\n"
 
 # =========================
-# 본 엔진
+# 타입 별칭
 # =========================
 ToolFn = Callable[..., Dict[str, Any]]
 PrefetchFn = Callable[..., Any]
 SummarizeFn = Callable[..., str]
 
-def _safe_json_dumps(obj: Any) -> str:
+# =========================
+# 내부 헬퍼
+# =========================
+def _msg_dict(role: str, content: str) -> Dict[str, Any]:
+    return {"role": role, "content": content}
+
+def _first_choice(resp: Any) -> Any:
+    # dict/obj 호환
+    if resp is None:
+        return None
+    choices = getattr(resp, "choices", None)
+    if choices is None and isinstance(resp, dict):
+        choices = resp.get("choices")
+    if not choices:
+        return None
+    return choices[0]
+
+def _message_of(choice: Any) -> Any:
+    msg = getattr(choice, "message", None)
+    if msg is None and isinstance(choice, dict):
+        msg = choice.get("message")
+    return msg
+
+def _content_of_message(msg: Any) -> str:
+    c = getattr(msg, "content", None)
+    if c is None and isinstance(msg, dict):
+        c = msg.get("content")
+    return c or ""
+
+def _tool_calls_of_message(msg: Any) -> List[Any]:
+    tc = getattr(msg, "tool_calls", None)
+    if tc is None and isinstance(msg, dict):
+        tc = msg.get("tool_calls")
+    return tc or []
+
+def _json_dumps(obj: Any) -> str:
     try:
-        import json
         return json.dumps(obj, ensure_ascii=False)
     except Exception:
         return "{}"
 
+def _try_int(x, default=5):
+    try:
+        return int(x)
+    except Exception:
+        return default
+
+# =========================
+# 본 엔진
+# =========================
 class AdviceEngine:
     """
     LLM 호출 + (선택)툴콜 + 스트리밍 처리 + '조문 직링크' 후처리 엔진.
 
-    generate() 반환:
-      - stream=True  -> 제너레이터:
-           ("delta", 텍스트조각, law_links) ... 여러 번
-           ("final", 최종전체텍스트, law_links) ... 1번
-      - stream=False -> 제너레이터:
-           ("final", 최종전체텍스트, law_links) ... 1번
+    generate()는 제너레이터로 동작하며,
+      - stream=True  -> ("delta", 텍스트조각, law_links) ... 여러 번 + ("final", 전체, law_links)
+      - stream=False -> ("final", 전체, law_links) 한 번만
     """
 
     def __init__(
@@ -106,11 +156,10 @@ class AdviceEngine:
         safe_chat_completion: Callable[..., Dict[str, Any]],
         tool_search_one: ToolFn,
         tool_search_multi: ToolFn,
+        tool_get_article: Optional[ToolFn] = None,
         prefetch_law_context: Optional[PrefetchFn] = None,
         summarize_laws_for_primer: Optional[SummarizeFn] = None,
         temperature: float = 0.2,
-        # 라우팅/프롬프트는 외부(app.py 또는 다른 모듈)에서 처리해 messages로 넣어주는 설계도 가능하지만,
-        # 여기서는 messages를 이 클래스에서 구성하는 형태(일반적 사용)를 가정합니다.
     ):
         self.client = client
         self.model = model
@@ -118,10 +167,12 @@ class AdviceEngine:
         self.scc = safe_chat_completion
         self.tool_search_one = tool_search_one
         self.tool_search_multi = tool_search_multi
+        self.tool_get_article = tool_get_article
         self.prefetch_law_context = prefetch_law_context
         self.summarize_laws_for_primer = summarize_laws_for_primer
         self.temperature = temperature
 
+    # ---- 핵심 제너레이터 ----
     def generate(
         self,
         user_q: str,
@@ -137,140 +188,211 @@ class AdviceEngine:
             yield ("final", "엔진이 설정되지 않았습니다.", [])
             return
 
-        # 1) 메시지 구성
-        msgs: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
-
-        # (선택) 사전 법령 컨텍스트 프라이머 — 도구 모드에서만
+        # 1) 메시지 조립
+        sys_prompt = system_prompt or ""
         if allow_tools and primer_enable and self.prefetch_law_context and self.summarize_laws_for_primer:
+            # 사전 법령 프라이머 (간단 요약) - 시스템에 병합
             try:
                 pre = self.prefetch_law_context(user_q, num_rows_per_law=3)
                 primer = self.summarize_laws_for_primer(pre, max_items=6)
                 if primer:
-                    msgs.append({"role": "system", "content": primer})
+                    sys_prompt = f"{sys_prompt}\n\n[사전 요약]\n{primer}"
             except Exception:
-                # 프라이머 실패는 무시하고 계속
                 pass
 
-        msgs.append({"role": "user", "content": user_q})
+        messages: List[Dict[str, Any]] = [
+            _msg_dict("system", sys_prompt),
+            _msg_dict("user", user_q),
+        ]
 
-        # 2) 1차 호출 (툴콜 허용/차단)
-        tools = self.tools if allow_tools else []
-        tool_choice = "auto" if allow_tools else "none"
+        law_citations: List[Tuple[str, str]] = []  # (law, art) 모음
 
-        resp1 = self.scc(
-            self.client,
-            messages=msgs,
-            model=self.model,
-            stream=False,
-            allow_retry=True,
-            tools=tools,
-            tool_choice=tool_choice,
-            temperature=self.temperature,
-            max_tokens=800,
-        )
+        # 2) 1차 호출: 툴콜 유도 (stream=False)
+        if allow_tools:
+            try:
+                resp = self.scc(
+                    self.client,
+                    messages=messages,
+                    model=self.model,
+                    tools=self.tools,
+                    stream=False,
+                    allow_retry=True,
+                    temperature=self.temperature,
+                    max_tokens=800,
+                )
+            except TypeError:
+                # 일부 scc는 tools 파라미터 미지원일 수 있음
+                resp = self.scc(
+                    self.client,
+                    messages=messages,
+                    model=self.model,
+                    stream=False,
+                    allow_retry=True,
+                    temperature=self.temperature,
+                    max_tokens=800,
+                )
 
-        if resp1.get("type") == "blocked_by_content_filter":
-            yield ("final", resp1.get("message") or "안전정책으로 답변을 생성할 수 없습니다.", [])
-            return
-        if "resp" not in resp1:
-            yield ("final", "모델이 일시적으로 응답하지 않습니다. 잠시 뒤 다시 시도해 주세요.", [])
-            return
+            ch = _first_choice(resp)
+            msg1 = _message_of(ch) if ch else None
+            tool_calls = _tool_calls_of_message(msg1) if msg1 else []
 
-        msg1 = resp1["resp"].choices[0].message
-        law_for_links: List[Dict[str, Any]] = []
-
-        # 3) 툴 실행
-        if getattr(msg1, "tool_calls", None):
-            msgs.append({"role": "assistant", "tool_calls": msg1.tool_calls})
-            for call in msg1.tool_calls:
-                args = {}
-                try:
-                    import json
-                    args = json.loads(call.function.arguments or "{}")
-                except Exception:
-                    pass
-
-                if call.function.name == "search_one":
-                    result = self.tool_search_one(**args)
-                elif call.function.name == "search_multi":
-                    result = self.tool_search_multi(**args)
-                else:
-                    result = {"error": f"unknown tool: {call.function.name}"}
-
-                # 링크용 결과 축적
-                if isinstance(result, dict) and result.get("items"):
-                    law_for_links.extend(result["items"])
-                elif isinstance(result, list):
-                    for r in result:
-                        if isinstance(r, dict) and r.get("items"):
-                            law_for_links.extend(r["items"])
-
-                msgs.append({
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "content": _safe_json_dumps(result),
+            # 모델이 어떤 보조 텍스트를 냈다면 그대로 대화 이력에 추가
+            if msg1 is not None:
+                messages.append({
+                    "role": "assistant",
+                    "content": _content_of_message(msg1),
+                    "tool_calls": tool_calls if tool_calls else None,
                 })
 
-        # 4) 최종 호출
+            # 2-1) 툴 실행 및 결과 주입
+            for call in tool_calls:
+                try:
+                    fn_name = getattr(call.function, "name", None) if hasattr(call, "function") else None
+                except Exception:
+                    fn = getattr(call, "function", None) if hasattr(call, "function") else None
+                    fn_name = getattr(fn, "name", None) if fn else None
+                if fn_name is None and isinstance(call, dict):
+                    fn_name = ((call.get("function") or {}).get("name"))
+
+                # 인자 파싱
+                try:
+                    raw_args = getattr(call.function, "arguments", None) if hasattr(call, "function") else None
+                    if raw_args is None and isinstance(call, dict):
+                        raw_args = ((call.get("function") or {}).get("arguments"))
+                    args = json.loads(raw_args or "{}")
+                except Exception:
+                    args = {}
+
+                result: Dict[str, Any] = {"error": f"unknown tool: {fn_name}"}
+
+                if fn_name == "search_one" and self.tool_search_one:
+                    # num_rows 보정
+                    if "num_rows" not in args:
+                        args["num_rows"] = _try_int(num_rows, 5)
+                    result = self.tool_search_one(**args)
+
+                elif fn_name == "search_multi" and self.tool_search_multi:
+                    if "num_rows" not in args:
+                        args["num_rows"] = _try_int(num_rows, 5)
+                    result = self.tool_search_multi(**args)
+
+                elif fn_name == "get_article" and self.tool_get_article:
+                    result = self.tool_get_article(**args)
+                    # 링크 시드 수집 (법령명/조문)
+                    law = (result or {}).get("law")
+                    art = (result or {}).get("article_label")
+                    if law and art:
+                        law_citations.append((str(law), str(art)))
+
+                # 툴 결과를 메시지에 추가
+                tool_call_id = getattr(call, "id", None) if hasattr(call, "id") else None
+                if tool_call_id is None and isinstance(call, dict):
+                    tool_call_id = call.get("id")
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": fn_name,
+                    "content": _json_dumps(result),
+                })
+
+        # 3) 2차 호출: 답변 생성 (stream 또는 단발)
         if stream:
             resp2 = self.scc(
-                self.client, messages=msgs, model=self.model,
-                stream=True, allow_retry=True, temperature=self.temperature, max_tokens=1400,
+                self.client,
+                messages=messages,
+                model=self.model,
+                tools=self.tools if allow_tools else None,
+                stream=True,
+                allow_retry=True,
+                temperature=self.temperature,
+                max_tokens=1400,
             )
-            if resp2.get("type") == "blocked_by_content_filter":
-                yield ("final", resp2.get("message") or "안전정책으로 답변을 생성할 수 없습니다.", law_for_links)
-                return
-
-            # 스트리밍: delta를 그대로 전달, 종료 시 '조문 직링크' 블록만 추가로 한 번 더 흘려보냄
+            # 스트리밍: delta를 중계하고, 종료 시 링크 블록 병합
             out = ""
-            for ch in resp2["stream"]:
-                try:
-                    c = ch.choices[0]
-                    if getattr(c, "finish_reason", None):
-                        break
-                    d = getattr(c, "delta", None)
-                    txt = getattr(d, "content", None) if d else None
-                    if txt:
-                        out += txt
-                        yield ("delta", txt, law_for_links)
-                except Exception:
-                    continue
+            stream_iter = None
+            # scc 결과가 dict/객체 어느 쪽이든 'stream' 속성/키를 제공한다고 가정
+            stream_iter = getattr(resp2, "stream", None)
+            if stream_iter is None and isinstance(resp2, dict):
+                stream_iter = resp2.get("stream")
+            if stream_iter is None:
+                # 스트리밍이 불가하면 논-스트리밍과 동일 처리
+                stream = False
+            else:
+                for ev in stream_iter:
+                    try:
+                        choice = _first_choice(ev)
+                        delta = getattr(choice, "delta", None)
+                        txt = getattr(delta, "content", None) if delta else None
+                        if not txt and isinstance(choice, dict):
+                            d = choice.get("delta") or {}
+                            txt = (d or {}).get("content")
+                        if txt:
+                            out += txt
+                            # 실시간 delta
+                            law_links = [
+                                {"law": l, "article_label": a, "url": resolve_article_url(l, a)}
+                                for (l, a) in law_citations
+                            ]
+                            yield ("delta", txt, law_links)
+                        # finish_reason 체크
+                        fr = getattr(choice, "finish_reason", None)
+                        if fr is None and isinstance(choice, dict):
+                            fr = choice.get("finish_reason")
+                        if fr:
+                            break
+                    except Exception:
+                        # 유연하게 무시
+                        pass
 
-            # 스트림 종료: 본문에 조문 링크 블록 머지
-            out2 = merge_article_links_block(out)
-            addon = out2[len(out):]  # 추가된 꼬리만 delta로 전송
-            if addon.strip():
-                yield ("delta", addon, law_for_links)
-            yield ("final", out2, law_for_links)
-            return
-
-        else:
-            # 논-스트리밍: 최종 텍스트에 블록 머지 후 한 번만 반환
-            resp2 = self.scc(
-                self.client, messages=msgs, model=self.model,
-                stream=False, allow_retry=True, temperature=self.temperature, max_tokens=1400,
-            )
-            if resp2.get("type") == "blocked_by_content_filter":
-                yield ("final", resp2.get("message") or "안전정책으로 답변을 생성할 수 없습니다.", law_for_links)
+                # 스트림 종료: 꼬리로 링크 블록 합성
+                out2 = merge_article_links_block(out, seed_citations=law_citations)
+                addon = out2[len(out):]
+                if addon.strip():
+                    law_links = [
+                        {"law": l, "article_label": a, "url": resolve_article_url(l, a)}
+                        for (l, a) in law_citations
+                    ]
+                    yield ("delta", addon, law_links)
+                law_links = [
+                    {"law": l, "article_label": a, "url": resolve_article_url(l, a)}
+                    for (l, a) in law_citations
+                ]
+                yield ("final", out2, law_links)
                 return
 
-            final_text = resp2["resp"].choices[0].message.content or ""
-            final_text = merge_article_links_block(final_text)
-            yield ("final", final_text, law_for_links)
-            return
+        # --- 논-스트리밍 경로 ---
+        resp3 = self.scc(
+            self.client,
+            messages=messages,
+            model=self.model,
+            tools=self.tools if allow_tools else None,
+            stream=False,
+            allow_retry=True,
+            temperature=self.temperature,
+            max_tokens=1400,
+        )
+        ch3 = _first_choice(resp3)
+        msg3 = _message_of(ch3) if ch3 else None
+        content = _content_of_message(msg3) if msg3 else ""
+        final = merge_article_links_block(content, seed_citations=law_citations)
+        law_links = [
+            {"law": l, "article_label": a, "url": resolve_article_url(l, a)}
+            for (l, a) in law_citations
+        ]
+        yield ("final", final, law_links)
 
-# =========
-# 모드 결정기
-# =========
+# ================
+# (선택) 모드 관련 폴백
+# ================
 try:
     from .legal_modes import Intent  # type: ignore
 except Exception:  # pragma: no cover
-    class Intent:  # minimal fallback for type hints
-        QUICK="quick"; LAWFINDER="lawfinder"; MEMO="memo"; DRAFT="draft"
+    class Intent:  # 최소 폴백(타입힌트용)
+        QUICK = "quick"
+        LAWFINDER = "lawfinder"
+        MEMO = "memo"
+        DRAFT = "draft"
 
 def pick_mode(det_intent: "Intent", conf: float) -> "Intent":
-    """
-    app.py에서 classify_intent() 결과를 받아 최종 모드를 결정합니다.
-    현재는 단순 통과(최적화 포인트가 없으면 그대로 반환).
-    """
+    """단순 통과(필요시 규칙 추가)."""
     return det_intent

@@ -331,39 +331,72 @@ KEY_PREFIX = "main"
 
 from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
 
-# 지연 초기화: 필요한 전역들이 준비된 뒤에 한 번만 엔진 생성
-def _init_engine_lazy():
+def _init_engine_lazy(force: bool = False):
+    """
+    엔진을 지연 초기화합니다.
+    - 기존 엔진이 있고 force=False이면 재사용
+    - 필수 의존성이 없으면 None 반환
+    """
     import streamlit as st
-    if "engine" in st.session_state and st.session_state.engine is not None:
+
+    # 재사용
+    if not force and st.session_state.get("engine") is not None:
         return st.session_state.engine
 
-    g = globals()
-    c      = g.get("client")
-    az     = g.get("AZURE")
-    tools  = g.get("TOOLS")
-    scc    = g.get("safe_chat_completion")
-    t_one  = g.get("tool_search_one")
-    t_multi= g.get("tool_search_multi")
-    pre    = g.get("prefetch_law_context")
-    summar = g.get("_summarize_laws_for_primer")
+    # 안전 임포트
+    try:
+        from modules.advice_engine import AdviceEngine  # type: ignore
+    except Exception:
+        from advice_engine import AdviceEngine  # type: ignore
 
-    # 필수 구성요소가 아직 준비 안 되었으면 None을 캐시하고 리턴
-    if not (c and az and tools and scc and t_one and t_multi):
+    g = globals()
+    client = g.get("client")
+    AZURE = g.get("AZURE") or {}
+    TOOLS = g.get("TOOLS")
+
+    safe_chat_completion = g.get("safe_chat_completion")
+    prefetch_law_context = g.get("prefetch_law_context")
+    summarize_laws_for_primer = (
+        g.get("_summarize_laws_for_primer") or g.get("summarize_laws_for_primer")
+    )
+
+    # 툴 함수들
+    tool_search_one = g.get("tool_search_one")
+    tool_search_multi = g.get("tool_search_multi")
+    tool_get_article = g.get("tool_get_article")
+
+    # 필수 점검
+    missing = []
+    if not client: missing.append("client")
+    if not (AZURE and AZURE.get("deployment")): missing.append("AZURE['deployment']")
+    if not TOOLS: missing.append("TOOLS")
+    if not safe_chat_completion: missing.append("safe_chat_completion")
+    if not tool_search_one: missing.append("tool_search_one")
+    if not tool_search_multi: missing.append("tool_search_multi")
+
+    if missing:
         st.session_state.engine = None
+        try:
+            st.warning("엔진 초기화 보류: 누락 항목 → " + ", ".join(missing))
+        except Exception:
+            pass
         return None
 
-    st.session_state.engine = AdviceEngine(
-        client=c,
-        model=az["deployment"],
-        tools=tools,
-        safe_chat_completion=scc,
-        tool_search_one=t_one,
-        tool_search_multi=t_multi,
-        prefetch_law_context=pre,             # 있으면 그대로
-        summarize_laws_for_primer=summar,     # 있으면 그대로
+    engine = AdviceEngine(
+        client=client,
+        model=AZURE["deployment"],
+        tools=TOOLS,
+        safe_chat_completion=safe_chat_completion,
+        tool_search_one=tool_search_one,
+        tool_search_multi=tool_search_multi,
+        tool_get_article=tool_get_article,
+        prefetch_law_context=prefetch_law_context,
+        summarize_laws_for_primer=summarize_laws_for_primer,
         temperature=0.2,
     )
-    return st.session_state.engine
+    st.session_state.engine = engine
+    return engine
+
 
 DEBUG = st.sidebar.checkbox("DRF 디버그", value=False, key="__debug__")
 
@@ -733,6 +766,20 @@ def ask_llm_with_tools(
         system_prompt = f"{system_prompt}\n\n[대화 컨텍스트]\n{user_ctx}"
 
     if engine is not None:
+        # === [ADD] app.py : 조문 컨텍스트 주입 ===
+        law_ctx = ""
+    try:
+        bundle, _used = fetch_article_via_api_struct(
+        law_hint, art_hint, mst=(mst_hint or None), efYd=(ef_hint or None)
+    )
+        law_ctx = render_article_context_for_llm(bundle)
+    except Exception:
+        if fetched_block:
+            law_ctx = f"법령명: {law_hint}\n조문: {art_hint}\n[본문]\n{fetched_block}"
+
+    if law_ctx:
+        system_prompt = f"{system_prompt}\n\n[조문 컨텍스트]\n{law_ctx}"
+
         try:
             for kind, payload, law_list in engine.generate(
                 user_q,
@@ -3455,47 +3502,120 @@ def tool_search_multi(queries: list, num_rows: int = 5):
 
 TOOLS = [
     {
-        "type":"function",
-        "function":{
-            "name":"search_one",
-            "description":"MOLEG 목록 API에서 단일 카테고리를 검색한다.",
-            "parameters":{
-                "type":"object",
-                "properties":{
-                    "target":{"type":"string","enum":SUPPORTED_TARGETS},
-                    "query":{"type":"string"},
-                    "num_rows":{"type":"integer","minimum":1,"maximum":10,"default":5}
+        "type": "function",
+        "function": {
+            "name": "search_one",
+            "description": "MOLEG 목록 API에서 단일 카테고리를 검색한다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string", "enum": SUPPORTED_TARGETS},
+                    "query": {"type": "string"},
+                    "num_rows": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
                 },
-                "required":["target","query"]
-            }
-        }
+                "required": ["target", "query"],
+            },
+        },
     },
     {
-        "type":"function",
-        "function":{
-            "name":"search_multi",
-            "description":"여러 카테고리/질의어를 한 번에 검색한다.",
-            "parameters":{
-                "type":"object",
-                "properties":{
-                    "queries":{
-                        "type":"array",
-                        "items":{
-                            "type":"object",
-                            "properties":{
-                                "target":{"type":"string","enum":SUPPORTED_TARGETS},
-                                "query":{"type":"string"}
+        "type": "function",
+        "function": {
+            "name": "search_multi",
+            "description": "여러 카테고리/질의어를 한 번에 검색한다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "queries": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "target": {"type": "string", "enum": SUPPORTED_TARGETS},
+                                "query": {"type": "string"},
                             },
-                            "required":["target","query"]
-                        }
+                            "required": ["target", "query"],
+                        },
                     },
-                    "num_rows":{"type":"integer","minimum":1,"maximum":10,"default":5}
+                    "num_rows": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
                 },
-                "required":["queries"]
-            }
-        }
-    }
+                "required": ["queries"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_article",
+            "description": "법령명과 조문 라벨(예: 제83조)을 받아 해당 조문 본문과 메타를 반환한다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "law": {"type": "string"},
+                    "article_label": {"type": "string"},
+                    "mst": {"type": "string"},
+                    "efYd": {"type": "string"},
+                },
+                "required": ["law", "article_label"],
+            },
+        },
+    },
 ]
+
+
+# === [ADD] app.py : 조문 본문을 직접 가져오는 툴 ===
+def tool_get_article(law: str, article_label: str, mst: str = "", efYd: str = ""):
+    """
+    LLM function-call 용: 법령명과 조문 라벨로 조문 본문을 가져온다.
+    우선 DRF(JSON) 구조화 → 실패 시 MST/딥링크 폴백.
+    """
+    try:
+        # 1) DRF(JSON) 구조화 (app.py 내부에 이미 정의됨)
+        bundle, used_url = fetch_article_via_api_struct(
+            law, article_label, mst=(mst or None), efYd=(efYd or None)
+        )
+        return {
+            "type": "article",
+            "law": bundle.get("law",""),
+            "article_label": bundle.get("article_label",""),
+            "mst": bundle.get("mst",""),
+            "efYd": bundle.get("efYd",""),
+            "jo": bundle.get("jo",""),
+            "source_url": bundle.get("source_url",""),
+            "title": bundle.get("title",""),
+            "body_text": bundle.get("body_text",""),
+            "text_for_llm": render_article_context_for_llm(bundle),
+        }
+    except Exception:
+        pass
+
+    # 2) 폴백: law_fetch 모듈 사용 (MST 탐색 → 블록 추출)
+    try:
+        try:
+            from modules.law_fetch import find_mst_by_law_name, fetch_article_block_by_mst  # type: ignore
+        except Exception:
+            from law_fetch import find_mst_by_law_name, fetch_article_block_by_mst          # type: ignore
+
+        m = mst or find_mst_by_law_name(law)
+        if m:
+            block, url = fetch_article_block_by_mst(m, article_label, prefer="JSON", efYd=(efYd or None))
+            return {
+                "type": "article",
+                "law": law,
+                "article_label": article_label,
+                "mst": m,
+                "efYd": efYd or "",
+                "source_url": url,
+                "title": "",
+                "body_text": block or "",
+                "text_for_llm": f"법령명: {law}\n조문: {article_label}\n[본문]\n{block or ''}",
+            }
+    except Exception:
+        pass
+
+    return {
+        "type":"article","law":law,"article_label":article_label,
+        "mst":mst,"efYd":efYd,"source_url":"","title":"","body_text":"","text_for_llm":""
+    }
 
 # ============================
 # [GPT PATCH] app.py 연결부
