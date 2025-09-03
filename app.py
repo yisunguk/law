@@ -1,30 +1,33 @@
 # =========================
-# app.py — CLEAN IMPORT HEADER
+# app.py — CLEAN IMPORT HEADER (drop-in)
 # =========================
 from __future__ import annotations
 
 # --- Path bootstrap ---
-import os, sys, importlib.util, types
+import os, sys, importlib.util
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MOD_DIR  = os.path.join(BASE_DIR, "modules")
 if BASE_DIR not in sys.path: sys.path.insert(0, BASE_DIR)
 if os.path.isdir(MOD_DIR) and MOD_DIR not in sys.path: sys.path.insert(0, MOD_DIR)
 
 # --- Stdlib ---
-import html  # use html.escape / html.unescape
+import html  # html.escape / html.unescape
 
-# --- Third-party ---
-import streamlit as st
+# --- Third-party (optional import: allow running w/o Streamlit at import time) ---
+try:
+    import streamlit as st  # type: ignore
+except Exception:
+    st = None  # type: ignore
 
 # --- Loader: plan_executor.execute_plan (package → file fallback) ---
 def _load_execute_plan():
-    # 1) packages: modules.plan_executor
+    # 1) package: modules.plan_executor
     try:
-        from modules.plan_executor import execute_plan as fn
+        from modules.plan_executor import execute_plan as fn  # type: ignore
         return fn, "modules.plan_executor"
     except Exception:
         pass
-    # 2) file fallback: ./modules/plan_executor.py → dynamic load
+    # 2) file fallback: ./modules/plan_executor.py or ./plan_executor.py
     for p in (
         os.path.join(MOD_DIR, "plan_executor.py"),
         os.path.join(BASE_DIR, "plan_executor.py"),
@@ -41,30 +44,31 @@ def _load_execute_plan():
 
 execute_plan, _EXEC_SRC = _load_execute_plan()
 
-# --- Other local imports (package → simple fallback) ---
+# --- legal_modes (package → simple fallback) ---
 try:
-    from modules.legal_modes import Intent, build_sys_for_mode
+    from modules.legal_modes import Intent, build_sys_for_mode  # type: ignore
 except Exception:
-    from legal_modes import Intent, build_sys_for_mode
+    from legal_modes import Intent, build_sys_for_mode          # type: ignore
 
+# === router plan maker (single global alias; no duplicate import) ===
 try:
-    from modules.router_llm import make_plan_with_llm
-except Exception:
-    from router_llm import make_plan_with_llm
-
-try:
-    from modules.linking import resolve_article_url, make_pretty_article_url
-except Exception:
-    from linking import resolve_article_url, make_pretty_article_url
-
-# === router plan maker (global alias) ===
-try:
-    from modules.router_llm import make_plan_with_llm as _MAKE_PLAN
+    from modules.router_llm import make_plan_with_llm as _MAKE_PLAN  # type: ignore
 except Exception:
     try:
-        from router_llm import make_plan_with_llm as _MAKE_PLAN
+        from router_llm import make_plan_with_llm as _MAKE_PLAN       # type: ignore
     except Exception:
         _MAKE_PLAN = None
+
+# === 딥링크 생성기 (module → local fallback) ===
+try:
+    from modules.linking import resolve_article_url, make_pretty_article_url  # type: ignore
+except Exception:
+    from urllib.parse import quote as _q
+    def resolve_article_url(law: str, art_label: str) -> str:
+        # ex) https://www.law.go.kr/법령/건설산업기본법/제83조
+        return f"https://www.law.go.kr/법령/{_q((law or '').strip(), safe='')}/{_q((art_label or '').strip(), safe='')}"
+    def make_pretty_article_url(law: str, art_label: str) -> str:
+        return resolve_article_url(law, art_label)
 
 
 # --- secrets → env bridge ---
@@ -82,30 +86,32 @@ except Exception:
 # ✅ [PATCH] app.py — 최상단 import에 공용 링크 생성기 추가
 from modules.linking import resolve_article_url  # ← 추가
 
-# === [REPLACE] app.py : _deep_article_url (두 군데 모두) ===
-def _deep_article_url(law: str, art_label: str) -> str:
-    """
-    조문 직링크(한글 주소) 우선. 실패 시 내부 로직이 메인으로 폴백.
-    """
+# =========================
+# Deep-link — single entry w/ safe fallback
+# =========================
+# 1) 모듈이 있으면 사용, 없으면 로컬 폴백(항상 "법령/제n조" 직링크 생성)
+try:
+    from modules.linking import resolve_article_url as _RESOLVE  # type: ignore
+except Exception:
+    from urllib.parse import quote as _q
+    def _RESOLVE(law, art_label):
+        law = (law or "").strip()
+        art_label = (art_label or "").strip()
+        return f"https://www.law.go.kr/법령/{_q(law, safe='')}/{_q(art_label, safe='')}"
+
+# 2) 앱 전체가 이 함수만 쓰도록(호출부는 수정 불필요)
+def _deep_article_url(law, art_label):
+    """조문 딥링크 단일 진입점."""
     try:
-        from modules.linking import resolve_article_url
+        return _RESOLVE(law, art_label)
     except Exception:
-        from linking import resolve_article_url  # fallback
-    return resolve_article_url(law, art_label)
+        # 이중 폴백
+        from urllib.parse import quote as _q
+        return f"https://www.law.go.kr/법령/{_q((law or '').strip(), safe='')}/{_q((art_label or '').strip(), safe='')}"
 
-# 세션 초기화 시 1회만 실행
-if "__boot__" not in st.session_state:
-    st.session_state["__ctx_router__"] = True   # 라우터에도 문맥 주입 ON
-    # st.session_state["__ctx_answer__"] = True # (이미 기본 True지만 확실히 하려면)
-    st.session_state["__boot__"] = True
-
-# === [ADD] app.py : 원문요청 감지 유틸 ===
-import re
-
-_VERBATIM_PAT = re.compile(
-    r"(원문|본문|전문)\s*(보여|출력|줘|보여줘|보여주)|조문\s*(그대로|원문)|그대로\s*(보내|출력)",
-    re.I
-)
+# (선택) 예전 호출 호환
+def make_pretty_article_url(law, art_label):
+    return _deep_article_url(law, art_label)
 
 def wants_verbatim(user_text: str) -> bool:
     return bool(_VERBATIM_PAT.search((user_text or "").strip()))
@@ -1877,18 +1883,6 @@ def _article_url_or_main(law: str, art_label: str, verify: bool = True, timeout:
     except Exception:
         return f"{base}/{law}"
 
-# === [REPLACE] app.py : _deep_article_url (두 군데 모두) ===
-def _deep_article_url(law: str, art_label: str) -> str:
-    """
-    조문 직링크(한글 주소) 우선. 실패 시 내부 로직이 메인으로 폴백.
-    """
-    try:
-        from modules.linking import resolve_article_url
-    except Exception:
-        from linking import resolve_article_url  # fallback
-    return resolve_article_url(law, art_label)
-
-
 def link_inline_articles_in_bullets(markdown: str) -> str:
     """불릿 라인 중 '법령명 제N조(의M)'를 [텍스트](조문URL)로 교체"""
     def repl(m: re.Match) -> str:
@@ -2658,18 +2652,6 @@ import re, json
 import re as _re_fallback
 from html import unescape as _unescape_fallback
 from urllib.parse import quote as _quote_fallback
-
-# === [REPLACE] app.py : _deep_article_url (두 군데 모두) ===
-def _deep_article_url(law: str, art_label: str) -> str:
-    """
-    조문 직링크(한글 주소) 우선. 실패 시 내부 로직이 메인으로 폴백.
-    """
-    try:
-        from modules.linking import resolve_article_url
-    except Exception:
-        from linking import resolve_article_url  # fallback
-    return resolve_article_url(law, art_label)
-
 
 def _strip_html_keep_lines(s: str) -> str:
     if not s:
