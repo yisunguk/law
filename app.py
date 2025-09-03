@@ -586,36 +586,44 @@ def ask_llm_with_tools(
     else:
         plan = (_MAKE_PLAN and _MAKE_PLAN(_client, router_input, model=router_model)) or {}
 
+        # ─────────────────────────────────────────────────────────────
+    # 3) Router plan 작성  ← 이 블록 전체 교체
     # ─────────────────────────────────────────────────────────────
-    # 3) Router plan 작성
-    # ─────────────────────────────────────────────────────────────
-    plan: Dict[str, Any] = {}
+    plan = {}
+
+    # (1) 라우터 모델을 먼저 안전하게 준비 (미정의 오류 방지)
     try:
-        try:
-            from modules.router_llm import make_plan_with_llm  # type: ignore
-        except Exception:
-            from router_llm import make_plan_with_llm  # type: ignore
-
-        # 라우터 모델은 전역/시크릿에서 가져오도록 (없으면 None)
-        router_model = None
-        try:
-            import streamlit as st  # type: ignore
-            router_model = (st.secrets.get("azure_openai", {}) or {}).get("router_deployment")  # type: ignore
-        except Exception:
-            router_model = None
-
-        plan = (_MAKE_PLAN and _MAKE_PLAN(_client, router_input, model=router_model)) or {}
-
+        import streamlit as st  # type: ignore
+        router_model = (st.secrets.get("azure_openai", {}) or {}).get("router_deployment")
     except Exception:
-        # 최후 폴백: 정규식으로 법령명 & 조문 라벨 추출
-        import re
-        name = ""
-        art  = ""
-        m = re.search(r"([가-힣A-Za-z0-9\(\)·\s]{2,})\s*(제?\s*\d{1,4}\s*조(?:의\s*\d{1,3})?)", user_q)
-        if m:
-            name = (m.group(1) or "").strip()
-            art  = (m.group(2) or "").strip()
-        plan = {"action":"GET_ARTICLE","law_name":name,"article_label":art}
+        router_model = None
+
+    # (2) 사용자가 law.go.kr 한글주소(법령/조문)를 직접 넣었으면 즉시 사용
+    import re as _re
+    from urllib.parse import unquote as _unq
+    _HANGUL_LAW_URL = _re.compile(
+        r'https?://(?:www\.)?law\.go\.kr/법령/(?P<law>[^/\s]+)/(?P<art>제\d{1,4}조(?:의\d{1,3})?)'
+    )
+    m_url = _HANGUL_LAW_URL.search(user_q or "")
+    if m_url:
+        law_hint = _unq(m_url.group("law")).strip()
+        art_hint = _unq(m_url.group("art")).strip()
+        plan = {"action": "GET_ARTICLE", "law_name": law_hint, "article_label": art_hint}
+
+    # (3) 아니면 LLM 플래너 1회만 호출 (전역 별칭 사용)
+    elif globals().get("_MAKE_PLAN"):
+        try:
+            plan = globals()["_MAKE_PLAN"](_client, router_input, model=router_model) or {}
+        except Exception:
+            plan = {}
+
+    # (4) 최후 폴백: 정규식으로 법령명/조문 라벨 추출
+    if not plan:
+        m = _re.search(r"([가-힣A-Za-z0-9\(\)·\s]{2,})\s*(제?\s*\d{1,4}\s*조(?:의\s*\d{1,3})?)", user_q or "")
+        name = (m.group(1) or "").strip() if m else ""
+        art  = (m.group(2) or "").strip() if m else ""
+        plan = {"action": "GET_ARTICLE", "law_name": name, "article_label": art}
+
 
     # ─────────────────────────────────────────────────────────────
     # 4) 플랜 보강: MST/JO 자동 채움 (공공데이터포털 + 로컬 변환)
@@ -2079,34 +2087,6 @@ from urllib.parse import unquote
 _HANGUL_LAW_URL = _re.compile(
     r'https?://(?:www\.)?law\.go\.kr/법령/(?P<law>[^/\s]+)/(?P<art>제\d{1,4}조(?:의\d{1,3})?)'
 )
-# === 안전 렌더러: 말풍선 하단 '참고 법령 요약'을 깨짐 없이 출력 ===
-def _render_law_summary_rows(law_list):
-    import re as _re, streamlit as st
-    if not law_list:
-        st.write("참고한 링크/법령 정보가 없습니다."); return
-    if isinstance(law_list, dict):
-        law_list = [law_list]
-
-    def _name_from_title(t: str) -> str:
-        m = _re.search(r"^(?P<name>.+?)\s+제\d{1,4}조(의\d{1,3})?", t or "")
-        return (m.group("name").strip() if m else (t or "")).strip()
-
-    for j, law in enumerate(law_list, 1):
-        if not isinstance(law, dict):
-            st.write(f"{j}. (알 수 없는 항목)"); continue
-        name = ((law.get("법령명") or law.get("법령명한글") or law.get("name") or law.get("law") or "").strip()
-                or _name_from_title(law.get("title", "")) or "법령")
-        kind = (law.get("법령구분") or law.get("kind") or "").strip()
-        eff  = (law.get("시행일자") or law.get("eff") or law.get("시행") or "").strip()
-        pub  = (law.get("공포일자") or law.get("pub") or law.get("공포") or "").strip()
-        url  = (law.get("법령상세링크") or law.get("url") or law.get("link") or "").strip()
-
-        head = f"**{j}. {name}**"
-        meta = [x for x in [kind, f"시행 {eff}" if eff else "", f"공포 {pub}" if pub else ""] if x]
-        if meta: head += " (" + " | ".join(meta) + ")"
-        st.write(head)
-        if url: st.write(f"- 링크: {url}")
-
 def _pick_law_art_from_text(text: str) -> tuple[str, str] | None:
     """사용자 입력에 법령 한글주소가 있으면 (법령명, 조문라벨) 추출."""
     m = _HANGUL_LAW_URL.search(text or '')
@@ -2163,7 +2143,6 @@ def choose_law_queries_llm_first(q: str, top_k: int = 4) -> list[str]:
             break
     return out
 
-# === 안전 렌더러: 말풍선 하단 '참고 법령 요약'을 깨짐 없이 출력 ===
 def _render_law_summary_rows(law_list):
     """여러 형태(dict)의 법령/링크 항목을 안전하게 요약 출력."""
     import re as _re
@@ -2176,12 +2155,30 @@ def _render_law_summary_rows(law_list):
         law_list = [law_list]
 
     def _name_from_title(t: str) -> str:
-        # "건설산업기본법 제83조" → "건설산업기본법"
         m = _re.search(r"^(?P<name>.+?)\s+제\d{1,4}조(의\d{1,3})?", t or "")
         return (m.group("name").strip() if m else (t or "")).strip()
 
-    with st.expander("📋 이 턴에서 참고한 법령 요약"):
-        _render_law_summary_rows(m.get("law"))
+    for j, law in enumerate(law_list, 1):
+        if not isinstance(law, dict):
+            st.write(f"{j}. (알 수 없는 항목)")
+            continue
+
+        name = ((law.get("법령명") or law.get("법령명한글") or law.get("name") or law.get("law") or "").strip()
+                or _name_from_title(law.get("title", "")) or "법령")
+        kind = (law.get("법령구분") or law.get("kind") or "").strip()
+        eff  = (law.get("시행일자") or law.get("eff") or law.get("시행") or "").strip()
+        pub  = (law.get("공포일자") or law.get("pub") or law.get("공포") or "").strip()
+        url  = (law.get("법령상세링크") or law.get("url") or law.get("link") or "").strip()
+
+        head = f"**{j}. {name}**"
+        bits = []
+        if kind: bits.append(kind)
+        if eff:  bits.append(f"시행 {eff}")
+        if pub:  bits.append(f"공포 {pub}")
+        if bits: head += " (" + " | ".join(bits) + ")"
+        st.write(head)
+        if url:
+            st.write(f"- 링크: {url}")
 
 def load_secrets():
     try:
