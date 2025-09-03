@@ -3000,75 +3000,164 @@ _LAWISH_RE = re.compile(r"(법|령|규칙|조례|법률)|제\d+조")
 def _lawish(q: str) -> bool:
     return bool(_LAWISH_RE.search(q or ""))
 
-def find_all_law_data(query: str, num_rows: int = 3, hint_laws: list[str] | None = None):
-    results = {}
+def find_all_law_data(
+    query: str,
+    num_rows: int = 3,
+    hint_laws: list[str] | None = None,
+):
+    """
+    통합 검색 패널용: 질문에서 검색 플랜(plans)을 만들고
+    국가법령정보 공동활용 API를 호출해 버킷별 결과를 반환한다.
+    반환 예:
+      {
+        "법령": {"items": [...], "endpoint": None, "error": "...", "debug": {...}},
+        "행정규칙": {...},
+        "자치법규": {...},
+        "조약": {...}
+      }
+    """
+    results: dict[str, dict] = {}
 
-    # 0) LLM 플랜 생성
-    plans = propose_api_queries_llm(query)  # 기존 LLM 플래너 사용:contentReference[oaicite:1]{index=1}
+    # 0) LLM 플랜 생성 (실패 시 빈 리스트)
+    try:
+        plans = propose_api_queries_llm(query) or []
+    except Exception:
+        plans = []
+    
+    # ✅ LLM 플랜 외에 '법령명 우선 후보'를 항상 시드로 주입  ← (요청하신 추가 코드 반영)
+    try:
+        law_name_seeds = choose_law_queries_llm_first(query) or []  # LLM → 규칙 폴백(클린 질의, 키워드 맵)
+    except Exception:
+        law_name_seeds = []
+    if law_name_seeds:
+        seed = [
+            {"target": "law", "q": nm, "must": [nm], "must_not": []}
+            for nm in law_name_seeds if nm
+        ]
+        # 앞에 배치 + (target,q) 기준 중복 제거
+        _seen: set[tuple[str, str]] = set()
+        _merged = seed + (plans or [])
+        plans = []
+        for p in _merged:
+            key = (p.get("target"), p.get("q"))
+            if key not in _seen and p.get("target") and p.get("q"):
+                _seen.add(key)
+                plans.append(p)
 
     # ✅ 0-0) 답변/질문에서 얻은 '힌트 법령들'을 최우선 시드로 주입
     if hint_laws:
-        seed = [{"target":"law","q":nm, "must":[nm], "must_not": []}
-                for nm in hint_laws if nm]
-        # 앞에 배치 + (target,q) 중복 제거
-        seen=set(); merged = seed + (plans or [])
+        seed = [
+            {"target": "law", "q": nm, "must": [nm], "must_not": []}
+            for nm in hint_laws if nm
+        ]
+        seen: set[tuple[str, str]] = set()
+        merged = seed + (plans or [])
         plans = []
         for p in merged:
-            key=(p.get("target"), p.get("q"))
+            key = (p.get("target"), p.get("q"))
             if key not in seen and p.get("target") and p.get("q"):
-                seen.add(key); plans.append(p)
+                seen.add(key)
+                plans.append(p)
 
-    # 오탈자 보정/정합성 필터/법령형 우선 흐름(기존) 유지:contentReference[oaicite:2]{index=2}
+    # ── 오탈자 보정/정합성 필터/법령형 우선 흐름 유지 ──────────────────────────────
     for p in plans or []:
-        p["q"] = _sanitize_plan_q(query, p.get("q",""))
-    plans = _filter_plans(query, plans)                      # 사용자와 토큰 교집합 or must 있으면 통과:contentReference[oaicite:3]{index=3}
+        p["q"] = _sanitize_plan_q(query, p.get("q", ""))
+    plans = _filter_plans(query, plans)
 
-    good = [p for p in (plans or []) if _lawish(p.get("q",""))]  # 법/령/규칙/조례/제n조 포함:contentReference[oaicite:4]{index=4}
+    # 법/령/규칙/조례/제n조 포함 질의만 우선 사용
+    good = [p for p in (plans or []) if _lawish(p.get("q", ""))]
     if good:
         plans = good[:10]
     else:
         # LLM 후보(질문 기준) → 규칙 폴백(최소화) 순으로 구제
-        names = extract_law_candidates_llm(query) or []      # LLM 기반 후보 추출기:contentReference[oaicite:5]{index=5}
+        try:
+            names = extract_law_candidates_llm(query) or []
+        except Exception:
+            names = []
         if not names:
-            # 규칙 맵은 폴백용으로만 사용
-            names = [v for k, v in KEYWORD_TO_LAW.items() if k in (query or "")]
+            try:
+                base_map = KEYWORD_TO_LAW
+            except NameError:
+                base_map = {}
+            names = [v for k, v in (base_map or {}).items() if k in (query or "")]
         if names:
-            plans = [{"target":"law","q":n,"must":[n],"must_not":[]} for n in names][:6]
+            plans = [{"target": "law", "q": n, "must": [n], "must_not": []} for n in names][:6]
         else:
-            kw = (extract_keywords_llm(query) or [])[:5]     # 키워드 빅램 폴백:contentReference[oaicite:6]{index=6}
-            tmp=[]
+            try:
+                kw = (extract_keywords_llm(query) or [])[:5]
+            except Exception:
+                kw = []
+            tmp = []
             for i in range(len(kw)):
-                for j in range(i+1, len(kw)):
-                    tmp.append({"target":"law","q":f"{kw[i]} {kw[j]}","must":[kw[i],kw[j]],"must_not":[]})
+                for j in range(i + 1, len(kw)):
+                    tmp.append({
+                        "target": "law",
+                        "q": f"{kw[i]} {kw[j]}",
+                        "must": [kw[i], kw[j]],
+                        "must_not": [],
+                    })
             plans = tmp[:8]
 
-    # (이하 실행/리랭크/패킹은 기존과 동일):contentReference[oaicite:7]{index=7}
-    tried, err = [], []
-    buckets = {"법령":("law",[]), "행정규칙":("admrul",[]), "자치법규":("ordin",[]), "조약":("trty",[])}
+    # ── 실행/리랭크/패킹 ─────────────────────────────────────────────────────────
+    tried: list[str] = []
+    err: list[str] = []
+    buckets: dict[str, tuple[str, list]] = {
+        "법령": ("law", []),
+        "행정규칙": ("admrul", []),
+        "자치법규": ("ordin", []),
+        "조약": ("trty", []),
+    }
+
     for plan in plans:
-        t, qx = plan["target"], plan["q"]
+        t = plan.get("target", "")
+        qx = plan.get("q", "")
         tried.append(f"{t}:{qx}")
-        if not qx.strip():
-            err.append(f"{t}:(blank) dropped"); continue
+        if not (qx or "").strip():
+            err.append(f"{t}:(blank) dropped")
+            continue
         try:
-            items, endpoint, e = _call_moleg_list(t, qx, num_rows=num_rows)  # MOLEG API 호출:contentReference[oaicite:8]{index=8}
-            items = _filter_items_by_plan(query, items, plan)                # 정합성 필터 + 정렬:contentReference[oaicite:9]{index=9}
+            items, endpoint, e = _call_moleg_list(t, qx, num_rows=num_rows)  # MOLEG API 호출
+            items = _filter_items_by_plan(query, items, plan)               # 정합성 필터 + 정렬
             if items:
-                for label,(tt,arr) in buckets.items():
-                    if t==tt: arr.extend(items)
-            if e: err.append(f"{t}:{qx} → {e}")
+                for label, (tt, arr) in buckets.items():
+                    if t == tt:
+                        arr.extend(items)
+            if e:
+                err.append(f"{t}:{qx} → {e}")
         except Exception as ex:
             err.append(f"{t}:{qx} → {ex}")
 
-    for label,(tt,arr) in buckets.items():
-        if arr and tt=="law" and len(arr)>=2:
-            arr = rerank_laws_with_llm(query, arr, top_k=8)  # LLM 리랭커(맥락 필터):contentReference[oaicite:10]{index=10}
+    # 버킷별 후처리 + 결과 포맷팅
+    for label, (tt, arr) in list(buckets.items()):
+        if arr and tt == "law" and len(arr) >= 2:
+            try:
+                arr = rerank_laws_with_llm(query, arr, top_k=8)  # LLM 리랭커
+            except Exception:
+                arr = arr[:8]
         results[label] = {
-            "items": arr, "endpoint": None,
+            "items": arr,
+            "endpoint": None,
             "error": "; ".join(err) if err else None,
             "debug": {"plans": plans, "tried": tried},
         }
+        buckets[label] = (tt, arr)
+
+    # ✅ 모든 버킷이 비면 마지막 폴백: 클린 질의로 '법령' 1회 조회
+    if all(not (v[1] or []) for v in buckets.values()):
+        try:
+            cleaned = _clean_query_for_api(query)
+        except Exception:
+            cleaned = None
+        if cleaned:
+            try:
+                items, _, _ = _call_moleg_list("law", cleaned, num_rows=max(5, num_rows))
+                if items:
+                    results["법령"]["items"] = items
+            except Exception:
+                pass
+
     return results
+
 
 
 # 캐시된 단일 법령 검색
