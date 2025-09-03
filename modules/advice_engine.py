@@ -288,22 +288,16 @@ class AdviceEngine:
                 tool_call_id = getattr(call, "id", None) if hasattr(call, "id") else None
                 if tool_call_id is None and isinstance(call, dict):
                     tool_call_id = call.get("id")
-                messages.append({
-                    "role": "system",
-                    "content": "위 도구 결과를 이미 반영했다. 이제는 도구를 다시 호출하지 말고, 한국어 최종 답변만 작성하라."
-        })
+                # modules/advice_engine.py — generate() 내부, 2차 호출 직전 (ADD)
+                messages.append({"role":"system",
+                 "content":"위 도구 결과를 이미 반영했다. 도구를 다시 호출하지 말고 한국어 최종 답변만 작성하라."})
 
-        # 3) 2차 호출: 답변 생성 (stream 또는 단발)
-        if stream:
-            resp2 = self.scc(
-                self.client,
-                messages=messages,
-                model=self.model,
-                tools=None,
-                stream=True,
-                allow_retry=True,
-                temperature=self.temperature,
-                max_tokens=1400,
+                # 2차 호출
+                resp2 = self.scc(
+                self.client, messages=messages, model=self.model,
+                tools=None,                 # ★ 두 번째는 도구 금지
+                stream=True, allow_retry=True,
+                temperature=self.temperature, max_tokens=1400,
             )
             # 스트리밍: delta를 중계하고, 종료 시 링크 블록 병합
             out = ""
