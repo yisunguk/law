@@ -3404,10 +3404,9 @@ TOOLS = [
     }
 ]
 
-
-
-# app.py — tool_get_article (확인/교체)
+# app.py — tool_get_article (REPLACE THIS FUNCTION)
 def tool_get_article(law: str, article_label: str, mst: str = "", efYd: str = ""):
+    # 1) 본문: 딥링크 스크랩 (OC 불필요)
     try:
         from modules.plan_executor import execute_plan
     except Exception:
@@ -3421,11 +3420,10 @@ def tool_get_article(law: str, article_label: str, mst: str = "", efYd: str = ""
         "efYd": (efYd or "").strip(),
     }
     out = execute_plan(plan) or {}
-
     text = (out.get("body_text") or out.get("text") or "").strip()
     link_primary = (out.get("source_url") or out.get("link") or "").strip()
 
-    # (선택) MOLEG 서비스키로 공식 링크 보강
+    # 2) 링크 보강: 공공데이터포털(MOLEG) 공식 링크(있으면)
     try:
         from modules.linking import fetch_drf_law_link_by_name
     except Exception:
@@ -3440,6 +3438,7 @@ def tool_get_article(law: str, article_label: str, mst: str = "", efYd: str = ""
         "links": links,
         "source": "deeplink+MOLEG",
     }
+
 
 
 # === [END REPLACE] ===================================================
