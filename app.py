@@ -1,5 +1,5 @@
 # =========================
-# app.py — CLEAN IMPORT HEADER (paste this at very top, replace existing header)
+# app.py — CLEAN IMPORT HEADER
 # =========================
 from __future__ import annotations
 
@@ -69,10 +69,6 @@ except Exception:
 # =========================
 # END CLEAN IMPORT HEADER
 # =========================
-
-
-
-
 # ✅ [PATCH] app.py — 최상단 import에 공용 링크 생성기 추가
 from modules.linking import resolve_article_url  # ← 추가
 

@@ -1,120 +1,93 @@
-# --- modules/plan_executor.py (PATCH) ---
-# 파일 상단 어느 위치든 한 번만 추가(이미 있다면 생략 가능)
-import logging, time
+# modules/plan_executor.py
+from __future__ import annotations
+from typing import Dict, Any, Tuple
+import re, logging
 
-logger = logging.getLogger("lawbot.deeplink")
-if not logger.handlers:
-    # 라이브러리 성격 고려: 기본 레벨만 설정(앱에서 원하는 레벨로 올리면 됨)
-    logger.setLevel(logging.INFO)
+logger = logging.getLogger("lawbot.plan_executor")
 
-def _dbg(msg: str):
-    """streamlit이 있으면 화면에도, 없으면 로거에만 남깁니다."""
-    try:
-        import streamlit as st  # type: ignore
-        # st.echo/st.write는 앱 레이아웃에 맞춰 사용하세요.
-        st.write("🔎 [deeplink]", msg)
-    except Exception:
-        logger.info(msg)
+# ── helpers ─────────────────────────────────────────────────────────
 
-
-def _scrape_deeplink(law_name: str, article_label: str, timeout: float = 6.0) -> tuple[str, str]:
-    """
-    한글 조문 딥링크 페이지를 스크랩해 '요청 조문'만 잘라낸다.
-    반환: (조문텍스트, 표시링크)
-    - 디버그 로그: URL, 상태코드, HTML 길이, 컨테이너 길이, 슬라이스 길이/성공여부
-    """
-    # 방어 코드: 인자 확인
-    law_name = (law_name or "").strip()
-    article_label = (article_label or "").strip()
-    if not (law_name and article_label):
-        _dbg(f"[skip] 입력 누락 law='{law_name}', article='{article_label}'")
-        return "", ""
-
-    # URL 생성
+def _make_pretty_article_url(law: str, art: str) -> str:
+    """가능하면 linking 모듈을 쓰고, 없으면 한글 경로로 직접 구성."""
     try:
         from .linking import make_pretty_article_url  # type: ignore
+        return make_pretty_article_url(law, art)
     except Exception:
         try:
             from linking import make_pretty_article_url  # type: ignore
+            return make_pretty_article_url(law, art)
         except Exception:
-            make_pretty_article_url = None  # type: ignore
+            return f"https://www.law.go.kr/법령/{law}/{art}"
 
-    if not make_pretty_article_url:
-        _dbg("[error] make_pretty_article_url 미가용")
-        return "", ""
+def _slice_article(full_text: str, article_label: str) -> str:
+    """페이지 전체 텍스트에서 해당 조문 블록만 잘라내기."""
+    label = (article_label or "").strip()
+    if not (full_text and label):
+        return ""
+    # 1차: 표기 그대로
+    m = re.search(rf"({re.escape(label)}[^\n]*\n(?:.+\n)*?)(?=\n제\d+조|\n부칙|\Z)", full_text)
+    if m:
+        return m.group(1).strip()
+    # 2차: 숫자만 추출
+    num = re.sub(r"\D", "", label)
+    if num:
+        m = re.search(rf"(제{num}조(?:의\d+)?[\s\S]*?)(?=\n제\d+조|\n부칙|\Z)", full_text)
+        return (m.group(1) if m else "").strip()
+    return ""
 
-    url = make_pretty_article_url(law_name, article_label)
-    _dbg(f"[request] {url} (timeout={timeout}s)")
-
-    # HTTP 요청
-    t0 = time.time()
+def _scrape_deeplink(law: str, art: str, timeout: float = 6.0) -> Tuple[str, str]:
+    """법제처 한글 주소(딥링크) 페이지를 스크랩해서 해당 조문만 추출."""
+    url = _make_pretty_article_url(law, art)
     try:
         import requests
         from bs4 import BeautifulSoup
-
         r = requests.get(
-            url,
-            timeout=timeout,
-            allow_redirects=True,
+            url, timeout=timeout, allow_redirects=True,
             headers={
-                "User-Agent": "Mozilla/5.0",
-                "Accept": "text/html,application/xhtml+xml",
-                "Accept-Language": "ko-KR,ko;q=0.9",
+                "User-Agent":"Mozilla/5.0",
+                "Accept":"text/html,application/xhtml+xml",
+                "Accept-Language":"ko-KR,ko;q=0.9",
             },
         )
-        dt = (time.time() - t0) * 1000
         html = r.text or ""
-        _dbg(f"[response] status={r.status_code}, bytes≈{len(html)}, elapsed={dt:.1f}ms")
-
-        # 상단 경고 시그널 검사
-        head = html[:4000]
-        bad_signs = ("존재하지 않는 조문", "해당 한글주소명을 찾을 수 없습니다", "접근이 제한되었습니다")
-        if not (200 <= r.status_code < 400):
-            _dbg(f"[error] HTTP status={r.status_code} (링크 표시만 반환)")
-            return "", url
-        if any(sig in head for sig in bad_signs):
-            _dbg(f"[warn] 페이지 경고 감지: {[s for s in bad_signs if s in head]}")
-            return "", url
-
-        # 본문 컨테이너 추출
         soup = BeautifulSoup(html, "lxml")
-        main = (
-            soup.select_one("#contentBody")
-            or soup.select_one("#conBody")
-            or soup.select_one("#conScroll")
-            or soup.select_one(".conScroll")
-            or soup.select_one("#content")
-            or soup
-        )
+        main = (soup.select_one("#contentBody") or soup.select_one("#conBody")
+                or soup.select_one("#conScroll") or soup.select_one(".conScroll")
+                or soup.select_one("#content") or soup)
         full_text = (main.get_text("\n", strip=True) or "").strip()
-        _dbg(f"[parse] container_text_len={len(full_text)}")
-
-        # 조문 블록만 슬라이스
-        try:
-            # 우선 정식 슬라이서 사용
-            from .law_fetch import extract_article_block as _slice_article  # type: ignore
-        except Exception:
-            try:
-                from law_fetch import extract_article_block as _slice_article  # type: ignore
-            except Exception:
-                _slice_article = None  # type: ignore
-
-        piece = ""
-        if _slice_article:
-            piece = _slice_article(full_text, article_label) or ""
-
-        # 보조 정규식 슬라이스
-        if not piece:
-            import re
-            num = re.sub(r"\D", "", article_label)
-            m = re.search(rf"(제{num}조(?:의\d+)?[\s\S]*?)(?=\n제\d+조|\n부칙|\Z)", full_text)
-            piece = (m.group(1) if m else "").strip()
-
-        _dbg(f"[slice] label='{article_label}', piece_len={len(piece)}"
-             + (" ✅" if piece else " ❌"))
-
+        piece = _slice_article(full_text, art)
         return (piece[:4000] if piece else ""), url
-
-    except Exception as e:
-        _dbg(f"[exception] {type(e).__name__}: {e}")
+    except Exception:
+        # 네트워크/파서 문제 시에도 링크만이라도 반환
         return "", url
+
+# ── public API ──────────────────────────────────────────────────────
+
+def execute_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    최소 구현: GET_ARTICLE만 처리.
+    - 한글 조문 딥링크를 스크랩해서 본문을 돌려줍니다.
+    """
+    action = ((plan or {}).get("action") or "").upper()
+    if action != "GET_ARTICLE":
+        return {
+            "type": "noop",
+            "action": action or "QUICK",
+            "message": "only GET_ARTICLE supported in plan_executor",
+        }
+
+    law = (plan.get("law_name") or "").strip()
+    art = (plan.get("article_label") or "").strip()
+
+    body, url = _scrape_deeplink(law, art)
+    return {
+        "type": "article",
+        "law": law,
+        "article_label": art,
+        "title": "",
+        "body_text": body,
+        "clauses": [],
+        "source_url": url,
+    }
+
+__all__ = ["execute_plan"]
