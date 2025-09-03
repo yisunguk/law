@@ -539,8 +539,8 @@ def ask_llm(user_q: str):
         try:
             from modules.law_fetch import fetch_article_via_api_struct  # type: ignore
         except Exception:
-            from law_fetch import fetch_article_via_api_struct  # type: ignore
-
+            from law_fetch import find_mst_by_law_name, fetch_article_block_by_mst, jo_from_art_label
+ 
     # --- 전역에서 환경/힌트 값 확보 ------------------------------------------
     g = globals()
     engine = g.get("engine")
