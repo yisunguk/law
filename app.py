@@ -1,5 +1,5 @@
 # =========================
-# app.py — CLEAN IMPORT HEADER (drop-in)
+# app.py — CLEAN IMPORT HEADER (hardened)
 # =========================
 from __future__ import annotations
 
@@ -7,40 +7,52 @@ from __future__ import annotations
 import os, sys, importlib.util
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MOD_DIR  = os.path.join(BASE_DIR, "modules")
-if BASE_DIR not in sys.path: sys.path.insert(0, BASE_DIR)
-if os.path.isdir(MOD_DIR) and MOD_DIR not in sys.path: sys.path.insert(0, MOD_DIR)
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+if os.path.isdir(MOD_DIR) and MOD_DIR not in sys.path:
+    sys.path.insert(0, MOD_DIR)
 
 # --- Stdlib ---
 import html  # html.escape / html.unescape
 
-# --- Third-party (optional import: allow running w/o Streamlit at import time) ---
+# --- Third-party (optional: allow import w/o Streamlit installed) ---
 try:
     import streamlit as st  # type: ignore
 except Exception:
     st = None  # type: ignore
 
-# --- Loader: plan_executor.execute_plan (package → file fallback) ---
+# --- Loader: plan_executor.execute_plan (package → module → file fallback) ---
 def _load_execute_plan():
-    # 1) package: modules.plan_executor
+    # 1) package import: modules.plan_executor
     try:
         from modules.plan_executor import execute_plan as fn  # type: ignore
         return fn, "modules.plan_executor"
     except Exception:
         pass
-    # 2) file fallback: ./modules/plan_executor.py or ./plan_executor.py
+    # 2) module import: plan_executor  (MOD_DIR가 sys.path에 있을 때)
+    try:
+        from plan_executor import execute_plan as fn  # type: ignore
+        return fn, "plan_executor"
+    except Exception:
+        pass
+    # 3) file fallback: ./modules/plan_executor.py → ./plan_executor.py
     for p in (
         os.path.join(MOD_DIR, "plan_executor.py"),
         os.path.join(BASE_DIR, "plan_executor.py"),
     ):
-        if os.path.exists(p):
-            spec = importlib.util.spec_from_file_location("plan_executor_dyn", p)
-            mod  = importlib.util.module_from_spec(spec)  # type: ignore
-            assert spec and spec.loader
-            spec.loader.exec_module(mod)                  # type: ignore
-            fn = getattr(mod, "execute_plan", None)
-            if callable(fn):
-                return fn, p
-    raise ImportError("execute_plan loader: cannot import from modules.plan_executor or file")
+        if not os.path.exists(p):
+            continue
+        spec = importlib.util.spec_from_file_location("plan_executor_dyn", p)
+        if not spec or not getattr(spec, "loader", None):
+            continue
+        mod = importlib.util.module_from_spec(spec)  # type: ignore
+        spec.loader.exec_module(mod)                 # type: ignore
+        fn = getattr(mod, "execute_plan", None)
+        if callable(fn):
+            return fn, p
+    raise ImportError(
+        "execute_plan loader failed: modules.plan_executor / plan_executor / file path"
+    )
 
 execute_plan, _EXEC_SRC = _load_execute_plan()
 
@@ -50,25 +62,28 @@ try:
 except Exception:
     from legal_modes import Intent, build_sys_for_mode          # type: ignore
 
-# === router plan maker (single global alias; no duplicate import) ===
+# --- Router plan maker (single global alias; no duplicate import) ---
 try:
     from modules.router_llm import make_plan_with_llm as _MAKE_PLAN  # type: ignore
 except Exception:
     try:
         from router_llm import make_plan_with_llm as _MAKE_PLAN       # type: ignore
     except Exception:
-        _MAKE_PLAN = None
+        _MAKE_PLAN = None  # type: ignore
 
-# === 딥링크 생성기 (module → local fallback) ===
+# --- 딥링크 생성기 (module → local fallback) ---
 try:
     from modules.linking import resolve_article_url, make_pretty_article_url  # type: ignore
 except Exception:
     from urllib.parse import quote as _q
     def resolve_article_url(law: str, art_label: str) -> str:
         # ex) https://www.law.go.kr/법령/건설산업기본법/제83조
-        return f"https://www.law.go.kr/법령/{_q((law or '').strip(), safe='')}/{_q((art_label or '').strip(), safe='')}"
+        law_q = _q((law or "").strip(), safe="")
+        art_q = _q((art_label or "").strip(), safe="")
+        return f"https://www.law.go.kr/법령/{law_q}/{art_q}"
     def make_pretty_article_url(law: str, art_label: str) -> str:
         return resolve_article_url(law, art_label)
+
 
 
 # --- secrets → env bridge ---
@@ -397,11 +412,7 @@ def _init_engine_lazy(force: bool = False):
     st.session_state.engine = engine
     return engine
 
-
 DEBUG = st.sidebar.checkbox("DRF 디버그", value=False, key="__debug__")
-
-
-
 
 # ==== DRF 링크/보강 유틸 (모듈 레벨에 한 번만 선언) ====
 import os, re
@@ -477,374 +488,168 @@ def build_drf_link(
     return "https://www.law.go.kr/DRF/lawService.do?" + urlencode(q, doseq=False, encoding="utf-8")
 
 
-# (ask_llm_with_tools 내부) 외부 의존 모듈 안전 임포트 블록 교체
-try:
-    from modules.router_llm import make_plan_with_llm
-except Exception:
-    from router_llm import make_plan_with_llm
-
-
-from typing import Optional, Dict, Any, Generator, List, Tuple
-
-def ask_llm_with_tools(
-    user_q: str,
-    *,
-    forced_mode: Optional[str] = None,
-    brief: bool = False,
-    num_rows: int = 10,
-    stream: bool = True,
-    _client=None,
-    engine=None,
-    AZURE: Optional[Dict[str, Any]] = None,
-) -> Generator[Tuple[str, str, List[Dict[str, Any]]], None, None]:
+def ask_llm(user_q: str):
     """
-    메인 질의 처리기 (generator).
-    - Router → DRF(JSON) or 한글 딥링크 → LLM 답변
-    - '원문/본문/그대로' 요청 시 조문 본문 그대로 반환
-    반환:
-        ("delta", text_piece, law_links[]) ... 0+회 (stream=True일 때)
-        ("final", full_text,  law_links[]) ... 1회
+    LLM 호출(툴콜 지원) + 조문 컨텍스트 주입 + '참고 링크' 보장.
+    - 제너레이터: ("delta"| "final", text, law_links) 를 yield 합니다.
+    - 사용자가 '원문/본문 그대로'를 요청하면 즉시 본문을 반환합니다.
     """
+    # --- 내부/폴백 유틸 -------------------------------------------------------
+    from typing import Any, Dict, List
 
-    # ─────────────────────────────────────────────────────────────
-    # 0) 안전한 클라이언트/엔진 주입
-    # ─────────────────────────────────────────────────────────────
-    def _get_client():
-        try:
-            return globals().get("client") or _client
-        except Exception:
-            return _client
-    if _client is None:
-        _client = _get_client()
-
-    try:
-        if engine is None:
-            engine = _init_engine_lazy()  # 프로젝트 내 지연초기화 유틸
-    except Exception:
-        engine = None
-
-    # ─────────────────────────────────────────────────────────────
-    # 1) 최근 대화 요약/전사 컨텍스트
-    # ─────────────────────────────────────────────────────────────
-    def _safe_recent_transcript() -> str:
-        try:
-            return _to_transcript(_recent_msgs(max_turns=8, max_chars=4000))  # type: ignore
-        except Exception:
-            try:
-                import streamlit as st  # type: ignore
-                raw = st.session_state.get("messages", [])
-            except Exception:
-                raw = []
-            lines: List[str] = []
-            for m in raw:
-                role = m.get("role")
-                if role in ("user", "assistant"):
-                    text = (m.get("content") or "").strip()
-                    if text:
-                        lines.append(f"{role}: {text}")
-            return "\n".join(lines)[-4000:]
-
-    transcript = _safe_recent_transcript()
-    summary = ""
-    try:
-        try:
-            from modules.external_content import _ensure_running_summary, _compose_with_context  # type: ignore
-        except Exception:
-            from external_content import _ensure_running_summary, _compose_with_context  # type: ignore
-    except Exception:
-        _ensure_running_summary = None  # type: ignore
-        _compose_with_context  = None   # type: ignore
-
-    if _ensure_running_summary:
-        try:
-            summary = _ensure_running_summary(_client, transcript) or ""
-        except Exception:
-            summary = ""
-    else:
-        try:
-            import streamlit as st  # type: ignore
-            summary = st.session_state.get("__summary__", "")
-        except Exception:
-            summary = ""
-
-    try:
-        user_ctx = _compose_with_context(user_q, transcript, summary) if _compose_with_context else ""
-    except Exception:
-        user_ctx = f"[이전 대화 요약]\n{summary}\n\n[최근 대화]\n{transcript}\n\n[현재 질문]\n{user_q}"
-    if isinstance(user_ctx, str) and len(user_ctx) > 4500:
-        user_ctx = user_ctx[-4500:]
-
-    # 옵션: 라우터/답변에 컨텍스트 포함 여부 (세션 토글과 연동)
-    use_ctx_router = False
-    use_ctx_answer = True
-    try:
-        import streamlit as st  # type: ignore
-        st.session_state.setdefault("__ctx_router__", False)
-        st.session_state.setdefault("__ctx_answer__", True)
-        use_ctx_router = st.session_state.get("__ctx_router__", False)
-        use_ctx_answer = st.session_state.get("__ctx_answer__", True)
-    except Exception:
-        pass
-
-    router_input = (user_ctx if use_ctx_router else user_q) or user_q
-
-    # ─────────────────────────────────────────────────────────────
-    # 2) 의도/모드 판별 & 시스템 프롬프트
-    # ─────────────────────────────────────────────────────────────
-    try:
-        try:
-            from modules.legal_modes import classify_intent, Intent, build_sys_for_mode  # type: ignore
-        except Exception:
-            from legal_modes import classify_intent, Intent, build_sys_for_mode  # type: ignore
-        det_intent, _conf = classify_intent(user_q)
-        values = {m.value for m in Intent}
-        mode = Intent(forced_mode) if (forced_mode in values) else det_intent
-        system_prompt = build_sys_for_mode(mode, brief=brief)
-    except Exception:
-        mode = "ADVICE"
-        system_prompt = "당신은 한국 법령을 근거로 설명하는 법률 상담 보조사입니다. 질문에 대해 해당 법령 조문을 근거로 친절히 설명하세요."
-
-    # ─────────────────────────────────────────────────────────────
-    # 3) Router plan 작성  ← 전체 교체(안전한 router_model 준비 → URL/LLM/정규식 순)
-    # ─────────────────────────────────────────────────────────────
-    plan: Dict[str, Any] = {}
-
-    # (1) 라우터 모델 안전 준비
-    try:
-        import streamlit as st  # type: ignore
-        router_model = (st.secrets.get("azure_openai", {}) or {}).get("router_deployment")
-    except Exception:
-        router_model = None
-
-    # (2) 사용자가 law.go.kr 한글주소(법령/조문)를 직접 넣었으면 즉시 사용
-    import re as _re
-    from urllib.parse import unquote as _unq
-    _HANGUL_LAW_URL = _re.compile(
-        r'https?://(?:www\.)?law\.go\.kr/법령/(?P<law>[^/\s]+)/(?P<art>제\d{1,4}조(?:의\d{1,3})?)'
-    )
-    m_url = _HANGUL_LAW_URL.search(user_q or "")
-    if m_url:
-        law_hint = _unq(m_url.group("law")).strip()
-        art_hint = _unq(m_url.group("art")).strip()
-        plan = {"action": "GET_ARTICLE", "law_name": law_hint, "article_label": art_hint}
-
-    # (3) 아니면 LLM 플래너 1회만 호출 (전역 별칭 사용)
-    elif globals().get("_MAKE_PLAN"):
-        try:
-            plan = globals()["_MAKE_PLAN"](_client, router_input, model=router_model) or {}
-        except Exception:
-            plan = {}
-
-    # (4) 최후 폴백: 정규식으로 법령명/조문 라벨 추출
-    if not plan:
-        m = _re.search(r"([가-힣A-Za-z0-9\(\)·\s]{2,})\s*(제?\s*\d{1,4}\s*조(?:의\s*\d{1,3})?)", user_q or "")
-        name = (m.group(1) or "").strip() if m else ""
-        art  = (m.group(2) or "").strip() if m else ""
-        plan = {"action": "GET_ARTICLE", "law_name": name, "article_label": art}
-
-    # ─────────────────────────────────────────────────────────────
-    # 4) 플랜 보강: MST/JO/efYd 자동 채움
-    # ─────────────────────────────────────────────────────────────
-    law_hint = (plan.get("law_name") or "").strip()
-    art_hint = (plan.get("article_label") or "").strip()
-    mst_hint = (plan.get("mst") or "").strip()
-    ef_hint  = (plan.get("efYd") or plan.get("eff_date") or "").replace("-", "").strip()
-
-    # 4-1) 공공데이터포털 목록 API로 MST 보강
-    if (not mst_hint) and law_hint:
-        try:
-            items, _, _ = _call_moleg_list("law", law_hint, num_rows=1)  # type: ignore
-            if items:
-                mst_hint = (items[0].get("법령일련번호") or items[0].get("법령ID") or items[0].get("MST") or "").strip()
-        except Exception:
-            pass
-
-    # 4-2) JO(6자리) 보강
-    if art_hint and not plan.get("jo"):
-        try:
-            try:
-                from modules.law_fetch import jo_from_art_label as _jo  # type: ignore
-            except Exception:
-                from law_fetch import jo_from_art_label as _jo  # type: ignore
-            jo_hint = _jo(art_hint) or ""
-            if jo_hint:
-                plan["jo"] = jo_hint
-        except Exception:
-            pass
-
-    if mst_hint: plan["mst"] = mst_hint
-    if ef_hint:  plan["efYd"] = ef_hint
-
-    # ─────────────────────────────────────────────────────────────
-    # 5) '원문 그대로' 요청 여부 판단 + 본문 미리 확보
-    # ─────────────────────────────────────────────────────────────
-    _VERBATIM_PAT = _re.compile(
-        r"(원문|본문|전문)\s*(보여|출력|줘|보여줘|보여주)|조문\s*(그대로|원문)|그대로\s*(보내|출력)",
-        _re.I,
-    )
-    def wants_verbatim(text: str) -> bool:
-        return bool(_VERBATIM_PAT.search((text or "").strip()))
-
-    fetched_block: str = ""
-    fetched_link: str  = ""
-    if mst_hint or (law_hint and art_hint):
-        try:
-            # 1순위: MST가 있으면 DRF(JSON 우선)
-            if mst_hint:
-                try:
-                    try:
-                        from modules.law_fetch import fetch_article_block_by_mst  # type: ignore
-                    except Exception:
-                        from law_fetch import fetch_article_block_by_mst  # type: ignore
-                    block, drf_link = fetch_article_block_by_mst(
-                        mst_hint, art_hint or None, prefer="JSON", efYd=ef_hint or None, timeout=10.0
-                    )
-                    fetched_block, fetched_link = (block or ""), (drf_link or "")
-                except Exception:
-                    fetched_block, fetched_link = "", ""
-            # 2순위: 한글 딥링크 스크랩
-            if not fetched_block and law_hint and art_hint:
-                try:
-                    try:
-                        from modules.linking import make_pretty_article_url  # type: ignore
-                    except Exception:
-                        from linking import make_pretty_article_url          # type: ignore
-                    url = make_pretty_article_url(law_hint, art_hint)
-                    import requests
-                    from bs4 import BeautifulSoup  # type: ignore
-                    r = requests.get(url, timeout=6.0, allow_redirects=True, headers={"User-Agent":"Mozilla/5.0"})
-                    html = r.text or ""
-                    soup = BeautifulSoup(html, "lxml")
-                    main = (soup.select_one("#contentBody") or soup.select_one("#conBody") or
-                            soup.select_one("#conScroll") or soup.select_one(".conScroll") or
-                            soup.select_one("#content") or soup)
-                    txt = main.get_text("\n", strip=True)
-                    m2 = _re.search(r"(제\s*\d{1,4}\s*조(?:\s*의\s*\d{1,3})?.*?)(?=\n제\s*\d{1,4}\s*조|\n부칙|\Z)", txt, _re.S)
-                    fetched_block = (m2.group(1).strip() if m2 else "").strip()
-                    fetched_link = url
-                except Exception:
-                    fetched_block, fetched_link = "", ""
-        except Exception:
-            fetched_block, fetched_link = "", ""
-
-    # (바로 원문 요청이라면) 즉시 반환
-    if wants_verbatim(user_q):
-        law_links: List[Dict[str, Any]] = []
-        deeplink = ""
+    def _resolve_article_url(law: str, art: str) -> str:
         try:
             try:
                 from modules.linking import resolve_article_url  # type: ignore
             except Exception:
                 from linking import resolve_article_url  # type: ignore
-            if law_hint and art_hint:
-                deeplink = resolve_article_url(law_hint, art_hint)
+            return resolve_article_url(law, art)
         except Exception:
-            deeplink = fetched_link or ""
+            return ""
 
+    # wants_verbatim()이 없다면 최소 버전 폴백
+    try:
+        wants_verbatim  # type: ignore  # noqa: F821
+    except Exception:
+        import re
+
+        def wants_verbatim(text: str) -> bool:  # type: ignore
+            if not text:
+                return False
+            raw = str(text)
+            has_article = bool(re.search(r"제\s*\d+\s*조(?:\s*의\s*\d+)?", raw))
+            strong = any(k in raw for k in ["원문", "본문", "전문", "그대로", "全文", "原文", "verbatim"])
+            weak = any(k in raw.lower() for k in ["보여줘", "show", "print", "display"])
+            return has_article and (strong or weak)
+
+    # render_article_context_for_llm(), fetch_article_via_api_struct() 로드
+    try:
+        render_article_context_for_llm  # type: ignore  # noqa: F821
+    except Exception:
+        def render_article_context_for_llm(bundle: Dict[str, Any]) -> str:  # type: ignore
+            title = (bundle or {}).get("title", "")
+            art = (bundle or {}).get("article_label", "")
+            body = (bundle or {}).get("body_text", "") or ""
+            head = " / ".join([x for x in [title, art] if x])
+            return (f"{head}\n[본문]\n{body}".strip() if body else "")
+
+    try:
+        fetch_article_via_api_struct  # type: ignore  # noqa: F821
+    except Exception:
+        try:
+            from modules.law_fetch import fetch_article_via_api_struct  # type: ignore
+        except Exception:
+            from law_fetch import fetch_article_via_api_struct  # type: ignore
+
+    # --- 전역에서 환경/힌트 값 확보 ------------------------------------------
+    g = globals()
+    engine = g.get("engine")
+    try:
+        if engine is None and "_init_engine_lazy" in g:
+            engine = g["_init_engine_lazy"](False)  # 가능한 경우 지연 초기화
+    except Exception:
+        pass
+
+    system_prompt = str(g.get("system_prompt") or g.get("SYSTEM_PROMPT") or "")
+    mode = str(g.get("mode") or "CHAT")
+    num_rows = int(g.get("num_rows") or 5)
+    stream = bool(g.get("stream") if g.get("stream") is not None else True)
+
+    use_ctx_answer = bool(g.get("use_ctx_answer") if g.get("use_ctx_answer") is not None else True)
+    user_ctx = str(g.get("user_ctx") or "")
+
+    law_hint = str(g.get("law_hint") or "")
+    art_hint = str(g.get("art_hint") or "")
+    mst_hint = str(g.get("mst_hint") or "")
+    ef_hint = str(g.get("ef_hint") or "")
+
+    fetched_block = str(g.get("fetched_block") or "")
+    fetched_link = str(g.get("fetched_link") or "")
+
+    # --- 0) '원문 그대로' 요청이면 즉시 반환 -----------------------------------
+    if wants_verbatim(user_q):
+        deeplink = _resolve_article_url(law_hint, art_hint) if (law_hint and art_hint) else (fetched_link or "")
+        law_links: List[Dict[str, Any]] = []
         if deeplink:
             law_links.append({
                 "title": f"{law_hint} {art_hint}".strip(),
                 "법령명": law_hint, "법령명한글": law_hint,
                 "법령상세링크": deeplink, "url": deeplink
             })
-
-        text = fetched_block or "(조문 본문을 찾지 못했습니다.)"
+        text = fetched_block or "(조문 본문을 아직 확보하지 못했습니다.)"
         yield ("final", text, law_links)
         return
 
-    # ─────────────────────────────────────────────────────────────
-    # 6) 일반 케이스: LLM 엔진 호출 (툴 허용)
-    # ─────────────────────────────────────────────────────────────
-    allow_tools = True
+    # --- 1) 시스템 프롬프트 구성 ---------------------------------------------
+    allow_tools = True  # 현재 모드는 모두 허용
     try:
-        if str(mode).upper() in {"FREE", "CHAT"}:
+        if mode.upper() in {"FREE", "CHAT"}:
             allow_tools = True
     except Exception:
         allow_tools = True
 
-    if use_ctx_answer and isinstance(user_ctx, str) and user_ctx.strip():
+    if use_ctx_answer and user_ctx.strip():
         system_prompt = f"{system_prompt}\n\n[대화 컨텍스트]\n{user_ctx}"
 
-    if engine is not None:
-        # === [ADD] app.py : 조문 컨텍스트 주입 ===
-        law_ctx = ""
-    try:
-        bundle, _used = fetch_article_via_api_struct(
-        law_hint, art_hint, mst=(mst_hint or None), efYd=(ef_hint or None)
-    )
-        law_ctx = render_article_context_for_llm(bundle)
-    except Exception:
-        if fetched_block:
-            law_ctx = f"법령명: {law_hint}\n조문: {art_hint}\n[본문]\n{fetched_block}"
+    # 조문 컨텍스트 준비
+    law_ctx = ""
+    if law_hint and art_hint:
+        try:
+            bundle, _used = fetch_article_via_api_struct(
+                law_hint, art_hint, mst=(mst_hint or None), efYd=(ef_hint or None)
+            )
+            law_ctx = render_article_context_for_llm(bundle)
+        except Exception:
+            if fetched_block:
+                law_ctx = f"법령명: {law_hint}\n조문: {art_hint}\n[본문]\n{fetched_block}"
 
     if law_ctx:
         system_prompt = f"{system_prompt}\n\n[조문 컨텍스트]\n{law_ctx}"
 
-        try:
-            for kind, payload, law_list in engine.generate(
-                user_q,
-                system_prompt=system_prompt,
-                allow_tools=allow_tools,
-                num_rows=num_rows,
-                stream=stream,
-                primer_enable=True,
-            ):
-                if kind == "final":
-                    # 참고 딥링크 1개라도 보장 + 호환 키 동시 제공
-                    try:
-                        try:
-                            from modules.linking import resolve_article_url  # type: ignore
-                        except Exception:
-                            from linking import resolve_article_url  # type: ignore
-                        if law_hint and art_hint:
-                            url = resolve_article_url(law_hint, art_hint)
-                            if url:
-                                if not law_list:
-                                    law_list = []
-                                law_list.append({
-                                    "title": f"{law_hint} {art_hint}".strip(),
-                                    "법령명": law_hint, "법령명한글": law_hint,
-                                    "법령상세링크": url, "url": url
-                                })
-                    except Exception:
-                        pass
-                yield (kind, payload, law_list or [])
-            return
-        except Exception:
-            pass  # 엔진 실패 → 폴백
-
-    # ─────────────────────────────────────────────────────────────
-    # 7) 최후 폴백: 조문 블록 + 간단 설명
-    # ─────────────────────────────────────────────────────────────
-    answer = ""
-    if fetched_block:
-        answer = f"{fetched_block}\n\n— 위 조문을 근거로 사용자 질문에 적용하여 설명해 주세요."
-    else:
-        answer = "관련 법령 본문을 자동으로 찾지 못했습니다. 법령명과 조문을 다시 알려주시면 본문을 찾아 설명드릴게요."
-
-    law_links: List[Dict[str, Any]] = []
-    try:
-        try:
-            from modules.linking import resolve_article_url  # type: ignore
-        except Exception:
-            from linking import resolve_article_url  # type: ignore
-        if law_hint and art_hint:
-            url = resolve_article_url(law_hint, art_hint)
-            if url:
-                law_links.append({
-                    "title": f"{law_hint} {art_hint}".strip(),
-                    "법령명": law_hint, "법령명한글": law_hint,
-                    "법령상세링크": url, "url": url
-                })
-    except Exception:
-        if fetched_link:
+    # --- 2) 엔진이 없으면 폴백 반환 -------------------------------------------
+    if engine is None:
+        law_links: List[Dict[str, Any]] = []
+        url = _resolve_article_url(law_hint, art_hint) if (law_hint and art_hint) else ""
+        if url:
             law_links.append({
                 "title": f"{law_hint} {art_hint}".strip(),
                 "법령명": law_hint, "법령명한글": law_hint,
-                "법령상세링크": fetched_link, "url": fetched_link
+                "법령상세링크": url, "url": url
             })
+        if fetched_block:
+            text = f"{fetched_block}\n\n─ 위 조문을 근거로 사용자의 질문에 적용해 설명해 드렸습니다."
+        else:
+            text = ("엔진 초기화가 되지 않아 자동 답변을 생성하지 못했습니다.\n"
+                    "가능하시면 법령명과 조문을 알려 주시면 본문을 찾아 설명드릴게요.")
+        yield ("final", text, law_links)
+        return
 
-    yield ("final", answer, law_links)
+    # --- 3) 실제 LLM 호출 -----------------------------------------------------
+    for kind, payload, law_list in engine.generate(
+        user_q,
+        system_prompt=system_prompt,
+        allow_tools=allow_tools,
+        num_rows=num_rows,
+        stream=stream,
+        primer_enable=True,
+    ):
+        if kind == "final":
+            # 최소 1개의 조문 링크는 보장
+            try:
+                if law_hint and art_hint:
+                    url = _resolve_article_url(law_hint, art_hint)
+                    if url:
+                        if not law_list:
+                            law_list = []
+                        law_list.append({
+                            "title": f"{law_hint} {art_hint}".strip(),
+                            "법령명": law_hint, "법령명한글": law_hint,
+                            "법령상세링크": url, "url": url
+                        })
+            except Exception:
+                pass
+        yield (kind, payload, law_list)
+
     return
 
 def _esc(s: str) -> str:
@@ -3511,11 +3316,11 @@ TOOLS = [
                 "properties": {
                     "target": {"type": "string", "enum": SUPPORTED_TARGETS},
                     "query": {"type": "string"},
-                    "num_rows": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
+                    "num_rows": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5}
                 },
-                "required": ["target", "query"],
-            },
-        },
+                "required": ["target", "query"]
+            }
+        }
     },
     {
         "type": "function",
@@ -3531,35 +3336,37 @@ TOOLS = [
                             "type": "object",
                             "properties": {
                                 "target": {"type": "string", "enum": SUPPORTED_TARGETS},
-                                "query": {"type": "string"},
+                                "query": {"type": "string"}
                             },
-                            "required": ["target", "query"],
-                        },
+                            "required": ["target", "query"]
+                        }
                     },
-                    "num_rows": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
+                    "num_rows": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5}
                 },
-                "required": ["queries"],
-            },
-        },
+                "required": ["queries"]
+            }
+        }
     },
+    # ↓↓↓ 새로 추가되는 툴: 조문 원문을 LLM이 직접 가져오게 해줍니다.
     {
         "type": "function",
         "function": {
             "name": "get_article",
-            "description": "법령명과 조문 라벨(예: 제83조)을 받아 해당 조문 본문과 메타를 반환한다.",
+            "description": "법령명과 조문 라벨(예: '제83조')로 해당 조문의 본문을 가져온다. DRF(JSON)→딥링크 순으로 시도.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "law": {"type": "string"},
-                    "article_label": {"type": "string"},
-                    "mst": {"type": "string"},
-                    "efYd": {"type": "string"},
+                    "law": {"type": "string", "description": "법령명(예: 건설산업기본법)"},
+                    "article_label": {"type": "string", "description": "조문 라벨(예: 제83조, 제83조의2)"},
+                    "mst": {"type": "string", "description": "선택: 법령일련번호(MST)"},
+                    "efYd": {"type": "string", "description": "선택: 시행일자(YYYYMMDD)"}
                 },
-                "required": ["law", "article_label"],
-            },
-        },
-    },
+                "required": ["law", "article_label"]
+            }
+        }
+    }
 ]
+
 
 
 # === [ADD] app.py : 조문 본문을 직접 가져오는 툴 ===
