@@ -558,6 +558,13 @@ def ask_llm_with_tools(
         # 폴백: 간단 시스템 프롬프트
         mode = "ADVICE"
         system_prompt = "당신은 한국 법령을 근거로 설명하는 법률 상담 보조사입니다. 질문에 대해 해당 법령 조문을 근거로 친절히 설명하세요."
+    # (예: ask_llm_with_tools 내부, 3) Router plan 작성 직전)
+    hint = _pick_law_art_from_text(user_q)
+    if hint:
+        law_hint, art_hint = hint
+        plan = {"action":"GET_ARTICLE","law_name":law_hint,"article_label":art_hint}
+    else:
+        plan = make_plan_with_llm(_client, router_input, model=router_model) or {}
 
     # ─────────────────────────────────────────────────────────────
     # 3) Router plan 작성
@@ -1509,19 +1516,11 @@ def enforce_memo_template(md: str) -> str:
 _SEC_CORE_TITLE = _re_memo.compile(r'(?mi)^\s*3\s*[\.\)]\s*핵심\s*판단\s*$', _re_memo.M)
 _SEC_NEXT_TITLE2 = _re_memo.compile(r'(?m)^\s*\d+\s*[\.\)]\s+')
 
+# === keep links in '핵심 판단' ===
 def strip_links_in_core_judgment(md: str) -> str:
-    if not md:
-        return md
-    m = _SEC_CORE_TITLE.search(md)
-    if not m:
-        return md
-    start = m.end()
-    n = _SEC_NEXT_TITLE2.search(md, start)
-    end = n.start() if n else len(md)
-    block = md[start:end]
-    # [텍스트](http...) 형태의 링크 제거
-    block = _re_memo.sub(r'\[([^\]]+)\]\((?:https?:\/\/)[^)]+\)', r'\1', block)
-    return md[:start] + block + md[end:]
+    # 링크를 제거하지 않고 그대로 두기
+    return md
+
 # === [END NEW] ===
 
 
@@ -2999,6 +2998,41 @@ def _rel_score(user_q: str, item_name: str, plan_q: str) -> int:
 _LAWISH_RE = re.compile(r"(법|령|규칙|조례|법률)|제\d+조")
 def _lawish(q: str) -> bool:
     return bool(_LAWISH_RE.search(q or ""))
+
+# === add: 법령명 시드 함수 (LLM→규칙 폴백) ===
+@st.cache_data(show_spinner=False, ttl=300)
+def choose_law_queries_llm_first(q: str) -> list[str]:
+    # 1순위: 이미 있는 추출기 재사용
+    try:
+        names = extract_law_candidates_llm(q) or []
+    except Exception:
+        names = []
+    # 폴백: “법/령/규칙/조례 + (제n조)” 정규식으로 법령명만 추출
+    if not names:
+        import re
+        m = re.search(r'([가-힣A-Za-z0-9·()\s]{2,40}?(?:법|령|규칙|조례))', q or '')
+        if m: names = [m.group(1).strip()]
+    # 중복/길이 정리
+    seen, out = set(), []
+    for nm in names:
+        nm = nm[:40]
+        if nm and nm not in seen:
+            seen.add(nm); out.append(nm)
+    return out[:4]
+
+# === add: 한글주소(법령/조문) 파싱 유틸 ===
+_HANGUL_LAW_URL = re.compile(r'https?://(?:www\.)?law\.go\.kr/법령/(?P<law>[^/\s]+)/(?P<art>제\d{1,4}조(?:의\d{1,3})?)')
+
+def _pick_law_art_from_text(text: str) -> tuple[str,str] | None:
+    m = _HANGUL_LAW_URL.search(text or '')
+    if m:
+        # URL 디코딩
+        from urllib.parse import unquote
+        law = unquote(m.group('law')).strip()
+        art = unquote(m.group('art')).strip()
+        return law, art
+    return None
+
 
 def find_all_law_data(
     query: str,
