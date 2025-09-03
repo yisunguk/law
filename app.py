@@ -1,27 +1,24 @@
 from __future__ import annotations
 
-# --- app.py (very top) ---
+# --- app.py (top) ---
 import os, sys
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MOD_DIR  = os.path.join(BASE_DIR, "modules")
 
-# 실행환경에 따라 현재 디렉토리 / modules 디렉토리를 sys.path에 보장
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
-if os.path.isdir(MOD_DIR) and MOD_DIR not in sys.path:
-    sys.path.insert(0, MOD_DIR)
+# sys.path 보강
+if BASE_DIR not in sys.path: sys.path.insert(0, BASE_DIR)
+if os.path.isdir(MOD_DIR) and MOD_DIR not in sys.path: sys.path.insert(0, MOD_DIR)
 
-# 안전 임포트: 패키지/단일파일 양쪽 모두 대응
+# 안전 임포트 (패키지 → 단일 파일 순)
 try:
-    from modules.plan_executor import execute_plan  # 정상 패키지 구조
+    from modules.plan_executor import execute_plan  # modules 패키지
 except Exception:
-    from plan_executor import execute_plan          # 단일 파일 배치
+    from plan_executor import execute_plan          # 동일 폴더 단일 파일
+
 import streamlit as st
 from html import unescape
 from modules.legal_modes import Intent, build_sys_for_mode 
 from modules.router_llm import make_plan_with_llm
-from modules.plan_executor import execute_plan
 import html  # ← 추가: _esc()에서 html.escape 사용
 # === secrets → env bridge (put near top of app.py) ===
 import os
