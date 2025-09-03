@@ -1,22 +1,47 @@
+# =========================
+# app.py — CLEAN IMPORT HEADER (paste this at very top, replace existing header)
+# =========================
+from __future__ import annotations
+
 # --- Path bootstrap ---
-import os, sys
+import os, sys, importlib.util, types
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MOD_DIR  = os.path.join(BASE_DIR, "modules")
 if BASE_DIR not in sys.path: sys.path.insert(0, BASE_DIR)
 if os.path.isdir(MOD_DIR) and MOD_DIR not in sys.path: sys.path.insert(0, MOD_DIR)
 
 # --- Stdlib ---
-import html
+import html  # use html.escape / html.unescape
 
 # --- Third-party ---
 import streamlit as st
 
-# --- Local (safe import: package → local fallback) ---
-try:
-    from modules.plan_executor import execute_plan
-except Exception:
-    from plan_executor import execute_plan
+# --- Loader: plan_executor.execute_plan (package → file fallback) ---
+def _load_execute_plan():
+    # 1) packages: modules.plan_executor
+    try:
+        from modules.plan_executor import execute_plan as fn
+        return fn, "modules.plan_executor"
+    except Exception:
+        pass
+    # 2) file fallback: ./modules/plan_executor.py → dynamic load
+    for p in (
+        os.path.join(MOD_DIR, "plan_executor.py"),
+        os.path.join(BASE_DIR, "plan_executor.py"),
+    ):
+        if os.path.exists(p):
+            spec = importlib.util.spec_from_file_location("plan_executor_dyn", p)
+            mod  = importlib.util.module_from_spec(spec)  # type: ignore
+            assert spec and spec.loader
+            spec.loader.exec_module(mod)                  # type: ignore
+            fn = getattr(mod, "execute_plan", None)
+            if callable(fn):
+                return fn, p
+    raise ImportError("execute_plan loader: cannot import from modules.plan_executor or file")
 
+execute_plan, _EXEC_SRC = _load_execute_plan()
+
+# --- Other local imports (package → simple fallback) ---
 try:
     from modules.legal_modes import Intent, build_sys_for_mode
 except Exception:
@@ -32,7 +57,6 @@ try:
 except Exception:
     from linking import resolve_article_url, make_pretty_article_url
 
-
 # --- secrets → env bridge ---
 try:
     _oc  = str(st.secrets.get("LAW_API_OC",  "")).strip()
@@ -42,6 +66,10 @@ try:
     AZURE = st.secrets.get("azure_openai", {})
 except Exception:
     AZURE = {}
+# =========================
+# END CLEAN IMPORT HEADER
+# =========================
+
 
 
 
