@@ -461,12 +461,12 @@ def ask_llm_with_tools(
     """
     메인 질의 처리기 (generator).
     - Router → DRF(JSON) or 한글 딥링크 → LLM 답변
-    - 공공데이터포털 목록 API(법령명→MST)와 JO(조문6자리) 자동 보강
     - '원문/본문/그대로' 요청 시 조문 본문 그대로 반환
     반환:
         ("delta", text_piece, law_links[]) ... 0+회 (stream=True일 때)
         ("final", full_text,  law_links[]) ... 1회
     """
+
     # ─────────────────────────────────────────────────────────────
     # 0) 안전한 클라이언트/엔진 주입
     # ─────────────────────────────────────────────────────────────
@@ -480,8 +480,7 @@ def ask_llm_with_tools(
 
     try:
         if engine is None:
-            # 프로젝트에 존재하는 지연 초기화 유틸
-            engine = _init_engine_lazy()  # type: ignore
+            engine = _init_engine_lazy()  # 프로젝트 내 지연초기화 유틸
     except Exception:
         engine = None
 
@@ -492,7 +491,6 @@ def ask_llm_with_tools(
         try:
             return _to_transcript(_recent_msgs(max_turns=8, max_chars=4000))  # type: ignore
         except Exception:
-            # Streamlit 세션 폴백
             try:
                 import streamlit as st  # type: ignore
                 raw = st.session_state.get("messages", [])
@@ -510,7 +508,6 @@ def ask_llm_with_tools(
     transcript = _safe_recent_transcript()
     summary = ""
     try:
-        # (선택) 외부 컨텍스트 합성 유틸
         try:
             from modules.external_content import _ensure_running_summary, _compose_with_context  # type: ignore
         except Exception:
@@ -521,7 +518,7 @@ def ask_llm_with_tools(
 
     if _ensure_running_summary:
         try:
-            summary = _ensure_running_summary() or ""
+            summary = _ensure_running_summary(_client, transcript) or ""
         except Exception:
             summary = ""
     else:
@@ -565,33 +562,15 @@ def ask_llm_with_tools(
         mode = Intent(forced_mode) if (forced_mode in values) else det_intent
         system_prompt = build_sys_for_mode(mode, brief=brief)
     except Exception:
-        # 폴백: 간단 시스템 프롬프트
         mode = "ADVICE"
         system_prompt = "당신은 한국 법령을 근거로 설명하는 법률 상담 보조사입니다. 질문에 대해 해당 법령 조문을 근거로 친절히 설명하세요."
-    # (예: ask_llm_with_tools 내부, 3) Router plan 작성 직전)
-    hint = _pick_law_art_from_text(user_q)
-    if hint:
-        law_hint, art_hint = hint
-        plan = {"action":"GET_ARTICLE","law_name":law_hint,"article_label":art_hint}
-    else:
-        plan = (_MAKE_PLAN and _MAKE_PLAN(_client, router_input, model=router_model)) or {}
 
-    import re, urllib.parse
-    _HANGUL_LAW_URL = re.compile(r'https?://(?:www\.)?law\.go\.kr/법령/(?P<law>[^/\s]+)/(?P<art>제\d{1,4}조(?:의\d{1,3})?)')
-    m = _HANGUL_LAW_URL.search(user_q or '')
-    if m:
-        law_hint = urllib.parse.unquote(m.group('law')).strip()
-        art_hint = urllib.parse.unquote(m.group('art')).strip()
-        plan = {"action":"GET_ARTICLE","law_name":law_hint,"article_label":art_hint}
-    else:
-        plan = (_MAKE_PLAN and _MAKE_PLAN(_client, router_input, model=router_model)) or {}
-
-        # ─────────────────────────────────────────────────────────────
-    # 3) Router plan 작성  ← 이 블록 전체 교체
     # ─────────────────────────────────────────────────────────────
-    plan = {}
+    # 3) Router plan 작성  ← 전체 교체(안전한 router_model 준비 → URL/LLM/정규식 순)
+    # ─────────────────────────────────────────────────────────────
+    plan: Dict[str, Any] = {}
 
-    # (1) 라우터 모델을 먼저 안전하게 준비 (미정의 오류 방지)
+    # (1) 라우터 모델 안전 준비
     try:
         import streamlit as st  # type: ignore
         router_model = (st.secrets.get("azure_openai", {}) or {}).get("router_deployment")
@@ -624,9 +603,8 @@ def ask_llm_with_tools(
         art  = (m.group(2) or "").strip() if m else ""
         plan = {"action": "GET_ARTICLE", "law_name": name, "article_label": art}
 
-
     # ─────────────────────────────────────────────────────────────
-    # 4) 플랜 보강: MST/JO 자동 채움 (공공데이터포털 + 로컬 변환)
+    # 4) 플랜 보강: MST/JO/efYd 자동 채움
     # ─────────────────────────────────────────────────────────────
     law_hint = (plan.get("law_name") or "").strip()
     art_hint = (plan.get("article_label") or "").strip()
@@ -659,9 +637,8 @@ def ask_llm_with_tools(
     if ef_hint:  plan["efYd"] = ef_hint
 
     # ─────────────────────────────────────────────────────────────
-    # 5) '원문 그대로' 요청 여부 판단
+    # 5) '원문 그대로' 요청 여부 판단 + 본문 미리 확보
     # ─────────────────────────────────────────────────────────────
-    import re as _re
     _VERBATIM_PAT = _re.compile(
         r"(원문|본문|전문)\s*(보여|출력|줘|보여줘|보여주)|조문\s*(그대로|원문)|그대로\s*(보내|출력)",
         _re.I,
@@ -669,7 +646,6 @@ def ask_llm_with_tools(
     def wants_verbatim(text: str) -> bool:
         return bool(_VERBATIM_PAT.search((text or "").strip()))
 
-    # 조문 본문 미리 확보 (원문요청/폴백 대비)
     fetched_block: str = ""
     fetched_link: str  = ""
     if mst_hint or (law_hint and art_hint):
@@ -681,11 +657,13 @@ def ask_llm_with_tools(
                         from modules.law_fetch import fetch_article_block_by_mst  # type: ignore
                     except Exception:
                         from law_fetch import fetch_article_block_by_mst  # type: ignore
-                    block, drf_link = fetch_article_block_by_mst(mst_hint, art_hint or None, prefer="JSON", efYd=ef_hint or None, timeout=10.0)
+                    block, drf_link = fetch_article_block_by_mst(
+                        mst_hint, art_hint or None, prefer="JSON", efYd=ef_hint or None, timeout=10.0
+                    )
                     fetched_block, fetched_link = (block or ""), (drf_link or "")
                 except Exception:
                     fetched_block, fetched_link = "", ""
-            # 2순위: 한글 딥링크 페이지 스크랩
+            # 2순위: 한글 딥링크 스크랩
             if not fetched_block and law_hint and art_hint:
                 try:
                     try:
@@ -702,19 +680,17 @@ def ask_llm_with_tools(
                             soup.select_one("#conScroll") or soup.select_one(".conScroll") or
                             soup.select_one("#content") or soup)
                     txt = main.get_text("\n", strip=True)
-                    # 단순 슬라이스
-                    m = _re.search(r"(제\s*\d{1,4}\s*조(?:\s*의\s*\d{1,3})?.*?)(?=\n제\s*\d{1,4}\s*조|\n부칙|\Z)", txt, _re.S)
-                    fetched_block = (m.group(1).strip() if m else "").strip()
+                    m2 = _re.search(r"(제\s*\d{1,4}\s*조(?:\s*의\s*\d{1,3})?.*?)(?=\n제\s*\d{1,4}\s*조|\n부칙|\Z)", txt, _re.S)
+                    fetched_block = (m2.group(1).strip() if m2 else "").strip()
                     fetched_link = url
                 except Exception:
                     fetched_block, fetched_link = "", ""
         except Exception:
             fetched_block, fetched_link = "", ""
 
-    # 원문 그대로 요청이면 즉시 반환
+    # (바로 원문 요청이라면) 즉시 반환
     if wants_verbatim(user_q):
         law_links: List[Dict[str, Any]] = []
-        # 딥링크(예쁘게)도 같이 제공
         deeplink = ""
         try:
             try:
@@ -727,7 +703,11 @@ def ask_llm_with_tools(
             deeplink = fetched_link or ""
 
         if deeplink:
-            law_links.append({"title": f"{law_hint} {art_hint}".strip(), "url": deeplink})
+            law_links.append({
+                "title": f"{law_hint} {art_hint}".strip(),
+                "법령명": law_hint, "법령명한글": law_hint,
+                "법령상세링크": deeplink, "url": deeplink
+            })
 
         text = fetched_block or "(조문 본문을 찾지 못했습니다.)"
         yield ("final", text, law_links)
@@ -736,19 +716,16 @@ def ask_llm_with_tools(
     # ─────────────────────────────────────────────────────────────
     # 6) 일반 케이스: LLM 엔진 호출 (툴 허용)
     # ─────────────────────────────────────────────────────────────
-    allow_tools = True  # 기본값
+    allow_tools = True
     try:
-        # 일부 모드에서는 도구 비활성화할 수 있음 (예: 단순 Q&A)
         if str(mode).upper() in {"FREE", "CHAT"}:
             allow_tools = True
     except Exception:
         allow_tools = True
 
-    # 시스템 프롬프트에 컨텍스트 포함 여부
     if use_ctx_answer and isinstance(user_ctx, str) and user_ctx.strip():
         system_prompt = f"{system_prompt}\n\n[대화 컨텍스트]\n{user_ctx}"
 
-    # LLM 스트리밍 호출
     if engine is not None:
         try:
             for kind, payload, law_list in engine.generate(
@@ -759,9 +736,8 @@ def ask_llm_with_tools(
                 stream=stream,
                 primer_enable=True,
             ):
-                # 첫 스트림 전에 링크 후보 만들어 둠
                 if kind == "final":
-                    # 참고 링크 블록(조문 딥링크)을 보장
+                    # 참고 딥링크 1개라도 보장 + 호환 키 동시 제공
                     try:
                         try:
                             from modules.linking import resolve_article_url  # type: ignore
@@ -772,17 +748,20 @@ def ask_llm_with_tools(
                             if url:
                                 if not law_list:
                                     law_list = []
-                                law_list.append({"title": f"{law_hint} {art_hint}".strip(), "url": url})
+                                law_list.append({
+                                    "title": f"{law_hint} {art_hint}".strip(),
+                                    "법령명": law_hint, "법령명한글": law_hint,
+                                    "법령상세링크": url, "url": url
+                                })
                     except Exception:
                         pass
                 yield (kind, payload, law_list or [])
             return
         except Exception:
-            # 엔진 실패 시 폴백
-            pass
+            pass  # 엔진 실패 → 폴백
 
     # ─────────────────────────────────────────────────────────────
-    # 7) 최후 폴백: 조문 블록 + 간단 설명 구성
+    # 7) 최후 폴백: 조문 블록 + 간단 설명
     # ─────────────────────────────────────────────────────────────
     answer = ""
     if fetched_block:
@@ -799,10 +778,18 @@ def ask_llm_with_tools(
         if law_hint and art_hint:
             url = resolve_article_url(law_hint, art_hint)
             if url:
-                law_links.append({"title": f"{law_hint} {art_hint}".strip(), "url": url})
+                law_links.append({
+                    "title": f"{law_hint} {art_hint}".strip(),
+                    "법령명": law_hint, "법령명한글": law_hint,
+                    "법령상세링크": url, "url": url
+                })
     except Exception:
         if fetched_link:
-            law_links.append({"title": f"{law_hint} {art_hint}".strip(), "url": fetched_link})
+            law_links.append({
+                "title": f"{law_hint} {art_hint}".strip(),
+                "법령명": law_hint, "법령명한글": law_hint,
+                "법령상세링크": fetched_link, "url": fetched_link
+            })
 
     yield ("final", answer, law_links)
     return
