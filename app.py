@@ -1,7 +1,11 @@
-# =========================
-# app.py — CLEAN IMPORT HEADER (hardened, no-OC)
-# =========================
+# law_fetch.py 상단
 from __future__ import annotations
+import os, re, json
+from typing import Tuple, Optional   # ✅ Optional 꼭 포함해야 함
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import urlencode
+
 
 # --- Path bootstrap ---
 import os, sys, importlib.util
