@@ -11,11 +11,27 @@ import html
 # --- Third-party ---
 import streamlit as st
 
-# --- Local (package-only; no local-file fallback) ---
-from modules.plan_executor import execute_plan
-from modules.legal_modes import Intent, build_sys_for_mode
-from modules.router_llm import make_plan_with_llm
-from modules.linking import resolve_article_url, make_pretty_article_url
+# --- Local (safe import: package → local fallback) ---
+try:
+    from modules.plan_executor import execute_plan
+except Exception:
+    from plan_executor import execute_plan
+
+try:
+    from modules.legal_modes import Intent, build_sys_for_mode
+except Exception:
+    from legal_modes import Intent, build_sys_for_mode
+
+try:
+    from modules.router_llm import make_plan_with_llm
+except Exception:
+    from router_llm import make_plan_with_llm
+
+try:
+    from modules.linking import resolve_article_url, make_pretty_article_url
+except Exception:
+    from linking import resolve_article_url, make_pretty_article_url
+
 
 # --- secrets → env bridge ---
 try:
