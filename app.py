@@ -1,34 +1,50 @@
+# app.py — cleaned import header
 from __future__ import annotations
 
-# --- app.py (top) ---
+# --- Path bootstrap ---
 import os, sys
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MOD_DIR  = os.path.join(BASE_DIR, "modules")
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+if os.path.isdir(MOD_DIR) and MOD_DIR not in sys.path:
+    sys.path.insert(0, MOD_DIR)
 
-# sys.path 보강
-if BASE_DIR not in sys.path: sys.path.insert(0, BASE_DIR)
-if os.path.isdir(MOD_DIR) and MOD_DIR not in sys.path: sys.path.insert(0, MOD_DIR)
+# --- Stdlib ---
+import html  # _esc()에서 html.escape 사용
 
-# 안전 임포트 (패키지 → 단일 파일 순)
-try:
-    from modules.plan_executor import execute_plan  # modules 패키지
-except Exception:
-    from plan_executor import execute_plan          # 동일 폴더 단일 파일
-
+# --- Third-party ---
 import streamlit as st
-from html import unescape
-from modules.legal_modes import Intent, build_sys_for_mode 
-from modules.router_llm import make_plan_with_llm
-import html  # ← 추가: _esc()에서 html.escape 사용
-# === secrets → env bridge (put near top of app.py) ===
-import os
+
+# --- Local (safe imports with fallbacks) ---
 try:
-    import streamlit as st
+    from modules.plan_executor import execute_plan
+except Exception:
+    from plan_executor import execute_plan  # 로컬 단일파일 폴백
+
+try:
+    from modules.legal_modes import Intent, build_sys_for_mode, classify_intent
+except Exception:
+    from legal_modes import Intent, build_sys_for_mode, classify_intent
+
+try:
+    from modules.router_llm import make_plan_with_llm
+except Exception:
+    from router_llm import make_plan_with_llm
+
+try:
+    from modules.linking import resolve_article_url, make_pretty_article_url
+except Exception:
+    from linking import resolve_article_url, make_pretty_article_url
+
+# --- secrets → env bridge ---
+try:
     _oc  = str(st.secrets.get("LAW_API_OC",  "")).strip()
     _key = str(st.secrets.get("LAW_API_KEY", "")).strip()
-    if _oc:  os.environ["LAW_API_OC"]  = _oc      # DRF용
-    if _key: os.environ["LAW_API_KEY"] = _key     # OpenAPI용
-    # (선택) Azure도 딕셔너리로 꺼내서 클라이언트 초기화에 쓰세요
+    if _oc:
+        os.environ["LAW_API_OC"]  = _oc
+    if _key:
+        os.environ["LAW_API_KEY"] = _key
     AZURE = st.secrets.get("azure_openai", {})
 except Exception:
     AZURE = {}
