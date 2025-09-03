@@ -1,5 +1,5 @@
 # =========================
-# app.py — CLEAN IMPORT HEADER (hardened)
+# app.py — CLEAN IMPORT HEADER (hardened, no-OC)
 # =========================
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def _load_execute_plan():
         return fn, "modules.plan_executor"
     except Exception:
         pass
-    # 2) module import: plan_executor  (MOD_DIR가 sys.path에 있을 때)
+    # 2) module import: plan_executor
     try:
         from plan_executor import execute_plan as fn  # type: ignore
         return fn, "plan_executor"
@@ -84,17 +84,19 @@ except Exception:
     def make_pretty_article_url(law: str, art_label: str) -> str:
         return resolve_article_url(law, art_label)
 
-
-
-# --- secrets → env bridge ---
+# --- secrets (only Azure etc.).  ❌ OC/DRF 주입은 제거 ---
 try:
-    _oc  = str(st.secrets.get("LAW_API_OC",  "")).strip()
-    _key = str(st.secrets.get("LAW_API_KEY", "")).strip()
-    if _oc:  os.environ["LAW_API_OC"]  = _oc
-    if _key: os.environ["LAW_API_KEY"] = _key
-    AZURE = st.secrets.get("azure_openai", {})
+    # ⬇️ OC/DRF 불사용: 아래 두 줄은 없애거나 주석 처리하세요.
+    # _oc  = str(st.secrets.get("LAW_API_OC",  "")).strip()
+    # _key = str(st.secrets.get("LAW_API_KEY", "")).strip()
+    # if _oc:  os.environ["LAW_API_OC"]  = _oc
+    # if _key: os.environ["LAW_API_KEY"] = _key
+
+    # Azure 등 다른 시크릿은 계속 사용
+    AZURE = st.secrets.get("azure_openai", {}) if st else {}
 except Exception:
     AZURE = {}
+
 # =========================
 # END CLEAN IMPORT HEADER
 # =========================
@@ -334,6 +336,32 @@ st.markdown("""
 </script>
 """, unsafe_allow_html=True)
 
+def _append_korean_lawlink(law_list, law_hint: str, art_hint: str):
+    """law_list에 '법령 한글주소' 딥링크를 안전하게 추가하고 리스트를 반환."""
+    if not (law_hint and art_hint):
+        return law_list or []
+    # URL 만들기 (모듈/로컬 폴백)
+    try:
+        try:
+            from modules.linking import resolve_article_url  # type: ignore
+        except Exception:
+            from linking import resolve_article_url  # type: ignore
+        url = resolve_article_url(law_hint, art_hint)
+    except Exception:
+        url = ""
+    if not url:
+        return law_list or []
+    lst = law_list or []
+    # 중복 방지
+    if not any((x.get("url") == url) for x in lst):
+        lst.append({
+            "title": f"{law_hint} {art_hint}".strip(),
+            "법령명": law_hint,
+            "법령명한글": law_hint,
+            "법령상세링크": url,
+            "url": url,
+        })
+    return lst
 
 # === [BOOTSTRAP] session keys (must be first) ===
 if "messages" not in st.session_state:
@@ -2219,8 +2247,8 @@ except Exception:
     AzureOpenAI = None
 
     # app.py — Secrets 로딩 바로 다음
-import os, streamlit as st
-os.environ.setdefault("LAW_API_OC", st.secrets.get("LAW_API_OC", ""))
+#import os, streamlit as st
+#os.environ.setdefault("LAW_API_OC", st.secrets.get("LAW_API_OC", ""))
 
 
 def get_llm_client():
@@ -3374,60 +3402,51 @@ TOOLS = [
 
 
 
-# === [ADD] app.py : 조문 본문을 직접 가져오는 툴 ===
+# === [REPLACE] app.py : tool_get_article — DRF 제거, 딥링크 스크랩만 사용 ===
 def tool_get_article(law: str, article_label: str, mst: str = "", efYd: str = ""):
     """
-    LLM function-call 용: 법령명과 조문 라벨로 조문 본문을 가져온다.
-    우선 DRF(JSON) 구조화 → 실패 시 MST/딥링크 폴백.
+    조문 요청 툴: DRF(OC) 사용 없이, 딥링크 스크랩 파이프라인만 호출한다.
+    - 입력: law(법령명), article_label("제83조" 등), (옵션) mst/efYd
+    - 출력: dict 형태 (기존 호환용 필드 포함)
+      {
+        "ok": bool,
+        "text": "조문 본문",
+        "link": "조문 딥링크",
+        "links": ["..."],               # 하단 참고 링크 블록에서 사용
+        "source": "deeplink_only"       # 추적용
+      }
     """
-    try:
-        # 1) DRF(JSON) 구조화 (app.py 내부에 이미 정의됨)
-        bundle, used_url = fetch_article_via_api_struct(
-            law, article_label, mst=(mst or None), efYd=(efYd or None)
-        )
-        return {
-            "type": "article",
-            "law": bundle.get("law",""),
-            "article_label": bundle.get("article_label",""),
-            "mst": bundle.get("mst",""),
-            "efYd": bundle.get("efYd",""),
-            "jo": bundle.get("jo",""),
-            "source_url": bundle.get("source_url",""),
-            "title": bundle.get("title",""),
-            "body_text": bundle.get("body_text",""),
-            "text_for_llm": render_article_context_for_llm(bundle),
-        }
-    except Exception:
-        pass
+    # 안전 가드: execute_plan 미로딩시 빈 결과
+    if execute_plan is None:
+        return {"ok": False, "text": "", "link": "", "links": [], "source": "deeplink_only"}
 
-    # 2) 폴백: law_fetch 모듈 사용 (MST 탐색 → 블록 추출)
-    try:
-        try:
-            from modules.law_fetch import find_mst_by_law_name, fetch_article_block_by_mst  # type: ignore
-        except Exception:
-            from law_fetch import find_mst_by_law_name, fetch_article_block_by_mst          # type: ignore
+    # 플랜 구성: GET_ARTICLE 액션만 수행 (딥링크 스크랩 경로)
+    plan = {
+        "action": "GET_ARTICLE",
+        "law_name": (law or "").strip(),
+        "article_label": (article_label or "").strip(),
+        # 선택 파라미터 (있으면 전달, 없어도 무방)
+        "mst": (mst or "").strip(),
+        "efYd": (efYd or "").strip(),
+    }
 
-        m = mst or find_mst_by_law_name(law)
-        if m:
-            block, url = fetch_article_block_by_mst(m, article_label, prefer="JSON", efYd=(efYd or None))
-            return {
-                "type": "article",
-                "law": law,
-                "article_label": article_label,
-                "mst": m,
-                "efYd": efYd or "",
-                "source_url": url,
-                "title": "",
-                "body_text": block or "",
-                "text_for_llm": f"법령명: {law}\n조문: {article_label}\n[본문]\n{block or ''}",
-            }
-    except Exception:
-        pass
+    out = execute_plan(plan)  # plan_executor가 딥링크 생성→스크랩→정제까지 수행
+    # out은 dict를 기대하되, 방어적으로 파싱
+    if not isinstance(out, dict):
+        out = {} if out is None else {"text": str(out)}
+
+    text = (out.get("text") or out.get("body") or "").strip()
+    link = (out.get("link") or out.get("url") or out.get("deeplink") or "").strip()
+    links = out.get("links") or ([link] if link else [])
 
     return {
-        "type":"article","law":law,"article_label":article_label,
-        "mst":mst,"efYd":efYd,"source_url":"","title":"","body_text":"","text_for_llm":""
+        "ok": bool(text or link),
+        "text": text,
+        "link": link,
+        "links": links,
+        "source": "deeplink_only",
     }
+# === [END REPLACE] ===================================================
 
 # ============================
 # [GPT PATCH] app.py 연결부

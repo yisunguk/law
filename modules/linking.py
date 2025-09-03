@@ -65,18 +65,8 @@ def fetch_drf_law_link_by_name(law_name: str) -> str:
     except Exception:
         return ""
 
+# linking.py (또는 임시로 app.py 상단)
 def resolve_article_url(law_name: str, article_label: str) -> str:
-    """
-    우선순위(네트워크 검증 없이 즉시 반환):
-      1) 한글 조문 딥링크 (항상 우선)
-      2) (있다면) DRF 법령 메인 링크
-      3) 한글 법령 메인
-    """
-    law = _normalize_law_name(law_name)
-    art = _normalize_article_label(article_label)
-    if art:
-        # ★ 검증용 HTTP 요청을 제거하여 DRF로 폴백되는 일을 방지
-        return make_pretty_article_url(law, art)
-
-    drf = fetch_drf_law_link_by_name(law)
-    return drf or make_pretty_law_main_url(law)
+    law = quote((law_name or "").strip())
+    art = quote((article_label or "").strip())
+    return f"https://www.law.go.kr/법령/{law}/{art}"
