@@ -100,9 +100,6 @@ _VERBATIM_PAT = re.compile(
 def wants_verbatim(user_text: str) -> bool:
     return bool(_VERBATIM_PAT.search((user_text or "").strip()))
 
-# === Chat memory helpers ======================================================
-import streamlit as st
-
 # ─────────────────────────────────────────────────────────────
 # 대화 컨텍스트 유틸 (imports 바로 아래에 한 번만 정의)
 # 필요: import streamlit as st, (선택) globals()["AZURE"], globals()["client"]
@@ -354,6 +351,9 @@ def _init_engine_lazy():
 
 DEBUG = st.sidebar.checkbox("DRF 디버그", value=False, key="__debug__")
 
+
+
+
 # ==== DRF 링크/보강 유틸 (모듈 레벨에 한 번만 선언) ====
 import os, re
 from urllib.parse import urlencode
@@ -503,6 +503,98 @@ def ask_llm_with_tools(
     def wants_verbatim(text: str) -> bool:
         return bool(_VERBATIM_PAT.search((text or "").strip()))
 
+        # ─────────────────────────────────────────────────────────────
+    # 외부 모듈 (안전 임포트)  [PATCH A: start]
+    # ─────────────────────────────────────────────────────────────
+    try:
+        from modules.router_llm import make_plan_with_llm  # type: ignore
+    except Exception:
+        from router_llm import make_plan_with_llm          # type: ignore
+
+    try:
+        from modules.legal_modes import classify_intent, Intent, build_sys_for_mode  # type: ignore
+    except Exception:
+        from legal_modes import classify_intent, Intent, build_sys_for_mode          # type: ignore
+
+    try:
+        from modules.law_fetch import fetch_article_via_api_struct  # type: ignore
+    except Exception:
+        try:
+            from law_fetch import fetch_article_via_api_struct       # type: ignore
+        except Exception:
+            fetch_article_via_api_struct = None                      # type: ignore
+
+    try:
+        from modules.external_content import (
+            _ensure_running_summary, _compose_with_context           # type: ignore
+        )
+    except Exception:
+        try:
+            from external_content import (
+                _ensure_running_summary, _compose_with_context       # type: ignore
+            )
+        except Exception:
+            _ensure_running_summary = None
+            _compose_with_context = None
+
+    try:
+        from modules.advice_engine import render_article_context_for_llm  # type: ignore
+    except Exception:
+        try:
+            from advice_engine import render_article_context_for_llm       # type: ignore
+        except Exception:
+            def render_article_context_for_llm(_bundle):                   # type: ignore
+                return ""
+
+    # 최근 대화 전사 + 요약 → 컨텍스트 구성
+    transcript = _safe_recent_transcript()
+    try:
+        summary = (
+            _ensure_running_summary(_client or globals().get("client"), transcript, max_len=900)
+            if _ensure_running_summary else ""
+        )
+    except Exception:
+        try:
+            import streamlit as st
+            summary = st.session_state.get("__summary__", "")
+        except Exception:
+            summary = ""
+
+    try:
+        user_ctx = _compose_with_context(user_q, transcript, summary) if _compose_with_context else ""
+    except Exception:
+        user_ctx = f"[이전 대화 요약]\n{summary}\n\n[최근 대화]\n{transcript}\n\n[현재 질문]\n{user_q}"
+    if isinstance(user_ctx, str) and len(user_ctx) > 4500:
+        user_ctx = user_ctx[-4500:]
+
+    # 컨텍스트 플래그 (사이드바 토글과 연동 가능)
+    use_ctx_router = False
+    use_ctx_answer = True
+    try:
+        import streamlit as st
+        st.session_state.setdefault("__ctx_router__", False)
+        st.session_state.setdefault("__ctx_answer__", True)
+        use_ctx_router = st.session_state.get("__ctx_router__", False)
+        use_ctx_answer = st.session_state.get("__ctx_answer__", True)
+    except Exception:
+        pass
+
+    # 의도/모드 판별 및 시스템 프롬프트
+    try:
+        det_intent, _conf = classify_intent(user_q)
+    except Exception:
+        det_intent, _conf = (Intent.QUICK, 0.0)
+    try:
+        values = {m.value for m in Intent}
+        mode = Intent(forced_mode) if (forced_mode in values) else det_intent
+    except Exception:
+        mode = det_intent
+
+    use_tools  = mode in (Intent.LAWFINDER, Intent.MEMO)
+    sys_prompt = build_sys_for_mode(mode, brief=brief)
+    # ─────────────────────────────────────────────────────────────
+    # [PATCH A: end]
+
     # 외부 모듈 (안전 임포트)
     try:
         from modules.router_llm import make_plan_with_llm  # type: ignore
@@ -606,9 +698,11 @@ def ask_llm_with_tools(
                 or AZURE.get("router_deployment")
                 or AZURE.get("deployment")
             )
-            router_input = user_ctx if use_ctx_router else user_q
-            plan = make_plan_with_llm(_client, router_input, model=router_model)
-
+            # Prefer raw user question; fall back to context only if needed
+            router_input = (user_q or "").strip()
+            if not router_input:
+                router_input = (user_ctx or "").strip()
+                plan = make_plan_with_llm(_client, router_input, model=router_model)
             # 사이드바 디버그
             try:
                 import streamlit as st
@@ -618,7 +712,7 @@ def ask_llm_with_tools(
                 st.sidebar.code(_json.dumps(plan, ensure_ascii=False, indent=2), language="json")
             except Exception:
                 pass
-
+                         
             if isinstance(plan, dict) and (plan.get("action") or "").upper() == "GET_ARTICLE":
                 law_hint = (plan.get("law_name") or "").strip()
                 art_hint = (plan.get("article_label") or "").strip()
@@ -2018,6 +2112,64 @@ def prefetch_law_context(user_q: str, num_rows_per_law: int = 3) -> list[dict]:
 #   포함하면 '가사소송법'을 후보에 추가하여 우측 패널에 노출되도록 보강
 # - 그대로 붙여 넣어 기존 choose_law_queries_llm_first 를 교체하세요.
 # ============================================
+
+# ========= 어디에 넣나? =========
+# app.py 안의 ask_llm_with_tools() 함수에서
+#   1) 라우터 호출 직전:  ★ [PATCH A] 블록으로 교체
+#   2) 사이드바에 Router plan 찍은 "직후":  ★ [PATCH B] 블록 추가
+# =================================
+def ask_llm_with_tools(user_q: str, user_ctx: str = ""):
+    import json, re as _re
+
+    # ... (중략) ...
+
+    # ---------- ★ [PATCH A] 라우터 입력 우선순위 (원문 > 컨텍스트) ----------
+    # 기존: router_input = user_ctx if use_ctx_router else user_q  (이런 식)
+    router_input = (user_q or "").strip()
+    if not router_input:
+        router_input = (user_ctx or "").strip()
+
+    plan = make_plan_with_llm(_client, router_input, model=router_model)
+
+    # Router plan 디버그 출력 (기존 그대로 유지)
+    try:
+        with st.sidebar.expander("Router plan", expanded=False):
+            st.code(json.dumps(plan, ensure_ascii=False, indent=2))
+    except Exception:
+        pass
+    # --------------------------------------------------------------------
+
+    # ---------- ★ [PATCH B] 라우터 흔들릴 때 강제 GET_ARTICLE 폴백 ----------
+    # 질문 안에 "…법/…령/…규정 + 제N조(의M)" 패턴이 보이면 직접 플랜 생성
+    def _quick_parse_article_hint(text: str):
+        t = (text or "").strip()
+        if not t:
+            return None
+        m = _re.search(
+            r'(?P<law>[가-힣A-Za-z0-9·\s]+법|[가-힣A-Za-z0-9·\s]+령|[가-힣A-Za-z0-9·\s]+규정)\s*'
+            r'(?P<label>제?\s*\d+\s*조(\s*의\s*\d+)?)', t)
+        if not m:
+            return None
+        law = _re.sub(r'\s+', '', m.group('law'))   # 공백 제거
+        label = m.group('label').replace(' ', '')
+        if not label.startswith('제'):
+            label = '제' + label
+        return {"law_name": law, "article_label": label, "mst": "", "jo": "", "efYd": ""}
+
+    if not isinstance(plan, dict) or (plan.get("action") or "").upper() != "GET_ARTICLE":
+        hint = _quick_parse_article_hint(user_q)
+        if hint:
+            plan = {"action": "GET_ARTICLE", **hint}
+            try:
+                st.sidebar.caption("⚠️ 라우터 폴백(정규식) 적용됨")
+            except Exception:
+                pass
+    # --------------------------------------------------------------------
+
+    # (이하 기존 분기: GET_ARTICLE이면 본문 추출 → 응답 생성 로직 그대로)
+    # ... (나머지 기존 코드 유지) ...
+
+
 
 from typing import List
 
