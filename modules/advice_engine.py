@@ -289,11 +289,9 @@ class AdviceEngine:
                 if tool_call_id is None and isinstance(call, dict):
                     tool_call_id = call.get("id")
                 messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "name": fn_name,
-                    "content": _json_dumps(result),
-                })
+                    "role": "system",
+                    "content": "위 도구 결과를 이미 반영했다. 이제는 도구를 다시 호출하지 말고, 한국어 최종 답변만 작성하라."
+        })
 
         # 3) 2차 호출: 답변 생성 (stream 또는 단발)
         if stream:
@@ -301,7 +299,7 @@ class AdviceEngine:
                 self.client,
                 messages=messages,
                 model=self.model,
-                tools=self.tools if allow_tools else None,
+                tools=None,
                 stream=True,
                 allow_retry=True,
                 temperature=self.temperature,
