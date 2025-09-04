@@ -8,6 +8,7 @@ __all__ = [
 ]
 
 def __getattr__(name: str):
+    # 필요할 때만 해당 서브모듈을 import
     if name in ("AdviceEngine", "pick_mode"):
         mod = importlib.import_module(".advice_engine", __name__)
         return getattr(mod, name)
