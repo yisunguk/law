@@ -3404,9 +3404,13 @@ TOOLS = [
     }
 ]
 
-# app.py — tool_get_article (REPLACE THIS FUNCTION)
+# app.py — tool_get_article (REPLACE JUST THIS FUNCTION)
 def tool_get_article(law: str, article_label: str, mst: str = "", efYd: str = ""):
-    # 1) 본문: 딥링크 스크랩 (OC 불필요)
+    """
+    조문 본문: 딥링크 스크랩(plan_executor)
+    링크: 딥링크(source_url) + (있으면) 공공데이터포털(MOLEG) 공식 링크 보강
+    """
+    # 1) 본문 가져오기 (딥링크 스크랩, OC 불필요)
     try:
         from modules.plan_executor import execute_plan
     except Exception:
@@ -3423,12 +3427,12 @@ def tool_get_article(law: str, article_label: str, mst: str = "", efYd: str = ""
     text = (out.get("body_text") or out.get("text") or "").strip()
     link_primary = (out.get("source_url") or out.get("link") or "").strip()
 
-    # 2) 링크 보강: 공공데이터포털(MOLEG) 공식 링크(있으면)
+    # 2) 공공데이터포털(MOLEG) API로 공식 링크도 시도(키 없으면 빈 문자열 반환)
     try:
         from modules.linking import fetch_drf_law_link_by_name
     except Exception:
         from linking import fetch_drf_law_link_by_name
-    official = fetch_drf_law_link_by_name((law or "").strip())  # 실패 시 ""
+    official = fetch_drf_law_link_by_name((law or "").strip())
 
     links = [u for u in [link_primary, official] if u]
     return {
@@ -3438,16 +3442,6 @@ def tool_get_article(law: str, article_label: str, mst: str = "", efYd: str = ""
         "links": links,
         "source": "deeplink+MOLEG",
     }
-
-
-
-# === [END REPLACE] ===================================================
-
-# ============================
-# [GPT PATCH] app.py 연결부
-# 붙여넣는 위치: client/AZURE/TOOLS 등 준비가 끝난 "아래",
-#               사이드바/레이아웃 렌더링이 시작되기 "위"
-# ============================
 
 # 1) imports
 from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
