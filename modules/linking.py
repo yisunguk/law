@@ -2,6 +2,7 @@
 from urllib.parse import quote
 import os, contextlib
 
+# 흔히 쓰는 약칭 보정
 ALIAS_MAP = {
     "형소법": "형사소송법",
     "민소법": "민사소송법",
@@ -15,7 +16,7 @@ def _normalize_article_label(s: str) -> str:
     s = (s or "").strip()
     if not s:
         return ""
-    # "83", "83조" → "제83조"; "제83조의2" 유지
+    # "83", "83조" → "제83조"; "제83조의2"는 그대로 유지
     if s.isdigit():
         return f"제{s}조"
     if s.startswith("제") and "조" in s:
@@ -27,11 +28,12 @@ def _normalize_article_label(s: str) -> str:
 def make_pretty_article_url(law_name: str, article_label: str) -> str:
     law = quote(_normalize_law_name(law_name))
     art = quote(_normalize_article_label(article_label))
-    return f"https://law.go.kr/법령/{law}/{art}"
+    return f"https://www.law.go.kr/법령/{law}/{art}"
 
 def make_pretty_law_main_url(law_name: str) -> str:
-    return f"https://law.go.kr/법령/{quote(_normalize_law_name(law_name))}"
+    return f"https://www.law.go.kr/법령/{quote(_normalize_law_name(law_name))}"
 
+# ── (선택) 공공데이터포털 키 사용: DRF '법령상세링크' 추출 ─────────────────
 def _moleg_service_key() -> str:
     key = (os.getenv("MOLEG_SERVICE_KEY") or "").strip()
     if key:
@@ -62,11 +64,13 @@ def fetch_drf_law_link_by_name(law_name: str) -> str:
         path = (m.group(1) or "").strip() if m else ""
         if not path:
             return ""
-        if not path.startswith("/"): path = "/" + path
+        if not path.startswith("/"):
+            path = "/" + path
         return "https://www.law.go.kr" + html.unescape(path)
     except Exception:
         return ""
 
+# (호환) 간단 딥링크 해결기
 def resolve_article_url(law_name: str, article_label: str) -> str:
     law = quote((_normalize_law_name(law_name) or "").strip())
     art = quote((_normalize_article_label(article_label) or "").strip())

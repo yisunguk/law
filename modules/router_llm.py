@@ -1,17 +1,13 @@
 # modules/router_llm.py
 from __future__ import annotations
 from typing import Dict, Any, List
-import json
-import re
+import json, re
 
 __all__ = ["ROUTER_SYSTEM", "make_plan_with_llm"]
 
-# ──────────────────────────────────────────────────────────────────────────────
-# LLM Router System Prompt
-# - 상담(ADVICE) 모드 추가
-# - 후보 조문(candidates)까지 LLM이 직접 산출: law_name, article_label, mst, jo
-# - 반드시 JSON만 출력하도록 강제
-# ──────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────
+# System Prompt (한국어)
+# ─────────────────────────────────────────────────────────────────
 ROUTER_SYSTEM = """
 너는 한국 법령 질의를 API 호출 계획으로 변환하는 라우터다.
 반드시 아래 JSON 한 개만 출력하라(코드블록, 설명, 접두/접미 문장 금지).
@@ -42,10 +38,10 @@ ROUTER_SYSTEM = """
 5) 불필요한 문장 출력 금지. 위 JSON 구조 그대로, 한 개만 출력.
 """
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Robust JSON extractor (LLM이 실수로 텍스트를 섞어도 { ... } 블록만 추출)
-# ──────────────────────────────────────────────────────────────────────────────
-_JSON_BLOCK = re.compile(r'\{[\s\S]*\}', re.M)
+# ─────────────────────────────────────────────────────────────────
+# JSON block extractor (LLM이 텍스트를 섞어도 { ... }만 취함)
+# ─────────────────────────────────────────────────────────────────
+_JSON_BLOCK = re.compile(r"\{[\s\S]*\}", re.M)
 
 def _safe_json_loads(text: str) -> Dict[str, Any]:
     text = (text or "").strip()
@@ -60,9 +56,13 @@ def _safe_json_loads(text: str) -> Dict[str, Any]:
         pass
     return {"action": "QUICK", "notes": "parse_error", "raw": (text or "")[:2000]}
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Plan sanitizer (필수 필드 보정 + candidates 정형화)
-# ──────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────
+# Plan sanitizer
+# ─────────────────────────────────────────────────────────────────
+def _clean_jo(jo: str) -> str:
+    jo = (jo or "").strip()
+    return jo if re.fullmatch(r"\d{6}", jo) else ""
+
 def _sanitize_candidates(arr: Any) -> List[Dict[str, str]]:
     out: List[Dict[str, str]] = []
     if not isinstance(arr, list):
@@ -76,7 +76,6 @@ def _sanitize_candidates(arr: Any) -> List[Dict[str, str]]:
             "mst":           (it.get("mst") or "").strip(),
             "jo":            _clean_jo(it.get("jo") or ""),
         })
-    # 중복 제거(법령명+조문라벨 기준)
     dedup = []
     seen = set()
     for c in out:
@@ -85,11 +84,7 @@ def _sanitize_candidates(arr: Any) -> List[Dict[str, str]]:
             continue
         seen.add(key)
         dedup.append(c)
-    return dedup[:3]  # 과도한 후보 방지
-
-def _clean_jo(jo: str) -> str:
-    jo = (jo or "").strip()
-    return jo if re.fullmatch(r"\d{6}", jo) else ""
+    return dedup[:3]
 
 def _ensure_defaults(plan: Dict[str, Any]) -> Dict[str, Any]:
     plan = dict(plan or {})
@@ -102,11 +97,9 @@ def _ensure_defaults(plan: Dict[str, Any]) -> Dict[str, Any]:
     plan["candidates"] = _sanitize_candidates(plan.get("candidates"))
     return plan
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────
 # Public API
-# - client: OpenAI 혹은 AzureOpenAI ChatCompletions 호환 클라이언트
-# - model: 라우터 전용 소형 모델 지정 가능(미지정 시 client.router_model 또는 gpt-4o-mini)
-# ──────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────
 def make_plan_with_llm(client, user_q: str, *, model: str | None = None) -> Dict[str, Any]:
     resp = client.chat.completions.create(
         model=model or getattr(client, "router_model", None) or "gpt-4o-mini",

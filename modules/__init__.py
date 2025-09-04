@@ -1,4 +1,4 @@
-# modules/__init__.py — lazy exports (REPLACE ALL)
+# modules/__init__.py — lazy exports
 import importlib
 
 __all__ = [

@@ -25,16 +25,14 @@ def _build_drf_link(mst: str, typ: str="HTML", *, efYd: Optional[str]=None,
 
 def find_mst_by_law_name(law_name: str, efYd: Optional[str]=None, timeout: float=8.0) -> str:
     if not USE_DRF:
-        return ""
-    # (DRF on일 때만 실행)
+        return ""  # DRF OFF
 
 def _drf_get(mst: str, *, typ: str="JSON", jo: Optional[str]=None,
              efYd: Optional[str]=None, timeout: float=10.0) -> Tuple[str,str]:
     if not USE_DRF:
-        return "", ""
-    # (DRF on일 때만 실행)
+        return "", ""  # DRF OFF
 
-# 텍스트 추출 헬퍼는 필요시 사용 (생략 가능)
+# ── (보조) 텍스트 평문화 ─────────────────────────────────────────────
 def _extract_text_from_html(html_text: str) -> str:
     try:
         from bs4 import BeautifulSoup
@@ -78,10 +76,11 @@ def fetch_law_detail_text(mst: str, *, prefer: str="JSON",
                           jo: Optional[str]=None, efYd: Optional[str]=None,
                           timeout: float=10.0) -> tuple[str,str,str]:
     if not USE_DRF:
-        return "", prefer.upper(), ""
+        return "", prefer.upper(), ""  # DRF OFF
+
+_ART_HDR = re.compile(r"^\s*제\d{1,4}조(의\d{1,3})?\s*", re.M)
 
 def extract_article_block(full_text: str, art_label: str, max_chars: int=4000) -> str:
-    _HDR = re.compile(r"^\s*제\d{1,4}조(의\d{1,3})?\s*", re.M)
     if not full_text or not art_label: return ""
     mnum = re.search(r"(제\s*\d{1,4}\s*조(?:\s*의\s*\d{1,3})?)", art_label)
     key = mnum.group(1) if mnum else art_label
@@ -89,7 +88,7 @@ def extract_article_block(full_text: str, art_label: str, max_chars: int=4000) -
          re.search(rf"^\s*{re.escape(key)}\b.*$", full_text, re.M))
     if not m: return ""
     start = m.start()
-    n = _HDR.search(full_text, m.end())
+    n = _ART_HDR.search(full_text, m.end())
     end = n.start() if n else len(full_text)
     return full_text[start:end].strip()[:max_chars]
 
@@ -103,4 +102,4 @@ def fetch_article_block_by_mst(mst: str, art_label: Optional[str],
                                prefer: str="JSON", efYd: Optional[str]=None,
                                timeout: float=10.0) -> tuple[str,str]:
     if not USE_DRF:
-        return "", ""
+        return "", ""  # DRF OFF

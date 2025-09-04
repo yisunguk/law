@@ -6,7 +6,6 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlencode
 
-
 # --- Path bootstrap ---
 import os, sys, importlib.util
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -376,7 +375,10 @@ if "_last_user_nonce" not in st.session_state:
 
 KEY_PREFIX = "main"
 
-from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
+from modules import AdviceEngine  # 최종 답변 엔진
+from modules import make_plan_with_llm, ROUTER_SYSTEM  # 라우터
+from modules import execute_plan  # 딥링크 스크랩 실행기
+
 
 def _init_engine_lazy(force: bool = False):
     """
@@ -429,20 +431,41 @@ def _init_engine_lazy(force: bool = False):
             pass
         return None
 
-    engine = AdviceEngine(
-        client=client,
-        model=AZURE["deployment"],
-        tools=TOOLS,
-        safe_chat_completion=safe_chat_completion,
-        tool_search_one=tool_search_one,
-        tool_search_multi=tool_search_multi,
-        tool_get_article=tool_get_article,
-        prefetch_law_context=prefetch_law_context,
-        summarize_laws_for_primer=summarize_laws_for_primer,
-        temperature=0.2,
-    )
-    st.session_state.engine = engine
-    return engine
+   # Azure OpenAI 클라이언트 준비 (기존 로직 그대로)
+engine = AdviceEngine(
+    client=client,
+    model=AZURE["deployment"],  # 혹은 최종 답변용 모델명
+    temperature=0.2,
+    tools=None,  # 전달돼도 내부에서 무시
+)
+
+# ★ LLM 호출 전에 'messages' 리스트 준비 (NameError 예방)
+messages = [
+    {"role": "system", "content": "너는 한국 법률 상담 도우미다. 출처 링크를 항상 함께 제시하라."},
+    {"role": "user", "content": user_question},
+]
+
+# 1) 라우팅 → 플랜 작성
+plan = make_plan_with_llm(client, user_question, model=getattr(client, "router_model", None) or "gpt-4o-mini")
+
+# 2) 플랜 실행(GET_ARTICLE 등) → 조문 본문/링크 확보
+tool_result = execute_plan(plan)
+
+# 3) 도구 결과를 messages에 합쳐 최종 답변 생성
+if tool_result.get("type") == "article":
+    law = tool_result["law"]
+    art = tool_result["article_label"]
+    body = tool_result["body_text"]
+    url = tool_result["source_url"]
+    # 조문 전문/요지 + 링크를 'assistant(tool)' 메시지처럼 넣어서 모델이 근거로 삼게 함
+    messages.append({
+        "role": "system",
+        "content": f"[근거 조문] {law} {art}\n{body}\n(출처: {url})"
+    })
+
+final_text = engine.generate(messages, stream=True)
+st.markdown(final_text)
+
 
 DEBUG = st.sidebar.checkbox("DRF 디버그", value=False, key="__debug__")
 
