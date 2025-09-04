@@ -1,12 +1,9 @@
-# law_fetch.py 상단
+# =========================
+# app.py — Clean Import Header
+# =========================
 from __future__ import annotations
-import os, re, json
-from typing import Tuple, Optional   # ✅ Optional 꼭 포함해야 함
-import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urlencode
 
-# --- Path bootstrap ---
+# --- Path bootstrap (modules 패키지 우선) ---
 import os, sys, importlib.util
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MOD_DIR  = os.path.join(BASE_DIR, "modules")
@@ -15,90 +12,40 @@ if BASE_DIR not in sys.path:
 if os.path.isdir(MOD_DIR) and MOD_DIR not in sys.path:
     sys.path.insert(0, MOD_DIR)
 
-# --- Stdlib ---
+# --- Stdlib / optional third-party ---
 import html  # html.escape / html.unescape
-
-# --- Third-party (optional: allow import w/o Streamlit installed) ---
 try:
     import streamlit as st  # type: ignore
 except Exception:
     st = None  # type: ignore
 
-# --- Loader: plan_executor.execute_plan (package → module → file fallback) ---
-def _load_execute_plan():
-    # 1) package import: modules.plan_executor
-    try:
-        from modules.plan_executor import execute_plan as fn  # type: ignore
-        return fn, "modules.plan_executor"
-    except Exception:
-        pass
-    # 2) module import: plan_executor
-    try:
-        from plan_executor import execute_plan as fn  # type: ignore
-        return fn, "plan_executor"
-    except Exception:
-        pass
-    # 3) file fallback: ./modules/plan_executor.py → ./plan_executor.py
-    for p in (
-        os.path.join(MOD_DIR, "plan_executor.py"),
-        os.path.join(BASE_DIR, "plan_executor.py"),
-    ):
-        if not os.path.exists(p):
-            continue
-        spec = importlib.util.spec_from_file_location("plan_executor_dyn", p)
-        if not spec or not getattr(spec, "loader", None):
-            continue
-        mod = importlib.util.module_from_spec(spec)  # type: ignore
-        spec.loader.exec_module(mod)                 # type: ignore
-        fn = getattr(mod, "execute_plan", None)
-        if callable(fn):
-            return fn, p
-    raise ImportError(
-        "execute_plan loader failed: modules.plan_executor / plan_executor / file path"
-    )
+# --- modules: lazy export 허브 사용 ---
+#   AdviceEngine / Intent / classify_intent / build_sys_for_mode 등은
+#   modules/__init__.py를 통해 지연 임포트됩니다.
+from modules import AdviceEngine, Intent, classify_intent, build_sys_for_mode  # :contentReference[oaicite:0]{index=0}
 
-execute_plan, _EXEC_SRC = _load_execute_plan()
+# --- Router (LLM → 실행 계획) ---
+from modules.router_llm import make_plan_with_llm as _MAKE_PLAN, ROUTER_SYSTEM  # :contentReference[oaicite:1]{index=1}
 
-# --- legal_modes (package → simple fallback) ---
+# --- 법령 한글 주소 유틸(딥링크) ---
+from modules.linking import resolve_article_url, make_pretty_article_url  # 
+
+# --- LLM 안전 래퍼 / 외부 기사 스크랩 유틸(필요 시) ---
+from llm_safety import safe_chat_completion  # :contentReference[oaicite:3]{index=3}
+from external_content import is_url, extract_first_url, extract_all_urls, fetch_article_text  # :contentReference[oaicite:4]{index=4}
+
+# --- (선택) plan executor: 딥링크 스크랩 파이프라인 ---
 try:
-    from modules.legal_modes import Intent, build_sys_for_mode  # type: ignore
+    from modules.plan_executor import execute_plan  # :contentReference[oaicite:5]{index=5}
 except Exception:
-    from legal_modes import Intent, build_sys_for_mode          # type: ignore
+    execute_plan = None  # 런타임 가드
 
-# --- Router plan maker (single global alias; no duplicate import) ---
+# --- secrets → env (Azure만; DRF/OC는 여기서 다루지 않음) ---
 try:
-    from modules.router_llm import make_plan_with_llm as _MAKE_PLAN  # type: ignore
-except Exception:
-    try:
-        from router_llm import make_plan_with_llm as _MAKE_PLAN       # type: ignore
-    except Exception:
-        _MAKE_PLAN = None  # type: ignore
-
-# --- 딥링크 생성기 (module → local fallback) ---
-try:
-    from modules.linking import resolve_article_url, make_pretty_article_url  # type: ignore
-except Exception:
-    from urllib.parse import quote as _q
-    def resolve_article_url(law: str, art_label: str) -> str:
-        # ex) https://www.law.go.kr/법령/건설산업기본법/제83조
-        law_q = _q((law or "").strip(), safe="")
-        art_q = _q((art_label or "").strip(), safe="")
-        return f"https://www.law.go.kr/법령/{law_q}/{art_q}"
-    def make_pretty_article_url(law: str, art_label: str) -> str:
-        return resolve_article_url(law, art_label)
-
-# --- secrets (only Azure etc.).  ❌ OC/DRF 주입은 제거 ---
-try:
-    # ⬇️ OC/DRF 불사용: 아래 두 줄은 없애거나 주석 처리하세요.
-    # _oc  = str(st.secrets.get("LAW_API_OC",  "")).strip()
-    # _key = str(st.secrets.get("LAW_API_KEY", "")).strip()
-    # if _oc:  os.environ["LAW_API_OC"]  = _oc
-    # if _key: os.environ["LAW_API_KEY"] = _key
-
-    # Azure 등 다른 시크릿은 계속 사용
     AZURE = st.secrets.get("azure_openai", {}) if st else {}
 except Exception:
     AZURE = {}
+
 
 # =========================
 # END CLEAN IMPORT HEADER
