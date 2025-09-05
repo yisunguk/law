@@ -1,14 +1,260 @@
-# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
+import streamlit as st
+from html import unescape
 
+from modules.legal_modes import Intent, build_sys_for_mode 
+from modules.router_llm import make_plan_with_llm
+from modules.plan_executor import execute_plan
+# === secrets → env bridge (put near top of app.py) ===
+import os
+try:
+    import streamlit as st
+    _oc  = str(st.secrets.get("LAW_API_OC",  "")).strip()
+    _key = str(st.secrets.get("LAW_API_KEY", "")).strip()
+    if _oc:  os.environ["LAW_API_OC"]  = _oc      # DRF용
+    if _key: os.environ["LAW_API_KEY"] = _key     # OpenAPI용
+    # (선택) Azure도 딕셔너리로 꺼내서 클라이언트 초기화에 쓰세요
+    AZURE = st.secrets.get("azure_openai", {})
+except Exception:
+    AZURE = {}
+
+# ✅ [PATCH] app.py — 최상단 import에 공용 링크 생성기 추가
+from modules.linking import resolve_article_url  # ← 추가
+
+# === [REPLACE] app.py : _deep_article_url (두 군데 모두) ===
+def _deep_article_url(law: str, art_label: str) -> str:
+    """
+    조문 직링크(한글 주소) 우선. 실패 시 내부 로직이 메인으로 폴백.
+    """
+    try:
+        from modules.linking import resolve_article_url
+    except Exception:
+        from linking import resolve_article_url  # fallback
+    return resolve_article_url(law, art_label)
+
+# 세션 초기화 시 1회만 실행
+if "__boot__" not in st.session_state:
+    st.session_state["__ctx_router__"] = True   # 라우터에도 문맥 주입 ON
+    # st.session_state["__ctx_answer__"] = True # (이미 기본 True지만 확실히 하려면)
+    st.session_state["__boot__"] = True
+
+# === [ADD] app.py : 원문요청 감지 유틸 ===
+import re
+
+_VERBATIM_PAT = re.compile(
+    r"(원문|본문|전문)\s*(보여|출력|줘|보여줘|보여주)|조문\s*(그대로|원문)|그대로\s*(보내|출력)",
+    re.I
+)
+
+def wants_verbatim(user_text: str) -> bool:
+    return bool(_VERBATIM_PAT.search((user_text or "").strip()))
+
+# === Chat memory helpers ======================================================
 import streamlit as st
 
+# ─────────────────────────────────────────────────────────────
+# 대화 컨텍스트 유틸 (imports 바로 아래에 한 번만 정의)
+# 필요: import streamlit as st, (선택) globals()["AZURE"], globals()["client"]
+# ─────────────────────────────────────────────────────────────
+
+def _recent_msgs(max_turns: int = 6, max_chars: int = 3500):
+    """
+    최근 대화를 (user/assistant만) 역할/내용 그대로 리스트로 반환.
+    - user 기준 max_turns 턴까지만
+    - 총 글자수 max_chars 초과 시 앞쪽부터 잘라냄
+    """
+    try:
+        raw = st.session_state.get("messages", []) or []
+    except Exception:
+        raw = []
+    buf, chars, user_turns = [], 0, 0
+    for m in reversed(raw):
+        if not isinstance(m, dict):
+            continue
+        r = m.get("role")
+        c = (m.get("content") or "").strip()
+        if r not in ("user", "assistant") or not c:
+            continue
+        buf.append({"role": r, "content": c})
+        chars += len(c)
+        if r == "user":
+            user_turns += 1
+            if user_turns >= max_turns:
+                break
+        if chars >= max_chars:
+            break
+    return list(reversed(buf))
+
+def _to_transcript(msgs):
+    """역할 라벨을 붙인 간단한 대화문으로 변환."""
+    if not msgs:
+        return ""
+    label = {"user": "사용자", "assistant": "어시스턴트"}
+    lines = []
+    for m in msgs:
+        try:
+            lines.append(f"{label.get(m['role'], m['role'])}: {m['content']}")
+        except Exception:
+            continue
+    return "\n".join(lines)
+
+def _ensure_running_summary(client, transcript: str, max_len: int = 900):
+    """
+    대화가 길어지면 빠르게 요약(LLM 1회)하여 세션에 저장.
+    - 요약은 시스템 메모리 용도로만 사용
+    - client 없으면 기존 요약 사용
+    """
+    try:
+        if not transcript:
+            return st.session_state.get("__summary__", "")
+        if st.session_state.get("__summary__") and len(transcript) < 1200:
+            return st.session_state["__summary__"]
+    except Exception:
+        pass
+
+    if client is None:
+        return st.session_state.get("__summary__", "")
+
+    try:
+        AZURE = globals().get("AZURE") or {}
+        model_name = (
+            getattr(client, "router_model", None)
+            or AZURE.get("router_deployment")
+            or AZURE.get("deployment")
+            or "gpt-4o-mini"
+        )
+        resp = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": "다음을 8줄 이내의 불릿 요약으로 만들어라. 핵심 결론과 사용자의 요구만 남겨라."},
+                {"role": "user", "content": transcript[:4000]},
+            ],
+            temperature=0.1,
+            max_tokens=max(200, max_len // 2),
+        )
+        summ = (resp.choices[0].message.content or "").strip()
+        if summ:
+            st.session_state["__summary__"] = summ[:max_len]
+    except Exception:
+        # 요약 실패 시 이전 값 유지
+        pass
+    return st.session_state.get("__summary__", "")
+
+def _compose_with_context(user_q: str, transcript: str, summary: str = "") -> str:
+    """LLM에 보낼 컨텍스트 포함 사용자 프롬프트."""
+    parts = []
+    if summary:
+        parts.append(f"[이전 대화 요약]\n{summary}")
+    if transcript:
+        parts.append(f"[최근 대화]\n{transcript}")
+    parts.append(f"[현재 질문]\n{user_q}")
+    out = "\n\n".join(parts)
+    # 보호: 과도한 길이 컷
+    return out[-5000:]
+
+
+# --- per-turn nonce ledger (prevents double appends)
+st.session_state.setdefault('_nonce_done', {})
+# --- cache helpers: suggestions shouldn't jitter on reruns ---
+def cached_suggest_for_tab(tab_key: str):
+    """
+    안전 캐시: 탭 기본 추천 키워드.
+    (중복 정의 방지용 재정의) — 내부 재귀 호출 버그 제거.
+    """
+    try:
+        return SUGGESTED_TAB_KEYWORDS.get(tab_key, [])
+    except Exception:
+        try:
+            import streamlit as st  # fallback: 과거 캐시 구조 존중
+            store = st.session_state.setdefault("__tab_suggest__", {})
+            return store.get(tab_key, [])
+        except Exception:
+            return []
+def cached_suggest_for_law(law_name: str):
+    """
+    안전 캐시: 법령명 기반 추천 키워드.
+    (중복 정의 방지용 재정의) — 내부 재귀 호출 버그 제거.
+    """
+    try:
+        if not law_name:
+            return FALLBACK_LAW_KEYWORDS
+        if law_name in SUGGESTED_LAW_KEYWORDS:
+            return SUGGESTED_LAW_KEYWORDS[law_name]
+        for k in SUGGESTED_LAW_KEYWORDS:
+            if k in law_name:
+                return SUGGESTED_LAW_KEYWORDS[k]
+        return FALLBACK_LAW_KEYWORDS
+    except Exception:
+        return FALLBACK_LAW_KEYWORDS
 st.set_page_config(
-    page_title="법제처 법무 상담사",
+    page_title="인공지능 법률상담 전문가",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# 최상단 스크롤 기준점
+st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
+
+st.markdown("""
+<style>
+:root{
+  --center-col: 980px;   /* 중앙 전체 폭 */
+  --bubble-max: 760px;   /* 말풍선 최대 폭 */
+  --pad-x: 12px;         /* 좌우 여백 */
+}
+
+/* 본문(채팅 전/후 공통) 중앙 폭 고정 */
+.block-container{
+  max-width: var(--center-col) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  padding-left: var(--pad-x) !important;
+  padding-right: var(--pad-x) !important;
+}
+
+/* 업로더/폼/카드류도 같은 폭 */
+.block-container [data-testid="stFileUploader"],
+.block-container form,
+.block-container .stForm,
+.block-container .stMarkdown>div{
+  max-width: var(--center-col) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+/* 채팅 메시지 폭(답변 후) */
+[data-testid="stChatMessage"]{
+  max-width: var(--bubble-max) !important;
+  width: 100% !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<style>
+:root{
+  --left-rail: 300px;
+  --right-rail: calc(var(--flyout-width, 0px) + var(--flyout-gap, 0px));
+}
+</style>
+<script>
+(function(){
+  function setLeftRail(){
+    const sb = window.parent.document.querySelector('[data-testid="stSidebar"]');
+    if(!sb) return;
+    const w = Math.round(sb.getBoundingClientRect().width || 300);
+    document.documentElement.style.setProperty('--left-rail', w + 'px');
+  }
+  setLeftRail();
+  window.addEventListener('resize', setLeftRail);
+  new MutationObserver(setLeftRail).observe(window.parent.document.body, {subtree:true, childList:true, attributes:true});
+})();
+</script>
+""", unsafe_allow_html=True)
+
 
 # === [BOOTSTRAP] session keys (must be first) ===
 if "messages" not in st.session_state:
@@ -55,60 +301,454 @@ def _init_engine_lazy():
     )
     return st.session_state.engine
 
-# 기존 ask_llm_with_tools를 얇은 래퍼로 교체
-from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
+DEBUG = st.sidebar.checkbox("DRF 디버그", value=False, key="__debug__")
+
+# ==== DRF 링크/보강 유틸 (모듈 레벨에 한 번만 선언) ====
+import os, re
+from urllib.parse import urlencode
+
+def _resolve_mst(law_name: str) -> tuple[str, str]:
+    """
+    통합검색으로 MST와 시행일자(efYd)를 얻는다.
+    return (mst, efYd) — 없으면 빈 문자열
+    """
+    try:
+        items, _, _ = _call_moleg_list("law", law_name, num_rows=5)
+        if not items:
+            return "", ""
+        # 정확 일치 우선
+        for it in items:
+            if (it.get("법령명") or "").strip() == (law_name or "").strip():
+                mst = (it.get("MST") or it.get("LawMST") or "").strip()
+                eff = (it.get("시행일자") or it.get("eff_date") or "").replace("-", "")
+                return mst, eff
+        it = items[0]
+        return (it.get("MST") or it.get("LawMST") or "").strip(), (it.get("시행일자") or "").replace("-", "")
+    except Exception:
+        return "", ""
+
+# JO 생성기는 별도로 정의되어 있어야 합니다.
+# def jo_from_label(label: str) -> str:
+#     m = re.search(r'(\d+)\s*조', label or "")
+#     return f"{int(m.group(1)):04d}00" if m else ""
+
+from urllib.parse import urlencode
+import os, re
+
+# ✅ 단일 정본: DRF 링크 빌더 (HTML/JSON 모두 생성 가능)
+def build_drf_link(
+    *, law_name: str = "", article_label: str = "",
+    mst: str = "", law_id: str = "", efYd: str = "",
+    typ: str = "HTML", lang: str = "KO",
+) -> str:
+    """
+    lawService.do 링크 생성:
+      1) mst 없으면 통합검색으로 보강(resolve_mst_and_efyd)
+      2) efYd 없으면 검색 결과 시행일자 사용
+      3) JO는 '제83조' -> '008300' 규칙(jo_from_label)
+    용도: 클릭 가능한 '원문 링크' 제공/사이드바 DRF 테스트
+    """
+    from urllib.parse import urlencode
+    import os, re
+
+    jo = jo_from_label(article_label)  # '제83조' → '008300'
+
+    # mst/efYd 보강
+    if not mst and not law_id and law_name:
+        mst2, eff2 = resolve_mst_and_efyd(law_name)
+        mst = mst or mst2
+        efYd = efYd or eff2
+
+    # 최소 한 가지 식별자(MST/ID) 필요
+    if not (mst or law_id):
+        return ""
+
+    q = {
+        "OC": os.environ.get("LAW_API_OC", ""),
+        "target": "law",
+        "type": typ,   # "HTML" or "JSON"
+        "LANG": lang,
+    }
+    if mst:    q["MST"] = str(mst)
+    if law_id: q["ID"]  = str(law_id)
+    if jo:     q["JO"]  = jo
+    if efYd:   q["efYd"] = re.sub(r"\D", "", str(efYd))
+
+    return "https://www.law.go.kr/DRF/lawService.do?" + urlencode(q, doseq=False, encoding="utf-8")
+
+
+# (ask_llm_with_tools 내부) 외부 의존 모듈 안전 임포트 블록 교체
+try:
+    from modules.router_llm import make_plan_with_llm
+except Exception:
+    from router_llm import make_plan_with_llm
+
+
+from typing import Optional, Dict, Any, Generator
 
 def ask_llm_with_tools(
     user_q: str,
-    num_rows: int = 5,
-    stream: bool = True,
-    forced_mode: str | None = None,  # 유지해도 됨: 아래에서 직접 처리
+    *,
+    forced_mode: Optional[str] = None,
     brief: bool = False,
-):
+    num_rows: int = 10,
+    stream: bool = True,
+    _client=None,
+    engine=None,
+    AZURE: Optional[Dict[str, Any]] = None,
+) -> Generator[tuple[str, str, list], None, None]:
     """
-    UI 진입점: 의도→모드 결정, 시스템 프롬프트 합성, 툴 사용 여부 결정 후
-    AdviceEngine.generate()에 맞는 인자(system_prompt, allow_tools)로 호출.
+    메인 질의 처리기 (generator).
+    - Router → DRF(JSON) → LLM 경로(선호)
+    - DRF 실패/차단 시 한글 조문 딥링크 스크랩 폴백으로 본문 확보
+    - 사용자가 '본문/원문/그대로'를 요구하면, LLM이 [조문 본문]을 그대로 출력
     """
-    engine = _init_engine_lazy() if "_init_engine_lazy" in globals() else globals().get("engine")
-    if engine is None:
-        yield ("final", "엔진이 아직 초기화되지 않았습니다. (client/AZURE/TOOLS 확인)", [])
-        return
+    AZURE = AZURE or {}
 
-    # 1) 모드 결정
-    det_intent, conf = classify_intent(user_q)
-    try:
-        valid = {m.value for m in Intent}
-        mode = Intent(forced_mode) if forced_mode in valid else pick_mode(det_intent, conf)
-    except Exception:
-        mode = pick_mode(det_intent, conf)
+    # ─────────────────────────────────────────────────────────────────────────────
+    # 안전 전사 유틸
+    # ─────────────────────────────────────────────────────────────────────────────
+    def _safe_recent_transcript() -> str:
+        try:
+            # 프로젝트 헬퍼(있으면 사용)
+            return _to_transcript(_recent_msgs(max_turns=8, max_chars=4000))  # noqa: F821
+        except Exception:
+            # Streamlit 세션에서 폴백
+            try:
+                import streamlit as st  # type: ignore
+                raw = st.session_state.get("messages", [])
+            except Exception:
+                raw = []
+            lines = []
+            for m in raw:
+                role = m.get("role")
+                if role in ("user", "assistant"):
+                    text = (m.get("content") or "").strip()
+                    if text:
+                        lines.append(f"{role}: {text}")
+            return "\n".join(lines)[-4000:]
 
-    # 2) 프롬프트/툴 사용 여부
-    use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
-    sys_prompt = build_sys_for_mode(mode, brief=brief)
-
-    # 3) 엔진 호출 (새 시그니처에 맞게)
-    yield from engine.generate(
-        user_q,
-        system_prompt=sys_prompt,
-        allow_tools=use_tools,
-        num_rows=num_rows,
-        stream=stream,
-        primer_enable=True,
+    # ─────────────────────────────────────────────────────────────────────────────
+    # '원문/본문/그대로' 요청 감지
+    # ─────────────────────────────────────────────────────────────────────────────
+    import re as _re
+    _VERBATIM_PAT = _re.compile(
+        r"(원문|본문|전문)\s*(보여|출력|줘|보여줘|보여주)|조문\s*(그대로|원문)|그대로\s*(보내|출력)",
+        _re.I,
     )
 
-import io, os, re, json, time, html
+    def wants_verbatim(text: str) -> bool:
+        return bool(_VERBATIM_PAT.search((text or "").strip()))
 
-if "_normalize_text" not in globals():
-    def _normalize_text(s: str) -> str:
-        """불필요한 공백/빈 줄을 정돈하는 안전한 기본 버전"""
-        s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
-        # 앞뒤 공백 정리
-        s = s.strip()
-        # 3개 이상 연속 개행 → 2개로
-        s = re.sub(r"\n{3,}", "\n\n", s)
-        # 문장 끝 공백 제거
-        s = re.sub(r"[ \t]+\n", "\n", s)
-        return s
+    # ─────────────────────────────────────────────────────────────────────────────
+    # 외부 의존 모듈 안전 임포트
+    # ─────────────────────────────────────────────────────────────────────────────
+    # ① Router LLM
+    try:
+        from modules.router_llm import make_plan_with_llm  # type: ignore
+    except Exception:
+        from router_llm import make_plan_with_llm  # type: ignore
+
+    # ② 모드/프롬프트(legal_modes)
+    try:
+        from modules.legal_modes import classify_intent, Intent, build_sys_for_mode  # type: ignore
+    except Exception:
+        from legal_modes import classify_intent, Intent, build_sys_for_mode  # type: ignore
+
+    # ③ DRF(JSON) → 구조화 번들
+    try:
+        from modules.law_fetch import fetch_article_via_api_struct  # type: ignore
+    except Exception:
+        try:
+            from law_fetch import fetch_article_via_api_struct  # type: ignore
+        except Exception:
+            fetch_article_via_api_struct = None  # type: ignore
+
+    # ④ 대화요약/컨텍스트
+    try:
+        from modules.external_content import _ensure_running_summary, _compose_with_context  # type: ignore
+    except Exception:
+        try:
+            from external_content import _ensure_running_summary, _compose_with_context  # type: ignore
+        except Exception:
+            _ensure_running_summary = None  # type: ignore
+            _compose_with_context = None  # type: ignore
+
+    # ⑤ LLM 컨텍스트 렌더러
+    try:
+        from modules.advice_engine import render_article_context_for_llm  # type: ignore
+    except Exception:
+        try:
+            from advice_engine import render_article_context_for_llm  # type: ignore
+        except Exception:
+            def render_article_context_for_llm(_bundle):  # type: ignore
+                return ""
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # 전사 / 요약 / 사용자 컨텍스트 조립
+    # ─────────────────────────────────────────────────────────────────────────────
+    transcript = _safe_recent_transcript()
+
+    try:
+        summary = _ensure_running_summary(_client or globals().get("client"), transcript, max_len=900) if _ensure_running_summary else ""
+    except Exception:
+        try:
+            import streamlit as st  # type: ignore
+            summary = st.session_state.get("__summary__", "")
+        except Exception:
+            summary = ""
+
+    try:
+        user_ctx = _compose_with_context(user_q, transcript, summary) if _compose_with_context else ""
+    except Exception:
+        user_ctx = f"[이전 대화 요약]\n{summary}\n\n[최근 대화]\n{transcript}\n\n[현재 질문]\n{user_q}"
+    if isinstance(user_ctx, str) and len(user_ctx) > 4500:
+        user_ctx = user_ctx[-4500:]
+
+    # 컨텍스트 사용 스위치
+    use_ctx_router = False
+    use_ctx_answer = True
+    try:
+        import streamlit as st  # type: ignore
+        st.session_state.setdefault("__ctx_router__", False)
+        st.session_state.setdefault("__ctx_answer__", True)
+        use_ctx_router = st.session_state.get("__ctx_router__", False)
+        use_ctx_answer = st.session_state.get("__ctx_answer__", True)
+    except Exception:
+        pass
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # 모드/프롬프트
+    # ─────────────────────────────────────────────────────────────────────────────
+    try:
+        det_intent, _conf = classify_intent(user_q)  # noqa
+    except Exception:
+        det_intent, _conf = (Intent.QUICK, 0.0)      # noqa
+
+    try:
+        values = {m.value for m in Intent}           # noqa
+        mode = Intent(forced_mode) if (forced_mode in values) else det_intent  # noqa
+    except Exception:
+        mode = det_intent
+
+    use_tools  = mode in (Intent.LAWFINDER, Intent.MEMO)  # noqa
+    sys_prompt = build_sys_for_mode(mode, brief=brief)    # noqa
+
+    # 최근 히스토리(폴백용)
+    history = []
+    try:
+        raw = st.session_state.get("messages", [])  # type: ignore
+        history = [
+            {"role": m.get("role", ""), "content": (m.get("content") or "").strip()}
+            for m in raw
+            if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
+        ][-6:]
+    except Exception:
+        pass
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # 1) Router → DRF(JSON) → LLM (선호 경로)  +  DRF 실패시 딥링크 스크랩 폴백
+    # ─────────────────────────────────────────────────────────────────────────────
+    try:
+        if _client is not None:
+            router_model = (
+                getattr(_client, "router_model", None)
+                or (AZURE or {}).get("router_deployment")
+                or (AZURE or {}).get("deployment")
+            )
+            router_input = user_ctx if use_ctx_router else user_q
+            plan = make_plan_with_llm(_client, router_input, model=router_model)  # noqa
+
+            # (옵션) 사이드바 디버그
+            try:
+                if 'st' in globals() and st.sidebar.checkbox("DRF 디버그", value=False, key="__debug_drf__"):  # type: ignore
+                    st.sidebar.caption("Router plan")  # type: ignore
+                    import json as _json
+                    st.sidebar.code(_json.dumps(plan, ensure_ascii=False, indent=2), language="json")  # type: ignore
+            except Exception:
+                pass
+
+            if isinstance(plan, dict) and (plan.get("action") or "").upper() == "GET_ARTICLE":
+                law_hint = (plan.get("law_name") or "").strip()
+                art_hint = (plan.get("article_label") or "").strip()
+                mst_hint = (plan.get("mst") or "").strip()
+                ef_hint  = (plan.get("efYd") or plan.get("eff_date") or "").replace("-", "").strip()
+
+                # 1) DRF(JSON)으로 구조화 조문 확보 시도
+                bundle, used_url = None, ""
+                if fetch_article_via_api_struct is not None:
+                    try:
+                        bundle, used_url = fetch_article_via_api_struct(  # noqa
+                            law_hint, art_hint, mst=mst_hint, efYd=ef_hint
+                        )
+                    except Exception:
+                        bundle, used_url = None, ""
+
+                # 2) DRF가 실패/비어있으면: 한글 조문 딥링크 스크랩 폴백
+                if not (bundle and (bundle.get("body_text") or bundle.get("clauses"))):
+                    try:
+                        # 딥링크 생성 + 조문 슬라이스 유틸
+                        try:
+                            from modules.linking import make_pretty_article_url  # type: ignore
+                        except Exception:
+                            from linking import make_pretty_article_url  # type: ignore
+
+                        try:
+                            from modules.law_fetch import extract_article_block as _slice_article  # type: ignore
+                        except Exception:
+                            from law_fetch import extract_article_block as _slice_article  # type: ignore
+
+                        import requests
+                        from bs4 import BeautifulSoup
+
+                        deeplink = make_pretty_article_url(law_hint, art_hint)
+                        r = requests.get(
+                            deeplink,
+                            timeout=6,
+                            headers={"User-Agent": "Mozilla/5.0"},
+                            allow_redirects=True,
+                        )
+
+                        body_text = ""
+                        if 200 <= r.status_code < 400:
+                            soup = BeautifulSoup(r.text or "", "lxml")
+                            main = (
+                                soup.select_one("#contentBody")
+                                or soup.select_one("#conBody")
+                                or soup.select_one("#conScroll")
+                                or soup.select_one(".conScroll")
+                                or soup.select_one("#content")
+                                or soup
+                            )
+                            full_text = (main.get_text("\n", strip=True) or "").strip()
+                            # 요청 조문만 슬라이스
+                            try:
+                                body_text = _slice_article(full_text, art_hint) or ""
+                            except Exception:
+                                import re
+                                num = re.sub(r"\D", "", art_hint)
+                                m = re.search(rf"(제{num}조(?:의\d+)?[\s\S]*?)(?=\n제\d+조|\n부칙|\Z)", full_text)
+                                body_text = (m.group(1) if m else "").strip()
+
+                        if body_text:
+                            bundle = {
+                                "law": law_hint,
+                                "article_label": art_hint,
+                                "title": "",
+                                "body_text": body_text,
+                                "clauses": [],
+                                "mst": mst_hint,
+                                "efYd": ef_hint,
+                                "source_url": deeplink,
+                            }
+                            used_url = deeplink
+                        else:
+                            yield ("final", f"조문 원문을 API에서 불러오지 못했습니다. 아래 링크에서 원문을 확인해 주세요:\n{deeplink}", [])
+                            return
+                    except Exception:
+                        try:
+                            from modules.linking import make_pretty_article_url  # type: ignore
+                        except Exception:
+                            from linking import make_pretty_article_url  # type: ignore
+                        deeplink = make_pretty_article_url(law_hint, art_hint)
+                        yield ("final", f"조문 원문을 불러오지 못했습니다. 링크만 제공합니다:\n{deeplink}", [])
+                        return
+
+                # 3) '원문/본문/그대로' 요청이면 그대로 출력하도록 시스템 프롬프트 전환
+                verbatim = wants_verbatim(user_q)
+                sys_for_lawyer = (
+                    "너는 한국의 변호사다. 제공된 [법령 메타/조문 본문/항·호]만 근거로 답한다. "
+                    "근거가 부족하면 필요한 조문을 추가 요청하라."
+                    + (
+                        "\n\n[표시 규칙]\n"
+                        "- 사용자가 조문 원문/본문/전문을 요청한 경우, 아래 [조문 본문] 텍스트를 **그대로** 출력한다.\n"
+                        "- 줄바꿈/번호/괄호 등 서식을 보존하고, 임의로 생략·요약하지 않는다.\n"
+                        "- 추가 해설/서론/후기 문구를 덧붙이지 않는다.\n"
+                        "- 마지막 줄에 한 줄로 한글 조문 직링크만 덧붙인다(예: 원문: https://www.law.go.kr/법령/건설산업기본법/제83조)."
+                        if verbatim
+                        else
+                        "\n\n[표시 규칙]\n"
+                        "- 원문을 그대로 붙여넣지 말고, 핵심 요건·효과를 구조화해 요약한다(필요 시 짧은 인용만 사용).\n"
+                        "- 답변 말미에 한 줄로 한글 조문 직링크를 제공한다."
+                    )
+                )
+
+                # LLM 호출(컨텍스트 주입)
+                context_bundle = render_article_context_for_llm(bundle)  # noqa
+                model_id = (
+                    getattr(_client, "advice_model", None)
+                    or (AZURE or {}).get("deployment")
+                    or "gpt-4o"
+                )
+                use_ctx = use_ctx_answer
+                content_input = user_ctx if use_ctx else user_q
+                content = content_input if not context_bundle else f"{content_input}\n\n[참고자료]\n{context_bundle}"
+                msgs2 = [
+                    {"role": "system", "content": sys_for_lawyer},
+                    {"role": "user", "content": content},
+                ]
+                # NOTE: 프로젝트 SDK 형태에 맞춰 호출자만 바꾸세요.
+                resp = _client.chat.completions.create(
+                    model=model_id, messages=msgs2, temperature=0.1, max_tokens=1600
+                )
+                answer = (resp.choices[0].message.content or "").strip()
+                yield ("final", answer + f"\n\n근거(법제처 원문): {bundle.get('source_url') or used_url}", [])
+                return
+    except Exception:
+        # 라우팅/DRF 단계 실패 → 폴백
+        pass
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # 2) Fallback A: custom engine (tools OK)
+    # ─────────────────────────────────────────────────────────────────────────────
+    try:
+        if engine is not None:
+            import inspect as _insp
+            params = set(_insp.signature(engine.generate).parameters)
+            base_kwargs = dict(system_prompt=sys_prompt, allow_tools=use_tools, num_rows=num_rows, stream=stream)
+            if "primer_enable" in params:
+                base_kwargs["primer_enable"] = True
+            hist_key = next((k for k in ("history", "messages", "chat_history", "conversation") if k in params), None)
+
+            use_ctx = use_ctx_answer
+            ret = engine.generate(
+                user_ctx if use_ctx else user_q,
+                **({**base_kwargs, hist_key: history} if hist_key else base_kwargs),
+            )
+            if _insp.isgenerator(ret):
+                yield from ret
+            else:
+                yield ("final", str(ret if not isinstance(ret, tuple) else ret[1]), [])
+            return
+    except Exception:
+        pass
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # 3) Fallback B: direct ChatCompletion with short history
+    # ─────────────────────────────────────────────────────────────────────────────
+    try:
+        if _client is None:
+            raise RuntimeError("LLM client not initialized")
+
+        model_id = (
+            getattr(_client, "fallback_model", None)
+            or (AZURE or {}).get("deployment")
+            or "gpt-4o"
+        )
+        use_ctx = use_ctx_answer
+        content_input = user_ctx if use_ctx else user_q
+        msgs3 = [{"role": "system", "content": sys_prompt}] + history + [{"role": "user", "content": content_input}]
+        resp = _client.chat.completions.create(
+            model=model_id, messages=msgs3, temperature=0.2, max_tokens=1400
+        )
+        answer = (resp.choices[0].message.content or "").strip()
+        yield ("final", answer, [])
+        return
+    except Exception:
+        yield ("final", "죄송합니다. 내부 오류로 답변을 완료하지 못했습니다.", [])
+        return
+
+
 
 def _esc(s: str) -> str:
     """HTML escape only"""
@@ -147,6 +787,33 @@ from typing import Iterable, List
 
 import hashlib
 
+
+# --- Utilities: de-duplicate repeated paragraphs/halves ---
+def _dedupe_repeats(txt: str) -> str:
+    if not txt:
+        return txt
+    n = len(txt)
+    # Heuristic 1: if halves overlap (common duplication pattern)
+    if n > 600:
+        half = n // 2
+        a, b = txt[:half].strip(), txt[half:].strip()
+        if a and b and (a == b or a.startswith(b[:200]) or b.startswith(a[:200])):
+            return a if len(a) >= len(b) else b
+    # Heuristic 2: paragraph-level dedupe while preserving order
+    parts = re.split(r"\n\s*\n", txt)
+    seen = set()
+    out_parts = []
+    for p in parts:
+        key = p.strip()
+        norm = re.sub(r"\s+", " ", key).strip().lower()
+        if norm and norm in seen:
+            continue
+        if norm:
+            seen.add(norm)
+        out_parts.append(p)
+    return "\n\n".join(out_parts)
+
+
 def _hash_text(s: str) -> str:
     return hashlib.md5((s or "").encode("utf-8")).hexdigest()
 
@@ -181,7 +848,7 @@ SUGGESTED_LAW_KEYWORDS = {
 }
 FALLBACK_LAW_KEYWORDS = ["정의", "목적", "벌칙"]
 
-def suggest_keywords_for_law(law_name: str) -> list[str]:
+def cached_suggest_for_law(law_name: str) -> list[str]:
     if not law_name:
         return FALLBACK_LAW_KEYWORDS
     if law_name in SUGGESTED_LAW_KEYWORDS:
@@ -201,7 +868,7 @@ SUGGESTED_TAB_KEYWORDS = {
     "cc":     ["위헌", "합헌", "각하", "침해", "기각"],
     "expc":   ["유권해석", "질의회신", "법령해석", "적용범위"],
 }
-def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
+def cached_suggest_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
 def inject_sticky_layout_css(mode: str = "wide"):
@@ -218,9 +885,9 @@ def inject_sticky_layout_css(mode: str = "wide"):
         " --bubble-max: 760px;"
         " --chatbar-h: 56px;"
         " --chat-gap: 12px;"
-        " --rail: 420px;"
+        " --rail: 460px;"
         " --hgap: 24px;"
-        " }"
+        "}"
     )
 
     css = f"""
@@ -253,123 +920,97 @@ def inject_sticky_layout_css(mode: str = "wide"):
         width: 720px; max-width: 92vw;
       }}
 
+.post-chat-ui .stFileUploader, .post-chat-ui .stTextInput {{ width: 720px; max-width: 92vw; }}
+.post-chat-ui {{ margin-top: 8px; }}
+
+
       /* 업로더 고정: 앵커 다음 형제 업로더 */
       #bu-anchor + div[data-testid='stFileUploader'] {{
         position: fixed;
         left: 50%; transform: translateX(-50%);
-        bottom: calc(12px + var(--chatbar-h) + var(--chat-gap));
+        bottom: calc(var(--chatbar-h) + var(--chat-gap) + 12px);
+        width: clamp(340px, calc(var(--center-col) - 2*var(--hgap)), calc(100vw - var(--rail) - 2*var(--hgap)));
+        max-width: calc(100vw - var(--rail) - 2*var(--hgap));
         z-index: 60;
-        width: var(--center-col);
-        max-width: 92vw;
-        padding: 8px 0;
+        background: rgba(0,0,0,0.35);
+        padding: 10px 12px; border-radius: 12px;
+        backdrop-filter: blur(6px);
+      }}
+      #bu-anchor + div [data-testid='stFileUploader'] {{
+        background: transparent !important; border: none !important;
       }}
 
-      /* 데스크톱에서는 우측 레일을 피해 정렬 */
-      @media (min-width:1280px){{
-        body.chat-started #bu-anchor + div[data-testid='stFileUploader'],
-        body.chat-started #chatbar-fixed {{
-          left: calc(50% - var(--rail)/2);
-          transform: translateX(-50%);
-          width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap)));
-          max-width: calc(100vw - var(--rail) - 2*var(--hgap));
-        }}
+      /* 입력창 하단 고정 */
+      section[data-testid="stChatInput"] {{
+        position: fixed; left: 50%; transform: translateX(-50%);
+        bottom: 0; z-index: 70;
+        width: clamp(340px, calc(var(--center-col) - 2*var(--hgap)), calc(100vw - var(--rail) - 2*var(--hgap)));
+        max-width: calc(100vw - var(--rail) - 2*var(--hgap));
       }}
 
       /* 본문이 하단 고정 UI와 겹치지 않게 */
       .block-container {{
         padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
       }}
-
-      /* 우측 플로팅 검색 패널 */
-      #search-flyout {{
-        position: fixed; top: 72px; right: 24px;
-        width: 360px; max-width: 38vw;
-        height: calc(100vh - 96px);
-        overflow: auto; z-index: 58;   /* 업로더(60)와 입력창(70)보다 낮게 */
-        padding: 12px 14px; border-radius: 12px;
-      }}
-
-      /* 하단 고정 채팅창 스타일 */
-      .fixed-chat-input {{
-          position: fixed;
-          bottom: 0;
-          left: 0;
-          right: 0;
-          background: rgba(255, 255, 255, 0.95);
-          backdrop-filter: blur(10px);
-          border-top: 1px solid #e9ecef;
-          padding: 1rem;
-          z-index: 1000;
-          box-shadow: 0 -4px 20px rgba(0,0,0,0.1);
-      }}
-
-      .fixed-chat-input .stForm {{
-          max-width: 900px;
-          margin: 0 auto;
-          width: 100%;
-      }}
-
-      .fixed-chat-input .stTextArea textarea {{
-          border-radius: 20px;
-          border: 2px solid #e9ecef;
-          padding: 12px 16px;
-          font-size: 16px;
-          resize: none;
-          transition: all 0.3s ease;
-      }}
-
-      .fixed-chat-input .stTextArea textarea:focus {{
-          border-color: #667eea;
-          box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-      }}
-
-      .fixed-chat-input .stButton > button {{
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-          color: white;
-          border: none;
-          border-radius: 20px;
-          padding: 12px 24px;
-          font-weight: 600;
-          transition: all 0.3s ease;
-          box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
-      }}
-
-      .fixed-chat-input .stButton > button:hover {{
-          transform: translateY(-2px);
-          box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-      }}
-
-      /* 반응형 디자인 */
-      @media (max-width: 768px) {{
-          .chat-container {{
-              max-width: 100%;
-              padding: 0 0.5rem;
-              padding-bottom: 120px;
-          }}
-          
-          .chat-content {{
-              max-width: 85%;
-          }}
-          
-          .chat-header h1 {{
-              font-size: 2rem;
-          }}
-          
-          .fixed-chat-input {{
-              padding: 0.5rem;
-          }}
-          
-          .fixed-chat-input .stForm {{
-              max-width: 100%;
-              margin: 0 0.5rem;
-          }}
-      }}
+      
+           
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
 
-
+# 호출 위치: 파일 맨 아래, 모든 컴포넌트를 그린 뒤
 inject_sticky_layout_css("wide")
+
+# ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
+
+# --- Right flyout: 상단 고정 + 하단(채팅창)과 겹치지 않게 ---
+# --- Right flyout: 하단 답변창(입력창) 위에 맞춰 고정 ---
+import streamlit as st
+st.markdown("""
+<style>
+  :root{
+    /* 숫자만 바꾸면 미세조정 됩니다 */
+    --flyout-width: 360px;     /* 우측 패널 폭 */
+    --flyout-gap:   80px;      /* 본문과 패널 사이 가로 간격 */
+    --chatbar-h:    56px;      /* 하단 입력창 높이 */
+    --chat-gap:     12px;      /* 입력창 위 여백 */
+    /* 패널 하단이 멈출 위치(= 입력창 바로 위) */
+    --flyout-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 16px);
+  }
+
+  @media (min-width:1280px){
+    /* 본문이 패널과 겹치지 않도록 우측 여백 확보 */
+    .block-container{
+      padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
+    }
+
+    /* 패널: 화면 하단 기준으로 ‘입력창 위’에 딱 붙이기 */
+    #search-flyout{
+      position: fixed !important;
+      bottom: var(--flyout-bottom) !important;  /* ⬅ 핵심: 답변창 위에 정렬 */
+      top: auto !important;                     /* 기존 top 규칙 무력화 */
+      right: 24px !important; left: auto !important;
+
+      width: var(--flyout-width) !important;
+      max-width: 38vw !important;
+
+      /* 패널 내부만 스크롤되게 최대 높이 제한 */
+      max-height: calc(100vh - var(--flyout-bottom) - 24px) !important;
+      overflow: auto !important;
+
+      z-index: 58 !important; /* 입력창(보통 z=70)보다 낮게 */
+    }
+  }
+
+  /* 모바일/좁은 화면은 자연 흐름 */
+  @media (max-width:1279px){
+    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
+    .block-container{ padding-right: 0 !important; }
+  }
+</style>
+""", unsafe_allow_html=True)
+
+
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
@@ -442,7 +1083,10 @@ def _sanitize_plan_q(user_q: str, q: str) -> str:
     return q
 
 # ---- 오른쪽 플로팅 패널 렌더러 ----
-def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | None = None, show_debug: bool = False):
+def render_search_flyout(user_q: str, num_rows: int = 8,
+                         hint_laws: list[str] | None = None,
+                         hint_articles: list[tuple[str,str]] | None = None,
+                         show_debug: bool = False):
     results = find_all_law_data(user_q, num_rows=num_rows, hint_laws=hint_laws)
 
     def _pick(*cands):
@@ -450,15 +1094,38 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
             if isinstance(c, str) and c.strip():
                 return c.strip()
         return ""
-
+    
     def _build_law_link(it, eff):
-        link = _pick(it.get("url"), it.get("link"), it.get("detail_url"), it.get("상세링크"))
-        if link: return link
+        link = _pick(
+            it.get("법령상세링크"),
+            it.get("상세링크"),
+            it.get("url"), it.get("link"), it.get("detail_url"),
+        )
+        if link:
+            return normalize_law_link(link)
         mst = _pick(it.get("MST"), it.get("mst"), it.get("LawMST"))
         if mst:
-            return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={eff}"
+            ef = (eff or "").replace("-", "")
+            return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={ef}"
         return ""
 
+    # ── 여기부터는 기존 HTML 조립부 ─────────────────────────────
+    html: list[str] = []
+    html.append('<div class="flyout">')
+    html.append('<h3>🧠 통합 검색 결과</h3>')
+
+    # ▼▼▼ (NEW) 조문 바로가기: '카테고리 렌더' 들어가기 직전에 삽입 ▼▼▼
+    if hint_articles:
+        html.append('<h4>🔗 조문 바로가기</h4>')
+        html.append('<ol class="law-list">')
+        for law, art in hint_articles:
+            # 예: law="주택임대차보호법", art="제6조" 또는 "제6조의2"
+            url = _deep_article_url(law, art)  # 실패 시 법령 메인으로 폴백하는 기존 함수
+            html.append(
+                f'<li><a href="{url}" target="_blank" rel="noreferrer">{law} {art}</a></li>'
+            )
+        html.append('</ol>')
+ 
     def _law_item_li(it):
         title = _pick(it.get("법령명한글"), it.get("법령명"), it.get("title_kr"), it.get("title"), it.get("name_ko"), it.get("name"))
         dept  = _pick(it.get("소관부처"), it.get("부처명"), it.get("dept"), it.get("department"))
@@ -507,14 +1174,14 @@ def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | 
 
 # =========================================
 # 세션에 임시로 담아 둔 첫 질문을 messages로 옮기는 유틸
-# (이 블록을 파일 상단 '레이아웃/스타일 주입' 직후 정도로 올려둡니다)
+# (이 블록을 파일 상단 ‘레이아웃/스타일 주입’ 직후 정도로 올려둡니다)
 # =========================================
 from datetime import datetime
 
 has_chat = bool(st.session_state.get("messages")) or bool(st.session_state.get("_pending_user_q"))
 
 
-# ✅ 중요: '최초 화면' 렌더링 전에 먼저 호출
+# ✅ 중요: ‘최초 화면’ 렌더링 전에 먼저 호출
 
 from datetime import datetime
 import time
@@ -528,20 +1195,126 @@ def _push_user_from_pending() -> str | None:
         return None
     if nonce and st.session_state.get("_last_user_nonce") == nonce:
         return None
+
+    # === 첨부파일 처리: 업로드된 파일 텍스트를 질문 뒤에 부착 ===
+    try:
+        att_payload = st.session_state.pop("_pending_user_files", None)
+    except Exception:
+        att_payload = None
+
+    # 우선순위: 명시 payload > 포스트-챗 업로더 > 프리챗 업로더 > 하단 업로더
+    files_to_read = []
+    try:
+        if att_payload:
+            for it in att_payload:
+                name = it.get("name") or "uploaded"
+                data = it.get("data", b"")
+                mime = it.get("type") or ""
+                files_to_read.append(("__bytes__", name, data, mime))
+    except Exception:
+        pass
+    # 스트림릿 업로더에서 직접 읽기 (fallback)
+    for key in ("post_files", "first_files", "bottom_files"):
+        try:
+            for f in (st.session_state.get(key) or []):
+                files_to_read.append(("__widget__", getattr(f, "name", "uploaded"), f, getattr(f, "type", "")))
+        except Exception:
+            pass
+
+    def _try_extract(name, src, mime):
+        txt = ""
+        try:
+            # utils_extract 사용 우선
+            if name.lower().endswith(".pdf"):
+                try:
+                    txt = extract_text_from_pdf(src)
+                except Exception:
+                    import io
+                    try:
+                        data = src if isinstance(src, (bytes, bytearray)) else src.read()
+                        txt = extract_text_from_pdf(io.BytesIO(data))
+                    except Exception:
+                        txt = ""
+            elif name.lower().endswith(".docx"):
+                try:
+                    txt = extract_text_from_docx(src)
+                except Exception:
+                    import io
+                    try:
+                        data = src if isinstance(src, (bytes, bytearray)) else src.read()
+                        txt = extract_text_from_docx(io.BytesIO(data))
+                    except Exception:
+                        txt = ""
+            elif name.lower().endswith(".txt"):
+                try:
+                    if hasattr(src, "read"):
+                        data = src.read()
+                        try: src.seek(0)
+                        except Exception: pass
+                    else:
+                        data = src if isinstance(src, (bytes, bytearray)) else b""
+                    txt = read_txt(data)
+                except Exception:
+                    try:
+                        txt = data.decode("utf-8", errors="ignore")
+                    except Exception:
+                        txt = ""
+        except Exception:
+            txt = ""
+        return sanitize(txt) if "sanitize" in globals() else txt
+
+    ATTACH_LIMIT_PER_FILE = 6000   # chars
+    ATTACH_TOTAL_LIMIT    = 16000  # chars
+
+    pieces = []
+    total = 0
+    for kind, name, src, mime in files_to_read[:6]:
+        try:
+            t = _try_extract(name, src if kind=="__widget__" else src, mime) or ""
+        except Exception:
+            t = ""
+        if not t:
+            continue
+        t = t.strip()
+        if not t:
+            continue
+        t = t[:ATTACH_LIMIT_PER_FILE]
+        if total + len(t) > ATTACH_TOTAL_LIMIT:
+            t = t[: max(0, ATTACH_TOTAL_LIMIT - total) ]
+        if not t:
+            break
+        pieces.append(f"### {name}\\n{t}")
+        total += len(t)
+        if total >= ATTACH_TOTAL_LIMIT:
+            break
+
+    attach_block = "\\n\\n".join(pieces) if pieces else ""
+
+    # === 최종 콘텐츠 합성 ===
+    content_final = q.strip()
+    if attach_block:
+        content_final += "\\n\\n[첨부 문서 발췌]\\n" + attach_block + "\\n"
+    else:
+        content_final = q.strip()
+    # (NEW) content_final이 없으면 질문만으로 초기화
+    content_final = locals().get('content_final', (q or "").strip())
     st.session_state.messages.append({
         "role": "user",
-        "content": q.strip(),
+        "content": content_final,
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     })
     st.session_state["_last_user_nonce"] = nonce
-    return q
+    st.session_state["current_turn_nonce"] = nonce  # ✅ 이 턴의 nonce 확정
+    # reset duplicate-answer guard for a NEW user turn
+    st.session_state.pop('_last_ans_hash', None)
+
+    return content_final
 
 def render_pre_chat_center():
-    """대화 전: 중앙 히어로 + 중앙 업로더(키: first_files) + 전송 폼"""
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
     st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
 
-    # 중앙 업로더 (대화 전 전용)
+    # 중앙 업로더
     st.file_uploader(
         "Drag and drop files here",
         type=["pdf", "docx", "txt"],
@@ -549,10 +1322,35 @@ def render_pre_chat_center():
         key="first_files",
     )
 
-    # 입력 폼 (전송 시 pending에 저장 후 rerun)
+    # 입력 폼
     with st.form("first_ask", clear_on_submit=True):
         q = st.text_input("질문을 입력해 주세요...", key="first_input")
         sent = st.form_submit_button("전송", use_container_width=True)
+
+    # ✅ 대화 스타터 버튼 (2줄 2줄)
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("건설현장 중대재해 발생시 처리 절차는?", use_container_width=True):
+            st.session_state["_pending_user_q"] = "건설현장 중대재해 발생시 처리 절차는?"
+            st.session_state["_pending_user_nonce"] = time.time_ns()
+            st.rerun()
+    with col2:
+        if st.button("임대차 계약 해지 방법 알려줘", use_container_width=True):
+            st.session_state["_pending_user_q"] = "임대차 계약 해지 방법 알려줘"
+            st.session_state["_pending_user_nonce"] = time.time_ns()
+            st.rerun()
+
+    col3, col4 = st.columns(2)
+    with col3:
+        if st.button("유료주차장에 주차된 차에서 도난 사건이 났어", use_container_width=True):
+            st.session_state["_pending_user_q"] = "유료주차장에 주차된 차에서 도난 사건이 났어?"
+            st.session_state["_pending_user_nonce"] = time.time_ns()
+            st.rerun()
+    with col4:
+        if st.button("교통사고 합의 시 주의할 점은?", use_container_width=True):
+            st.session_state["_pending_user_q"] = "교통사고 합의 시 주의할 점은?"
+            st.session_state["_pending_user_nonce"] = time.time_ns()
+            st.rerun()
 
     st.markdown("</section>", unsafe_allow_html=True)
 
@@ -561,7 +1359,50 @@ def render_pre_chat_center():
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
 
+
 # 기존 render_bottom_uploader() 전부 교체
+
+# [ADD] 답변 완료 후에도 프리챗과 동일한 UI 사용
+def render_post_chat_simple_ui():
+    import time, io
+    st.markdown('<section class="post-chat-ui">', unsafe_allow_html=True)
+
+    # 업로더 (프리챗과 동일)
+    post_files = st.file_uploader(
+        "Drag and drop files here",
+        type=["pdf", "docx", "txt"],
+        accept_multiple_files=True,
+        key="post_files",
+    )
+
+    # 텍스트 입력 + 전송 버튼 (프리챗과 동일)
+    with st.form("next_ask", clear_on_submit=True):
+        q = st.text_input("질문을 입력해 주세요...", key="next_input")
+        sent = st.form_submit_button("전송", use_container_width=True)
+
+    st.markdown("</section>", unsafe_allow_html=True)
+
+    if sent and (q or "").strip():
+        # 업로드된 파일을 안전하게 세션에 보관 (바로 rerun할 것이므로 바이트로 저장)
+        safe_payload = []
+        try:
+            for f in (post_files or []):
+                try:
+                    data = f.read()
+                    f.seek(0)
+                except Exception:
+                    data = None
+                safe_payload.append({
+                    "name": getattr(f, "name", "uploaded"),
+                    "type": getattr(f, "type", ""),
+                    "data": data,
+                })
+        except Exception:
+            pass
+        st.session_state["_pending_user_q"] = (q or "").strip()
+        st.session_state["_pending_user_nonce"] = time.time_ns()
+        st.session_state["_pending_user_files"] = safe_payload
+        st.rerun()
 def render_bottom_uploader():
     # 업로더 바로 앞에 '앵커'만 출력
     st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
@@ -624,6 +1465,45 @@ def _chat_started() -> bool:
     ) or bool(st.session_state.get("_pending_user_q"))
 
 # --- 최종 후처리 유틸: 답변 본문을 정리하고 조문에 인라인 링크를 붙인다 ---
+# === [NEW] MEMO 템플릿 강제 & '핵심 판단' 링크 제거 유틸 ===
+import re as _re_memo
+
+_MEMO_HEADS = [
+    (_re_memo.compile(r'(?mi)^\s*1\s*[\.\)]\s*(사건\s*요지|자문\s*요지)\s*:?.*$', _re_memo.M), "1. 자문요지 :"),
+    (_re_memo.compile(r'(?mi)^\s*2\s*[\.\)]\s*(적용\s*법령\s*/?\s*근거|법적\s*근거)\s*:?.*$', _re_memo.M), "2. 적용 법령/근거"),
+    (_re_memo.compile(r'(?mi)^\s*3\s*[\.\)]\s*(핵심\s*판단)\s*:?.*$', _re_memo.M), "3. 핵심 판단"),
+    (_re_memo.compile(r'(?mi)^\s*4\s*[\.\)]\s*(권고\s*조치)\s*:?.*$', _re_memo.M), "4. 권고 조치"),
+]
+
+def enforce_memo_template(md: str) -> str:
+    if not md:
+        return md
+    out = md
+    for pat, fixed in _MEMO_HEADS:
+        out = pat.sub(fixed, out)
+    # 본문 내 '사건요지' 표기를 '자문요지'로 통일
+    out = _re_memo.sub(r'(?i)사건\s*요지', '자문요지', out)
+    return out
+
+_SEC_CORE_TITLE = _re_memo.compile(r'(?mi)^\s*3\s*[\.\)]\s*핵심\s*판단\s*$', _re_memo.M)
+_SEC_NEXT_TITLE2 = _re_memo.compile(r'(?m)^\s*\d+\s*[\.\)]\s+')
+
+def strip_links_in_core_judgment(md: str) -> str:
+    if not md:
+        return md
+    m = _SEC_CORE_TITLE.search(md)
+    if not m:
+        return md
+    start = m.end()
+    n = _SEC_NEXT_TITLE2.search(md, start)
+    end = n.start() if n else len(md)
+    block = md[start:end]
+    # [텍스트](http...) 형태의 링크 제거
+    block = _re_memo.sub(r'\[([^\]]+)\]\((?:https?:\/\/)[^)]+\)', r'\1', block)
+    return md[:start] + block + md[end:]
+# === [END NEW] ===
+
+
 def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
     # 1) normalize (fallback 포함)
     try:
@@ -644,11 +1524,23 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
           .replace("* ", "- ")
     )
 
+    # ✅ (NEW) MEMO 제목/번호/콜론 강제
+    ft = enforce_memo_template(ft)
+
+
     # 3) 조문 인라인 링크 변환:  - 민법 제839조의2 → [민법 제839조의2](...)
-    ft = link_inline_articles_in_bullets(ft)
+    ft = link_articles_in_law_and_explain_sections(ft)
+    ft = strip_redundant_article_link_words(ft)   # ← 잉여 "제n조 링크" 제거
+# 4) 본문 내 [법령명](URL) 교정 ...
+    ft = fix_links_with_lawdata(ft, collected_laws)
+
 
     # 4) 본문 내 [법령명](URL) 교정(법제처 공식 링크로)
     ft = fix_links_with_lawdata(ft, collected_laws)
+
+    # ✅ (NEW) '3. 핵심 판단' 섹션의 링크 제거
+    ft = strip_links_in_core_judgment(ft)
+
 
     # 5) 맨 아래 '참고 링크(조문)' 섹션 제거(중복 방지)
     ft = strip_reference_links_block(ft)
@@ -694,6 +1586,27 @@ def extract_law_names_from_answer(md: str) -> list[str]:
             out.append(n2)
     return out[:6]
 
+# ===== 조문 추출: 답변에서 (법령명, 제n조[의m]) 페어 추출 =====
+import re as _re_art
+
+_ART_INLINE = _re_art.compile(
+    r'(?P<law>[가-힣A-Za-z0-9·\s]{2,40}?(?:법|령|규칙|조례))\s*제(?P<num>\d{1,4})조(?P<ui>의\d{1,3})?'
+)
+
+def extract_article_pairs_from_answer(md: str) -> list[tuple[str, str]]:
+    pairs = []
+    for m in _ART_INLINE.finditer(md or ""):
+        law = (m.group("law") or "").strip()
+        art = f"제{m.group('num')}조{m.group('ui') or ''}"
+        if law:
+            pairs.append((law, art))
+    # 순서 유지 중복 제거
+    seen = set(); out = []
+    for p in pairs:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out[:8]
 
 def normalize_law_link(u: str) -> str:
     """상대/스킴누락 링크를 www.law.go.kr 절대 URL로 교정"""
@@ -738,9 +1651,165 @@ import re
 from urllib.parse import quote
 
 # 조문 패턴: 민법 제839조의2, 민사소송법 제163조 등
+# app.py — [PATCH] 조문 패턴: 불릿(*)이 '선택'이 되도록
 _ART_PAT_BULLET = re.compile(
-    r'(?m)^(?P<prefix>\s*[-*•]\s*)(?P<law>[가-힣A-Za-z0-9·()\s]{2,40})\s*제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})(?P<tail>[^\n]*)$'
+    r'(?m)^(?P<prefix>\s*(?:[-*•]\s*)?)'                  # 불릿 기호를 옵션으로
+    r'(?P<law>[가-힣A-Za-z0-9·()\s]{2,40})\s*'
+    r'제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})'
+    r'(?P<tail>[^\n]*)$'
 )
+
+
+# --- [NEW] '적용 법령/근거' + '해설' 섹션에서만 조문 링크 활성화 ---
+# 섹션 제목 인식
+_SEC_LAW_TITLES    = re.compile(r'(?mi)^\s*\d+\s*[\.\)]\s*(적용\s*법령\s*/?\s*근거|법적\s*근거)\s*$')
+_SEC_EXPLAIN_TITLE = re.compile(r'(?mi)^\s*(?:#{1,6}\s*)?해설\s*:?\s*$')
+# 다음 상위 섹션(예: "3. 핵심 판단") 시작 라인
+_SEC_NEXT_TITLE = re.compile(r'(?m)^\s*\d+\s*[\.\)]\s+')
+
+# 해설 섹션 내부의 '맨몸 URL'(순수 문자열 URL)을 <URL> 형태로 감싸서 자동 링크화
+_URL_BARE = re.compile(r'(?<!\()(?<!\])\b(https?://[^\s<>)]+)\b')
+def autolink_bare_urls_in_explain(md: str) -> str:
+    if not md:
+        return md
+    m = _SEC_EXPLAIN_TITLE.search(md)
+    if not m:
+        return md
+    start = m.end()
+    n = _SEC_NEXT_TITLE.search(md, start)
+    end = n.start() if n else len(md)
+    block = md[start:end]
+    # 기존 마크다운 링크([text](url))는 그대로 두고, 맨몸 URL만 <url>로 감싼다
+    def _wrap(match):
+        url = match.group(1)
+        return f'<{url}>'
+    block = _URL_BARE.sub(_wrap, block)
+    return md[:start] + block + md[end:]
+st.markdown(
+    """
+    <div style="text-align:center; padding: 6px 0 2px;">
+      <h1 style="
+          margin:0;
+          font-size:48px;
+          font-weight:800;
+          line-height:1.1;
+          letter-spacing:-0.5px;">
+        인공지능 <span style="color:#2F80ED">법률 상담가</span>
+      </h1>
+    </div>
+    <hr style="margin: 12px 0 20px; border: 0; height: 1px; background: #eee;">
+    """,
+    unsafe_allow_html=True
+)
+
+# 본문
+st.markdown("""
+국가법령정보 DB를 직접 접속하여 최신 법령을 조회하여 답변합니다.  
+저는 내부 DB를 사용하지 않아 채팅 기록, 첨부파일 등 사용자의 기록을 저장하지 않습니다.             
+""")
+
+# 하위 법령 소제목(예: "1) 산업안전보건법")
+# 번호/헤딩/불릿이 있어도 없어도 잡히게 완화
+_LAW_HEADING_LINE = re.compile(
+    r'(?m)^\s*(?:\d+\s*[\.\)]\s*)?(?:#{1,6}\s*)?(?:[*-]\s*)?(?P<law>[가-힣A-Za-z0-9·()\s]{2,40}?법)\s*$'
+)
+
+
+# 불릿에 "법령명 제n조 ..." 패턴(기존 전역의 _ART_PAT_BULLET 재사용)
+# _ART_PAT_BULLET, _deep_article_url 이 이미 정의돼 있어야 합니다.
+
+# 불릿에 "제n조"만 있고 법령명이 생략된 단순형
+_BULLET_ART_SIMPLE = re.compile(
+    r'(?m)^(?P<prefix>\s*[-*•]\s*)제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})?(?P<title>\([^)]+\))?(?P<tail>[^\n]*)$'
+)
+
+# 해설 섹션에서의 인라인 "법령명 제n조" 패턴
+_ART_INLINE_IN_EXPL = re.compile(
+    r'(?P<law>[가-힣A-Za-z0-9·()\s]{1,40}?법)\s*제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})?'
+)
+
+def _link_block_with_bullets(block: str) -> str:
+    """법령/근거 섹션 블록: 소제목의 법령명을 기억해 아래 불릿의 '제n조'에 링크 부여."""
+    cur_law = None
+    out = []
+    for line in block.splitlines():
+        mh = _LAW_HEADING_LINE.match(line)
+        if mh:
+            cur_law = (mh.groupdict().get('law') or (mh.group(1) if mh.lastindex else "") or "").strip() or cur_law
+            out.append(line)
+            continue
+
+        mf = _ART_PAT_BULLET.match(line)
+        if mf:
+            law = (mf.group("law") or "").strip() or cur_law
+            if law:
+                art  = f"제{mf.group('num')}조{mf.group('ui') or ''}"
+                url  = _deep_article_url(law, art)
+                tail = (mf.group("tail") or "")
+                out.append(f"{mf.group('prefix')}[{law} {art}]({url}){tail}")
+                continue
+
+        ms = _BULLET_ART_SIMPLE.match(line)
+        if ms and cur_law:
+            art   = f"제{ms.group('num')}조{ms.group('ui') or ''}"
+            title = (ms.group('title') or '')
+            tail  = (ms.group('tail') or '')
+            url   = _deep_article_url(cur_law, art)
+            txt = f"{art}{title or ''}"                      # 예: "제76조(외국에서의 혼인신고)"
+            out.append(f"{ms.group('prefix')}[{txt}]({url}){tail}")
+
+            continue
+
+        out.append(line)
+    return "\n".join(out)
+
+def _link_inline_in_explain(block: str) -> str:
+    """해설 섹션 블록: 인라인 '법령명 제n조'를 링크로 치환."""
+    def repl(m):
+        law = m.group('law').strip()
+        art = f"제{m.group('num')}조{m.group('ui') or ''}"
+        return f"[{law} {art}]({_deep_article_url(law, art)})"
+    return _ART_INLINE_IN_EXPL.sub(repl, block)
+
+def link_articles_in_law_and_explain_sections(md: str) -> str:
+    """
+    '2. 적용 법령/근거'와 '해설' 섹션에서만 조문 링크를 활성화한다.
+    그 외(예: '3. 핵심 판단')에는 링크를 만들지 않는다.
+    """
+    if not md:
+        return md
+
+    ranges = []
+
+    # 적용 법령/근거 섹션(1개 가정)
+    m = _SEC_LAW_TITLES.search(md)
+    if m:
+        n = _SEC_NEXT_TITLE.search(md, m.end())
+        ranges.append(("law", m.start(), n.start() if n else len(md)))
+
+    # 해설 섹션(여러 개일 수 있음)
+    for m in _SEC_EXPLAIN_TITLE.finditer(md):
+        n = _SEC_NEXT_TITLE.search(md, m.end())
+        ranges.append(("explain", m.start(), n.start() if n else len(md)))
+
+    if not ranges:
+        return md
+
+    ranges.sort(key=lambda x: x[1])
+
+    out = []
+    last = 0
+    for kind, s, e in ranges:
+        out.append(md[last:s])
+        block = md[s:e]
+        if kind == "law":
+            out.append(_link_block_with_bullets(block))
+        else:  # explain
+            out.append(_link_inline_in_explain(block))
+        last = e
+    out.append(md[last:])
+    return "".join(out)
+
 
 # 하단 '참고 링크' 제목(모델이 7. 또는 7) 등으로 출력하는 케이스 포함)
 _REF_BLOCK_PAT = re.compile(
@@ -749,9 +1818,40 @@ _REF_BLOCK_PAT = re.compile(
 # 앞에 공백이 있어도 매칭되도록 보강
 _REF_BLOCK2_PAT = re.compile(r'\n[ \t]*###\s*참고\s*링크\(조문\)[\s\S]*$', re.M)
 
+# app.py — 안전 링크 헬퍼 (기존 _deep_article_url 대체)
+from urllib.parse import quote as _q
 
+def _article_url_or_main(law: str, art_label: str, verify: bool = True, timeout: float = 2.5) -> str:
+    base = "https://www.law.go.kr/법령"
+    law = (law or "").strip(); art = (art_label or "").strip()
+    cand = [
+        f"{base}/{law}/{art}",                         # 1) 미인코딩
+        f"{base}/{_q(law, safe='')}/{_q(art, safe='')}" # 2) 인코딩
+    ]
+    if not verify:
+        return cand[0]
+    try:
+        import requests
+        bad = ["삭제", "존재하지 않는 조문입니다", "해당 한글주소명을 찾을 수 없습니다", "한글 법령주소를 확인해 주시기 바랍니다"]
+        for deep in cand:
+            r = requests.get(deep, timeout=timeout, allow_redirects=True)
+            if (200 <= r.status_code < 400) and not any(sig in r.text[:6000] for sig in bad):
+                return deep
+        return f"{base}/{law}"  # 모두 실패 → 메인
+    except Exception:
+        return f"{base}/{law}"
+
+# === [REPLACE] app.py : _deep_article_url (두 군데 모두) ===
 def _deep_article_url(law: str, art_label: str) -> str:
-    return f"https://www.law.go.kr/법령/{quote((law or '').strip())}/{quote(art_label)}"
+    """
+    조문 직링크(한글 주소) 우선. 실패 시 내부 로직이 메인으로 폴백.
+    """
+    try:
+        from modules.linking import resolve_article_url
+    except Exception:
+        from linking import resolve_article_url  # fallback
+    return resolve_article_url(law, art_label)
+
 
 def link_inline_articles_in_bullets(markdown: str) -> str:
     """불릿 라인 중 '법령명 제N조(의M)'를 [텍스트](조문URL)로 교체"""
@@ -772,6 +1872,14 @@ def strip_reference_links_block(markdown: str) -> str:
     txt = _REF_BLOCK_PAT.sub("", markdown)
     txt = _REF_BLOCK2_PAT.sub("", txt)
     return txt
+
+
+# 모델이 종종 만들어내는 "제n조 링크" 같은 잉여 단어 제거
+import re as _re_fix
+_WORD_LINK_GHOST = _re_fix.compile(r'(?mi)\s*제\d{1,4}조(?:의\d{1,3}){0,2}\s*링크\b')
+
+def strip_redundant_article_link_words(s: str) -> str:
+    return _WORD_LINK_GHOST.sub('', s)
 
 
 # === 새로 추가: 중복 제거 유틸 ===
@@ -929,7 +2037,7 @@ def render_bubble_with_copy(message: str, key: str):
     st.markdown(message)
     safe_raw_json = json.dumps(message)
     html_tpl = '''
-    <div class="copy-row">
+    <div class="copy-row" style="margin-bottom:8px">
       <button id="copy-__KEY__" class="copy-btn">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
           <path d="M9 9h9v12H9z" stroke="currentColor"/>
@@ -1129,16 +2237,68 @@ def fix_links_with_lawdata(markdown: str, law_data: list[dict]) -> str:
 # Secrets / Clients / Session
 # =============================
 LAW_API_KEY, AZURE = load_secrets()
+
+# 👉 OC 브릿지: law_fetch.py가 환경변수에서만 OC를 읽으므로 여기서 연결
+import os, streamlit as st
+try:
+    _oc = st.secrets.get("LAW_API_OC", "")
+except Exception:
+    _oc = ""
+if _oc and not os.environ.get("LAW_API_OC"):
+    os.environ["LAW_API_OC"] = _oc  # DRF 호출용
+
+# Azure 클라이언트 초기화 (그대로 두되, 예외 시 폴백 로깅 유지)
 client = None
 if AZURE:
     try:
+        from openai import AzureOpenAI
         client = AzureOpenAI(
             api_key=AZURE["api_key"],
             api_version=AZURE["api_version"],
             azure_endpoint=AZURE["endpoint"],
         )
     except Exception as e:
-        st.error(f"Azure OpenAI 초기화 실패: {e}")
+        st.warning(f"Azure 초기화 실패, OpenAI로 폴백합니다: {e}")
+
+if client is None:
+    client = get_llm_client()
+
+
+import os
+try:
+    from openai import OpenAI
+    from openai import AzureOpenAI
+except Exception:
+    OpenAI = None
+    AzureOpenAI = None
+
+    # app.py — Secrets 로딩 바로 다음
+import os, streamlit as st
+os.environ.setdefault("LAW_API_OC", st.secrets.get("LAW_API_OC", ""))
+
+
+def get_llm_client():
+    # 기존 load_secrets() 쓰시던 구조면 그대로 사용
+    try:
+        from modules.advice_engine import load_secrets  # 프로젝트에 이미 있을 가능성 높음
+    except Exception:
+        load_secrets = lambda: (os.environ.get("OPENAI_API_KEY"), {
+            "api_key": os.environ.get("AZURE_OPENAI_API_KEY"),
+            "api_version": os.environ.get("AZURE_OPENAI_API_VERSION"),
+            "endpoint": os.environ.get("AZURE_OPENAI_ENDPOINT"),
+        })
+
+    OPENAI_KEY, AZURE = load_secrets()
+    if AZURE and AzureOpenAI and AZURE.get("api_key"):
+        return AzureOpenAI(
+            api_key=AZURE["api_key"],
+            api_version=AZURE["api_version"],
+            azure_endpoint=AZURE["endpoint"]
+        )
+    if OpenAI and (OPENAI_KEY or os.environ.get("OPENAI_API_KEY")):
+        return OpenAI()
+    raise RuntimeError("LLM client 초기화 실패: 환경변수/시크릿을 확인하세요.")
+
 
 # =============================
 # MOLEG API (Law Search) — unified
@@ -1249,7 +2409,7 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
 # 통합 미리보기 전용: 과한 문장부호/따옴표 제거 + '법령명 (제n조)'만 추출
 def _clean_query_for_api(q: str) -> str:
     q = (q or "").strip()
-    q = re.sub(r'[“"\'‘’.,!?()<>\\[\\]{}:;~…]', ' ', q)
+    q = re.sub(r'[“”"\'‘’.,!?()<>\\[\\]{}:;~…]', ' ', q)
     q = re.sub(r'\\s+', ' ', q).strip()
     # 법령명(OO법/령/규칙/조례) + (제n조) 패턴
     name = re.search(r'([가-힣A-Za-z0-9·\\s]{1,40}?(법|령|규칙|조례))', q)
@@ -1398,6 +2558,311 @@ def extract_law_candidates_llm(q: str) -> list[str]:
 
 # === LLM 플래너 & 플랜 필터 ===
 import re, json
+
+# === Fallback utilities for article text extraction (law.go.kr deep link) ===
+import re as _re_fallback
+from html import unescape as _unescape_fallback
+from urllib.parse import quote as _quote_fallback
+
+# === [REPLACE] app.py : _deep_article_url (두 군데 모두) ===
+def _deep_article_url(law: str, art_label: str) -> str:
+    """
+    조문 직링크(한글 주소) 우선. 실패 시 내부 로직이 메인으로 폴백.
+    """
+    try:
+        from modules.linking import resolve_article_url
+    except Exception:
+        from linking import resolve_article_url  # fallback
+    return resolve_article_url(law, art_label)
+
+
+def _strip_html_keep_lines(s: str) -> str:
+    if not s:
+        return ""
+    s = _re_fallback.sub(r"(?is)<(script|style)[\s\S]*?</\1>", "", s)
+    s = _re_fallback.sub(r"(?is)<br\s*/?>", "\n", s)
+    s = _re_fallback.sub(r"(?is)</p\s*>", "\n", s)
+    s = _re_fallback.sub(r"(?is)<[^>]+>", "", s)
+    s = _unescape_fallback(s)
+    s = _re_fallback.sub(r"[ \t]+\n", "\n", s)
+    s = _re_fallback.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+def _extract_article_block(html_text: str) -> str:
+    if not html_text:
+        return ""
+    CANDS = [
+        r'(?is)<div[^>]+class="[^"]*(?:lawArticle|article-body|article|law-viewer|con_box|contants)[^"]*"[^>]*>([\s\S]{200,}?)</div>',
+        r'(?is)<table[^>]*class="[^"]*(?:tbl|law)[^"]*"[^>]*>([\s\S]{200,}?)</table>',
+        r'(?is)<body[^>]*>([\s\S]{400,}?)</body>',
+    ]
+    for pat in CANDS:
+        m = _re_fallback.search(pat, html_text)
+        if m:
+            txt = _strip_html_keep_lines(m.group(1))
+            if len(txt) >= 60:
+                return txt
+    return ""
+
+def fetch_article_text_fallback(
+    law_name: str,
+    article_label: str,
+    via_url: str | None = None,
+    timeout: float = 7.0,
+) -> tuple[str, str]:
+    """
+    1) 공개 한글주소(깊은 링크) 먼저 시도
+    2) 실패하면 DRF URL 시도
+    3) DRF의 '기관/IP 차단'·'오류 페이지'를 본문으로 오인하지 않도록 필터링
+    4) 어느 쪽이든 본문 파싱 실패 시 공백 반환(링크만 돌려줌)
+    """
+    import re, requests
+    from bs4 import BeautifulSoup
+
+    # fetch_article_text_fallback 내부
+BAD_SNIPPETS = [
+    "페이지 접속에 실패하였습니다",
+    "접속하신 기관에 문의하여 주시기 바랍니다",
+    "유지보수팀(02-2109-6446)",
+    "접근이 제한되었습니다",
+    # ⬇︎ 추가
+    "일치하는 법령이 없습니다",
+    "URL에 MST 요청값이 없습니다",
+    "lawService는 page 요청변수를 사용하지 않습니다",
+    "로그인한 사용자 OC만 사용가능합니다",
+]
+
+# ============= Lawyer-grade Legal Pipeline Utils =============
+import os, re, requests, json
+from urllib.parse import urlencode
+from typing import Optional, Tuple, Dict, Any, List
+
+# (권장) 시크릿 → env 브릿지 (앱 시작 직후 1회)
+try:
+    import streamlit as st  # noqa
+    os.environ.setdefault("LAW_API_OC", st.secrets.get("LAW_API_OC", ""))
+except Exception:
+    pass
+
+def jo_from_label(label: str) -> str:
+    """'제83조' → '008300' (조 번호 4자리 zero-pad + '00')"""
+    m = re.search(r'(\d+)\s*조', label or "")
+    return f"{int(m.group(1)):04d}00" if m else ""
+
+def resolve_mst_and_efyd(law_name: str) -> Tuple[str, str]:
+    """
+    OpenAPI(통합검색)로 정확 일치 법령을 찾아 MST와 시행일자(YYYYMMDD)를 확정.
+    실패 시 ("","") 반환.
+    """
+    try:
+        items, _, _ = _call_moleg_list("law", law_name, num_rows=5)  # 기존 헬퍼 사용
+        if not items:
+            return "", ""
+        for it in items:
+            if (it.get("법령명") or "").strip() == (law_name or "").strip():
+                mst = (it.get("MST") or it.get("LawMST") or "").strip()
+                eff = (it.get("시행일자") or it.get("eff_date") or "").replace("-", "")
+                return mst, eff
+        it = items[0]
+        return (it.get("MST") or it.get("LawMST") or "").strip(), (it.get("시행일자") or "").replace("-", "")
+    except Exception:
+        return "", ""
+
+def _drf_json_url(*, oc: str, mst: Optional[str], jo: str, efYd: Optional[str]) -> str:
+    q = {"OC": oc, "target": "law", "type": "JSON", "LANG": "KO"}
+    if mst:   q["MST"]  = str(mst)
+    q["JO"] = jo
+    if efYd:  q["efYd"] = re.sub(r"\D", "", efYd)
+    return "https://www.law.go.kr/DRF/lawService.do?" + urlencode(q, encoding="utf-8")
+
+def _find_article_node(obj: Any, want_label: str) -> Optional[Dict[str, Any]]:
+    """
+    DRF JSON 트리에서 조문번호 == want_label 인 노드를 찾는다.
+    (공백 제거 후 비교)
+    """
+    want = re.sub(r"\s+", "", want_label or "")
+    if not want:
+        return None
+    def _walk(o: Any) -> Optional[Dict[str, Any]]:
+        if isinstance(o, dict):
+            no = re.sub(r"\s+", "", str(o.get("조문번호") or ""))
+            if no and no == want:
+                return o
+            for v in o.values():
+                r = _walk(v)
+                if r: return r
+        elif isinstance(o, list):
+            for v in o:
+                r = _walk(v)
+                if r: return r
+        return None
+    return _walk(obj)
+
+def _collect_article_text(node: Dict[str, Any]) -> Tuple[str, List[Dict[str, str]]]:
+    """
+    조문 노드에서 본문 텍스트와 항/호 구조를 추출.
+    반환: (flattened_text, clauses[ {항번호, 항내용, 호:[{호번호, 호내용}]} ])
+    """
+    flattened: List[str] = []
+    clauses: List[Dict[str, Any]] = []
+
+    # 조문 내용
+    body = (node.get("조문내용") or "").strip()
+    if body:
+        flattened.append(body)
+
+    # 항
+    _항 = node.get("항") or []
+    if isinstance(_항, dict):  # 단일 항이 dict로 오는 경우
+        _항 = [_항]
+    for par in _항:
+        항번호 = str(par.get("항번호") or "").strip()
+        항내용 = str(par.get("항내용") or "").strip()
+        if 항내용:
+            flattened.append(f"{항번호} {항내용}".strip())
+        # 호
+        hos = []
+        _호 = par.get("호") or []
+        if isinstance(_호, dict):
+            _호 = [_호]
+        for ho in _호:
+            호번호 = str(ho.get("호번호") or "").strip()
+            호내용 = str(ho.get("호내용") or "").strip()
+            if 호내용:
+                hos.append({"호번호": 호번호, "호내용": 호내용})
+                flattened.append(f"{호번호} {호내용}".strip())
+        clauses.append({"항번호": 항번호, "항내용": 항내용, "호": hos})
+
+    return "\n".join(x for x in flattened if x).strip(), clauses
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DRF(JSON)로 조문을 구조화 수집 → LLM 컨텍스트로 바로 쓰는 번들 생성
+# 반환: (bundle, used_url)
+#   bundle = {
+#     law, article_label, mst, efYd, jo, title, body_text, clauses, source_url
+#   }
+# ─────────────────────────────────────────────────────────────────────────────
+from typing import Optional, Tuple, Dict, Any
+import os, requests
+
+def fetch_article_via_api_struct(
+    law_name: str,
+    article_label: str,
+    *,
+    mst: Optional[str] = None,
+    efYd: Optional[str] = None,
+    timeout: float = 7.0,
+) -> Tuple[Dict[str, Any], str]:
+    """
+    DRF(JSON) 한 번으로 '정확한 조문 + 구조화 메타' 확보.
+    - MST/efYd가 비어 있으면 resolve_mst_and_efyd(law_name)로 보강 (정본 1개만 사용)
+    - JO는 jo_from_label('제83조') → '008300' 규칙으로 통일
+    - 실패시 예외 발생(상위에서 폴백)
+    """
+    oc = os.environ.get("LAW_API_OC", "")
+    if not oc:
+        try:
+            import streamlit as st  # optional
+            oc = st.secrets.get("LAW_API_OC", "")
+        except Exception:
+            oc = ""
+    if not oc:
+        raise RuntimeError("LAW_API_OC is empty")
+
+    # 1) MST/efYd 확정 (정본 해석기 한 개만 사용)
+    mst = (mst or "").strip()
+    efYd = (efYd or "").strip()
+    if not mst:
+        mst2, ef2 = resolve_mst_and_efyd(law_name)
+        mst = mst or mst2
+        efYd = efYd or ef2
+    if not mst:
+        raise ValueError(f"MST not found for law: {law_name!r}")
+
+    # 2) JO 계산 (6자리 규칙 고정)
+    jo = jo_from_label(article_label)
+    if not jo:
+        raise ValueError(f"Invalid article label: {article_label!r}")
+
+    # 3) DRF(JSON) 호출
+    url = _drf_json_url(oc=oc, mst=mst, jo=jo, efYd=efYd)
+    r = requests.get(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
+    head = (r.text or "")[:3000]
+    if not (200 <= r.status_code < 300):
+        raise RuntimeError(f"DRF HTTP {r.status_code}")
+    # DRF의 오류페이지 문자열 방어
+    if any(s in head for s in (
+        "페이지 접속에 실패하였습니다",
+        "일치하는 법령이 없습니다",
+        "URL에 MST 요청값이 없습니다",
+        "접근이 제한되었습니다",
+        "로그인한 사용자 OC만 사용가능합니다",
+    )):
+        raise RuntimeError("DRF returned error page (params/access)")
+
+    try:
+        data = r.json()
+    except Exception as e:
+        raise RuntimeError("Invalid JSON from DRF") from e
+
+    # 4) 대상 조문 노드 추출 → 본문/항·호 평문화
+    node = _find_article_node(data, article_label)
+    if not node:
+        raise RuntimeError("Target article node not found in JSON")
+
+    title = (node.get("조문제목") or "").strip()
+    body_text, clauses = _collect_article_text(node)
+    if not (body_text or clauses):
+        raise RuntimeError("Empty article content in JSON")
+
+    bundle: Dict[str, Any] = {
+        "law": law_name,
+        "article_label": article_label,
+        "mst": mst,
+        "efYd": efYd or "",
+        "jo": jo,
+        "title": title,
+        "body_text": body_text,
+        "clauses": clauses,       # [{항번호, 항내용, 호:[{호번호, 호내용}]}]
+        "source_url": url,        # 근거로 노출
+    }
+    return bundle, url
+
+
+def render_article_context_for_llm(bundle: Dict[str, Any]) -> str:
+    """
+    LLM 컨텍스트로 바로 넣을 고정 포맷 생성
+    (메타 + 본문 + 항/호 요약 포함)
+    """
+    meta = (
+        f"법령명: {bundle.get('law','')}\n"
+        f"MST: {bundle.get('mst','')} / efYd: {bundle.get('efYd','')}\n"
+        f"조문: {bundle.get('article_label','')} (JO {bundle.get('jo','')})\n"
+        f"원문(API JSON): {bundle.get('source_url','')}\n"
+    )
+
+    # 항/호 요약
+    parts: List[str] = []
+    for cl in (bundle.get("clauses") or []):
+        if cl.get("항내용"):
+            parts.append(f"{cl.get('항번호','')} {cl.get('항내용','')}".strip())
+        for ho in (cl.get("호") or []):
+            if ho.get("호내용"):
+                parts.append(f"{ho.get('호번호','')} {ho.get('호내용','')}".strip())
+    clauses_flat = "\n".join(parts).strip()
+
+    title = bundle.get("title", "")
+    header = f"{bundle.get('article_label','')}{(' - ' + title) if title else ''}".strip()
+
+    return (
+        "[법령 메타]\n" + meta + "\n"
+        "[조문 본문]\n" + header + "\n" + (bundle.get("body_text","") or "") + "\n\n"
+        + ("[항/호]\n" + clauses_flat + "\n" if clauses_flat else "")
+    )
+# ==============================================================
+
+
+
 
 # === LLM 플래너 & 플랜 필터 ===
 def _filter_items_by_plan(user_q: str, items: list[dict], plan: dict) -> list[dict]:
@@ -1706,16 +3171,190 @@ def extract_keywords_llm(q: str) -> list[str]:
     st.session_state["_kw_extract_debug"] = "all_stages_failed"
     return []
 
-# st_tags가 있으면 태그 위젯, 없으면 multiselect로 동작
-# 기본 프리셋(탭별 선호 키워드를 지정할 수 있음). 비어 있으면 첫 항목을 기본으로 사용.
-DEFAULT_KEYWORD = {}
+
+# 간단 폴백(예비 — 도구 모드 기본이므로 최소화)
+def find_law_with_fallback(user_query: str, num_rows: int = 10):
+    laws, endpoint, err = search_law_data(user_query, num_rows=num_rows)
+    if laws: return laws, endpoint, err, "primary"
+    keyword_map = {"정당방위":"형법","전세":"주택임대차보호법","상가임대차":"상가건물 임대차보호법","근로계약":"근로기준법","해고":"근로기준법","개인정보":"개인정보 보호법","산재":"산업재해보상보험법","이혼":"민법"}
+    text = (user_query or "")
+    for k, law_name in keyword_map.items():
+        if k in text:
+            laws2, ep2, err2 = search_law_data(law_name, num_rows=num_rows)
+            if laws2: return laws2, ep2, err2, f"fallback:{law_name}"
+    return [], endpoint, err, "none"
+
+def _append_message(role: str, content: str, **extra):
+    
+    txt = (content or "").strip()
+    is_code_only = (txt.startswith("```") and txt.endswith("```"))
+    if not txt or is_code_only:
+        return
+    msgs = st.session_state.get("messages", [])
+    if msgs and isinstance(msgs[-1], dict) and msgs[-1].get("role")==role and (msgs[-1].get("content") or "").strip()==txt:
+        # skip exact duplicate of the last message (role+content)
+        return
+    st.session_state.messages.append({"role": role, "content": txt, **extra})
+
+
+
+def format_law_context(law_data: list[dict]) -> str:
+    if not law_data: return "관련 법령 검색 결과가 없습니다."
+    rows = []
+    for i, law in enumerate(law_data, 1):
+        rows.append(
+            f"{i}. {law['법령명']} ({law['법령구분']})\n"
+            f"   - 소관부처: {law['소관부처명']}\n"
+            f"   - 시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}\n"
+            f"   - 링크: {law['법령상세링크'] or '없음'}"
+        )
+    return "\n\n".join(rows)
+
+def animate_law_results(law_data: list[dict], delay: float = 1.0):
+    if not law_data:
+        st.info("관련 법령 검색 결과가 없습니다.")
+        return
+    n = len(law_data)
+    prog = st.progress(0.0, text="관련 법령 미리보기")
+    placeholder = st.empty()
+    for i, law in enumerate(law_data, 1):
+        with placeholder.container():
+            st.markdown(
+                f"""
+                <div class='law-slide'>
+                    <div style='font-weight:700'>🔎 {i}. {law['법령명']} <span style='opacity:.7'>({law['법령구분']})</span></div>
+                    <div style='margin-top:6px'>소관부처: {law['소관부처명']}</div>
+                    <div>시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}</div>
+                    {f"<div style='margin-top:6px'><a href='{law['법령상세링크']}' target='_blank'>법령 상세보기</a></div>" if law.get('법령상세링크') else ''}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        prog.progress(i / n, text=f"관련 법령 미리보기 {i}/{n}")
+        time.sleep(max(0.0, delay))
+    prog.empty()
+
+# =============================
+# Azure 함수콜(툴) — 래퍼 & 스키마 & 오케스트레이션
+# =============================
+SUPPORTED_TARGETS = ["law", "admrul", "ordin", "trty"]
+
+def tool_search_one(target: str, query: str, num_rows: int = 5):
+    if target not in SUPPORTED_TARGETS:
+        return {"error": f"unsupported target: {target}"}
+    items, endpoint, err = _call_moleg_list(target, query, num_rows=num_rows)
+    return {"target": target, "query": query, "endpoint": endpoint, "error": err, "items": items}
+
+def tool_search_multi(queries: list, num_rows: int = 5):
+    out = []
+    for q in queries:
+        t = q.get("target","law"); s = q.get("query","")
+        out.append(tool_search_one(t, s, num_rows=num_rows))
+    return out
+
+TOOLS = [
+    {
+        "type":"function",
+        "function":{
+            "name":"search_one",
+            "description":"MOLEG 목록 API에서 단일 카테고리를 검색한다.",
+            "parameters":{
+                "type":"object",
+                "properties":{
+                    "target":{"type":"string","enum":SUPPORTED_TARGETS},
+                    "query":{"type":"string"},
+                    "num_rows":{"type":"integer","minimum":1,"maximum":10,"default":5}
+                },
+                "required":["target","query"]
+            }
+        }
+    },
+    {
+        "type":"function",
+        "function":{
+            "name":"search_multi",
+            "description":"여러 카테고리/질의어를 한 번에 검색한다.",
+            "parameters":{
+                "type":"object",
+                "properties":{
+                    "queries":{
+                        "type":"array",
+                        "items":{
+                            "type":"object",
+                            "properties":{
+                                "target":{"type":"string","enum":SUPPORTED_TARGETS},
+                                "query":{"type":"string"}
+                            },
+                            "required":["target","query"]
+                        }
+                    },
+                    "num_rows":{"type":"integer","minimum":1,"maximum":10,"default":5}
+                },
+                "required":["queries"]
+            }
+        }
+    }
+]
+
+# ============================
+# [GPT PATCH] app.py 연결부
+# 붙여넣는 위치: client/AZURE/TOOLS 등 준비가 끝난 "아래",
+#               사이드바/레이아웃 렌더링이 시작되기 "위"
+# ============================
+
+# 1) imports
+from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
+
+# 2) 엔진 생성 (한 번만)
+engine = None
+try:
+    # 아래 객체들은 app.py 상단에서 이미 정의되어 있어야 합니다.
+    # - client, AZURE, TOOLS
+    # - safe_chat_completion
+    # - tool_search_one, tool_search_multi
+    # - prefetch_law_context, _summarize_laws_for_primer
+    if client and AZURE and TOOLS:
+        engine = AdviceEngine(
+            client=client,
+            model=AZURE["deployment"],
+            tools=TOOLS,
+            safe_chat_completion=safe_chat_completion,
+            tool_search_one=tool_search_one,
+            tool_search_multi=tool_search_multi,
+            prefetch_law_context=prefetch_law_context,            # 있으면 그대로
+            summarize_laws_for_primer=_summarize_laws_for_primer, # 있으면 그대로
+            temperature=0.2,
+        )
+except NameError:
+    # 만약 위 객체들이 아직 정의되기 전 위치라면,
+    # 이 패치를 해당 정의 '아래'로 옮겨 붙이세요.
+    pass
+
+# =============================
+# 키워드 기본값/위젯 헬퍼 (with st.sidebar: 위에 배치)
+# =============================
+
+# 탭별 기본 키워드 1개(없으면 첫 항목 사용)
+DEFAULT_KEYWORD = {
+    "법령": "개정",
+    "행정규칙": "개정",
+    "자치법규": "개정",
+    "조약": "비준",
+    "판례": "대법원",
+    "헌재": "위헌",
+    "해석례": "유권해석",
+    "용어/별표": "정의",   # ← '용어' 대신 '정의'를 기본으로 권장
+}
 
 def one_default(options, prefer=None):
-    opts = list(options or [])
-    if prefer and prefer in opts:
+    """옵션 목록에서 기본으로 1개만 선택해 반환"""
+    if not options:
+        return []
+    if prefer and prefer in options:
         return [prefer]
-    return [opts[0]] if opts else []
+    return [options[0]]
 
+# st_tags가 있으면 태그 위젯, 없으면 multiselect로 동작
 try:
     from streamlit_tags import st_tags
     def kw_input(label, options, key, tab_name=None):
@@ -1753,13 +3392,49 @@ with st.sidebar:
     st.header("🔗 링크 생성기 (무인증)")
     tabs = st.tabs(["법령", "행정규칙", "자치법규", "조약", "판례", "헌재", "해석례", "용어/별표"])
 
+    # persist/restore active sidebar tab across reruns
+    st.markdown("""
+<script>
+(function(){
+  const KEY = "left_sidebar_active_tab";
+  function labelOf(btn){ return (btn?.innerText || btn?.textContent || "").trim(); }
+  function restore(){
+    const want = sessionStorage.getItem(KEY);
+    if(!want) return false;
+    const btns = Array.from(window.parent.document.querySelectorAll('[data-testid="stSidebar"] [role="tablist"] button[role="tab"]'));
+    if(btns.length === 0) return false;
+    const match = btns.find(b => labelOf(b) === want);
+    if(!match) return false;
+    if(match.getAttribute('aria-selected') !== 'true'){ match.click(); }
+    return true;
+  }
+  function bind(){
+    const root = window.parent.document.querySelector('[data-testid="stSidebar"]');
+    if(!root) return;
+    // Save when user clicks a tab
+    root.addEventListener('click', (e)=>{
+      const b = e.target.closest('button[role="tab"]');
+      if(b){ sessionStorage.setItem(KEY, labelOf(b)); }
+    }, true);
+    // Keep trying to restore selection until ready
+    const tid = setInterval(()=>{ if(restore()) clearInterval(tid); }, 100);
+    setTimeout(()=>clearInterval(tid), 4000);
+    // Also restore when DOM changes (e.g., reruns)
+    new MutationObserver(()=>restore()).observe(root, {subtree:true, childList:true, attributes:true});
+  }
+  window.addEventListener('load', bind, {once:true});
+  setTimeout(bind, 0);
+})();
+</script>
+""", unsafe_allow_html=True)
+
     # 공통 추천 프리셋(모두 1개만 기본 선택되도록 kw_input + DEFAULT_KEYWORD 활용)
-    adm_suggest    = suggest_keywords_for_tab("admrul")
-    ordin_suggest  = suggest_keywords_for_tab("ordin")
-    trty_suggest   = suggest_keywords_for_tab("trty")
-    case_suggest   = suggest_keywords_for_tab("prec")
-    cc_suggest     = suggest_keywords_for_tab("cc")
-    interp_suggest = suggest_keywords_for_tab("expc")
+    adm_suggest    = cached_suggest_for_tab("admrul")
+    ordin_suggest  = cached_suggest_for_tab("ordin")
+    trty_suggest   = cached_suggest_for_tab("trty")
+    case_suggest   = cached_suggest_for_tab("prec")
+    cc_suggest     = cached_suggest_for_tab("cc")
+    interp_suggest = cached_suggest_for_tab("expc")
     term_suggest   = ["정의", "용어", "별표", "서식"]
 
     # ───────────────────────── 법령
@@ -1767,7 +3442,7 @@ with st.sidebar:
         law_name = st.text_input("법령명", value="민법", key="sb_law_name")
         # 법령명 기반 추천
         law_keys = kw_input("키워드(자동 추천)",
-                            suggest_keywords_for_law(law_name),
+                            cached_suggest_for_law(law_name),
                             key="sb_law_keys",
                             tab_name="법령")
 
@@ -1943,8 +3618,64 @@ with st.sidebar:
             present_url_with_fallback(d["url"], d["kind"], d["q"])
 
 
+# app.py 사이드바 어딘가
+import streamlit as st
+
+law_name_for_mst = st.sidebar.text_input("MST 찾기 - 법령명", value="건설산업기본법")
+if st.sidebar.button("MST 조회"):
+    try:
+        items, _, _ = _call_moleg_list("law", law_name_for_mst, num_rows=5)
+        if items:
+            # 정확 일치 우선
+            mst = next((it.get("MST") for it in items if (it.get("법령명") or "").strip()==law_name_for_mst.strip()), items[0].get("MST"))
+            st.sidebar.success(f"MST: {mst}")
+        else:
+            st.sidebar.warning("검색 결과가 없습니다.")
+    except Exception as e:
+        st.sidebar.error(f"조회 실패: {e}")
+
+# app.py (사이드바 섹션 어딘가)
+import requests, streamlit as st
+from urllib.parse import urlencode
+import os, re
+
+def _jo(label:str)->str:
+    m = re.search(r'(\d+)\s*조', label or "")
+    return f"{int(m.group(1)):06d}" if m else ""
+
+# 사이드바 DRF 연결 테스트 (교체)
+import os, requests
+from urllib.parse import urlencode
+
+if st.sidebar.button("DRF 연결 테스트"):
+    q = {
+        "OC": os.environ.get("LAW_API_OC",""),
+        "target":"law",
+        "type":"HTML",
+        "LANG":"KO",
+        "MST": st.session_state.get("__test_mst__", ""),   # 위 MST 조회 결과를 복사/붙여넣기 해도 됨
+        "efYd":"20250828",                                 # 시행일자 필요시
+        "JO": jo_from_label("제83조"),                     # ← 이제 008300이 됩니다
+    }
+    url = "https://www.law.go.kr/DRF/lawService.do?" + urlencode({k:v for k,v in q.items() if v})
+    try:
+        r = requests.get(url, timeout=6, headers={"User-Agent":"Mozilla/5.0"})
+        ok = r.ok and ("페이지 접속에 실패하였습니다" not in r.text)
+        st.sidebar.write("URL:", url)
+        st.sidebar.success("DRF access OK ✅" if ok else "DRF access DENIED ❌")
+        st.sidebar.write("status:", r.status_code, " length:", len(r.text))
+    except Exception as e:
+        st.sidebar.error(f"요청 실패: {e}")
+
+
+
 # 1) pending → messages 먼저 옮김
 user_q = _push_user_from_pending()
+
+# capture the nonce associated with this pending input (if any)
+# === 지금 턴이 '답변을 생성하는 런'인지 여부 (스트리밍 중 표시/숨김에 사용)
+ANSWERING = bool(user_q)
+st.session_state["__answering__"] = ANSWERING
 
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
@@ -1953,39 +3684,96 @@ chat_started = _chat_started()
 st.markdown(f"""
 <script>
 document.body.classList.toggle('chat-started', {str(chat_started).lower()});
+document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 </script>
 """, unsafe_allow_html=True)
 
+st.markdown("""
+<style>
+/* ✅ 포스트-챗 UI(업로더+입력폼)는 '답변 생성 중'에만 숨김 */
+body.answering .post-chat-ui{ margin-top: 8px; }
+
+/* ✅ 기존 chatbar 컴포넌트는 사용하지 않으므로 완전 숨김 */
+#chatbar-fixed { display: none !important; }
+/* 답변 중일 때만 하단 여백 축소 */
+body.answering .block-container { 
+    padding-bottom: calc(var(--chat-gap) + 24px) !important; 
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
 if not chat_started:
     st.markdown("""
     <style>
-      /* 우측 패널 숨김 */
+      /* 프리챗: 우측 패널만 숨기고, 스크롤을 잠가 상단 고정 */
+      #search-flyout{ display:none !important; }
+      html, body{ height:100%; overflow-y:hidden !important; }
+      .main > div:first-child{ height:100vh !important; }
+      .block-container{ min-height:100vh !important; padding-top:12px !important; padding-bottom:0 !important; }
+      /* 전역 가운데 정렬 규칙이 있어도 프리챗에선 히어로를 '위에서부터' 배치 */
+      .center-hero{ min-height:auto !important; display:block !important; }
+    </style>
+    <script>
+    (function(){
+      try{ history.scrollRestoration='manual'; }catch(e){}
+      const up=()=>{ window.scrollTo(0,0); if(document.activeElement) document.activeElement.blur(); };
+      up(); setTimeout(up,0); setTimeout(up,50);
+      document.addEventListener('focusin', up, true);
+      new MutationObserver(up).observe(document.body, {subtree:true, childList:true});
+    })();
+    </script>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <style>
+      /* 우측 패널만 숨김 */
       #search-flyout{ display:none !important; }
 
-      /* 우측/하단 여백 제거 */
-      @media (min-width:1280px){ .block-container{ padding-right:0 !important; } }
-      .block-container{ padding-bottom:0 !important; }
-
-      /* 히어로를 뷰포트 절대 중앙에 고정 */
-      .center-hero{
-        position: fixed !important;
-        left: 50% !important; top: 50% !important;
-        transform: translate(-50%, -50%) !important;
-        width: var(--center-col); max-width: 92vw;
-        margin: 0 !important; padding: 0 !important;
-        display: flex; flex-direction: column; align-items: center;
-        justify-content: center;
+      /* ⛳️ 프리챗: 스크롤 생기지 않게 잠그고 상단 고정 */
+      html, body{ height:100%; overflow-y:hidden !important; }
+      .main > div:first-child{ height:100vh !important; }              /* Streamlit 루트 */
+      .block-container{
+        min-height:100vh !important;   /* 화면만큼만 */
+        padding-top:12px !important;
+        padding-bottom:0 !important;   /* 바닥 여백 제거 */
+        margin-left:auto !important; margin-right:auto !important;
       }
+    </style>
+    <script>
+    (function(){
+      try{ history.scrollRestoration='manual'; }catch(e){}
+      const up=()=>{ window.scrollTo(0,0); if(document.activeElement) document.activeElement.blur(); };
+      up(); setTimeout(up,0); setTimeout(up,50);    // 자동 포커스 대비
+      document.addEventListener('focusin', up, true);
+      new MutationObserver(up).observe(document.body, {subtree:true, childList:true});
+    })();
+    </script>            
+               
+    """, unsafe_allow_html=True)
 
-      /* 히어로 내부 위젯 폭 */
-      .center-hero .stFileUploader, .center-hero .stTextInput{
-        width: 720px; max-width: 92vw;
-      }
+    render_pre_chat_center()
+    st.stop()
+    
+else:
+    st.markdown("""
+    <style>
+      /* 채팅 시작 후: 스크롤 정상 복원 */
+      html, body{ overflow-y:auto !important; }
+      .main > div:first-child{ height:auto !important; }
+      .block-container{ min-height:auto !important; }
     </style>
     """, unsafe_allow_html=True)
 
+    st.markdown("""
+    <style>
+      /* 📌 채팅 시작 후에는 정상 스크롤 */
+      html, body{ overflow-y:auto !important; }
+      .block-container{ min-height:auto !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ... 기존 렌더링 계속
 
 
 # 🎯 대화 전에는 우측 패널 숨기고, 여백을 0으로 만들어 완전 중앙 정렬
@@ -2008,43 +3796,112 @@ if not chat_started:
     render_pre_chat_center()   # 중앙 히어로 + 중앙 업로더
     st.stop()
 else:
-    render_bottom_uploader()   # 하단 고정 업로더
+    # 🔧 대화 시작 후에는 첨부파일 박스를 렌더링하지 않음 (완전히 제거)
+    # 스트리밍 중에는 업로더 숨김 (렌더 자체 생략)
+    # if not ANSWERING:
+    #     render_bottom_uploader()   # 하단 고정 업로더 - 주석 처리
+    pass
+
 # === 대화 시작 후: 우측 레일을 피해서 배치(침범 방지) ===
+# ----- RIGHT FLYOUT: align once to the question box, stable -----
 st.markdown("""
 <style>
   :root{
-  --chatbar-h: 56px;
-  --chat-gap: 12px;
-  --rail: 420px;   /* 우측 패널(360) + 여유 60 */
-  --hgap: 24px;
-}
-
-/* 본문이 가려지지 않도록 하단 패딩 확보 */
-.block-container{
-  padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
-}
-
-/* 데스크톱 + 대화 시작 상태에서만 우측 레일을 피해서 배치 */
-@media (min-width:1280px){
-  body.chat-started .block-container{
-    padding-right: var(--rail) !important;
+    --flyout-width: 360px;   /* 우측 패널 폭 */
+    --flyout-gap:   80px;    /* 본문(답변영역)과의 가로 간격 */
   }
-  body.chat-started #chatbar-fixed,
-  body.chat-started #bu-anchor + div[data-testid="stFileUploader"]{
-    left: calc(50% - var(--rail)/2) !important;
-    transform: translateX(-50%) !important;
-    width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap))) !important;
-    max-width: calc(100vw - var(--rail) - 2*var(--hgap)) !important;
-  }
-}
 
+  /* 본문이 우측 패널을 피해 배치되도록 여백 확보 */
+  @media (min-width:1280px){
+    .block-container{
+      padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
+    }
+  }
+
+  /* ====== 패널 배치 모드 ======
+     (A) 화면 고정(스크롤해도 항상 보임) → position: fixed (기본)
+     (B) 따라오지 않게(본문과 함께 위로 올라가도록) → position: sticky 로 교체
+     원하는 쪽 한 줄만 쓰세요.
+  */
+  @media (min-width:1280px){
+    #search-flyout{
+      position: fixed !important;                 /* ← A) 화면 고정 */
+      /* position: sticky !important;             /* ← B) 따라오지 않게: 이 줄로 교체 */
+      top: var(--flyout-top, 120px) !important;   /* JS가 한 번 계산해 넣음 */
+      right: 24px !important;
+      left: auto !important; bottom: auto !important;
+
+      width: var(--flyout-width) !important;
+      max-width: 38vw !important;
+      max-height: calc(100vh - var(--flyout-top,120px) - 24px) !important;
+      overflow: auto !important;
+      z-index: 58 !important;                     /* 업로더(60), 입력창(70)보다 낮게 */
+    }
+  }
+
+  /* 모바일/좁은 화면은 자연스럽게 문서 흐름 */
+  @media (max-width:1279px){
+    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
+    .block-container{ padding-right: 0 !important; }
+  }
 </style>
+
+<script>
+(() => {
+  // 질문 입력 위치를 "한 번만" 읽어서 --flyout-top 을 설정
+  const CANDIDATES = [
+    '#chatbar-fixed',
+    'section[data-testid="stChatInput"]',
+    '.block-container textarea'
+  ];
+  let done = false;
+
+  function alignOnce(){
+    if (done) return;
+    const fly = document.querySelector('#search-flyout');
+    if (!fly) return;
+
+    let target = null;
+    for (const sel of CANDIDATES){
+      target = document.querySelector(sel);
+      if (target) break;
+    }
+    if (!target) return;
+
+    const r = target.getBoundingClientRect();       // viewport 기준
+    const top = Math.max(12, Math.round(r.top));
+    document.documentElement.style.setProperty('--flyout-top', top + 'px');
+    done = true;  // 한 번만
+  }
+
+  // 1) 첫 렌더 직후
+  window.addEventListener('load', () => setTimeout(alignOnce, 0));
+
+  // 2) 대상이 늦게 생겨도 한 번만 정렬
+  const mo = new MutationObserver(() => alignOnce());
+  mo.observe(document.body, {childList: true, subtree: true});
+  (function stopWhenDone(){ if (done) mo.disconnect(); requestAnimationFrame(stopWhenDone); })();
+
+  // 3) 창 크기 변경 시 한 번 재정렬
+  window.addEventListener('resize', () => { done = false; alignOnce(); });
+})();
+</script>
 """, unsafe_allow_html=True)
 
 
 
+
 with st.container():
+    st.session_state['_prev_assistant_txt'] = ''  # reset per rerun
     for i, m in enumerate(st.session_state.messages):
+        # --- UI dedup guard: skip if same assistant content as previous ---
+        if isinstance(m, dict) and m.get('role')=='assistant':
+            _t = (m.get('content') or '').strip()
+            if '_prev_assistant_txt' not in st.session_state:
+                st.session_state['_prev_assistant_txt'] = ''
+            if _t and _t == st.session_state.get('_prev_assistant_txt',''):
+                continue
+            st.session_state['_prev_assistant_txt'] = _t
         role = m.get("role")
         content = (m.get("content") or "")
         if role == "assistant" and not content.strip():
@@ -2062,6 +3919,11 @@ with st.container():
             else:
                 st.markdown(content)
 
+
+# ✅ 답변 말풍선 바로 아래에 입력/업로더 붙이기 (답변 생성 중이 아닐 때만)
+if chat_started and not st.session_state.get("__answering__", False):
+    render_post_chat_simple_ui()
+
 # ✅ 메시지 루프 바로 아래(이미 _inject_right_rail_css() 다음 추천) — 항상 호출
 def _current_q_and_answer():
     msgs = st.session_state.get("messages", [])
@@ -2070,48 +3932,52 @@ def _current_q_and_answer():
     return (last_q or {}).get("content",""), (last_a or {}).get("content","")
 
 # 🔽 대화가 시작된 뒤에만 우측 패널 노출
-if chat_started:
+# ✅ 로딩(스트리밍) 중에는 패널을 렌더링하지 않음
+if chat_started and not st.session_state.get("__answering__", False):
     q_for_panel, ans_for_panel = _current_q_and_answer()
-    hints = extract_law_names_from_answer(ans_for_panel) if ans_for_panel else None
-    render_search_flyout(q_for_panel or user_q, num_rows=8, hint_laws=hints, show_debug=SHOW_SEARCH_DEBUG)
 
+    # 함수들이 파일의 더 아래에서 정의되어 있을 수 있으므로 안전 가드
+    _ext_names = globals().get("extract_law_names_from_answer")
+    _ext_arts  = globals().get("extract_article_pairs_from_answer")
 
+    hints = _ext_names(ans_for_panel) if (_ext_names and ans_for_panel) else None
+    arts  = _ext_arts(ans_for_panel)  if (_ext_arts  and ans_for_panel) else None
 
+    render_search_flyout(
+        q_for_panel or user_q,
+        num_rows=8,
+        hint_laws=hints,
+        hint_articles=arts,   # ← 조문 힌트도 함께 전달
+        show_debug=SHOW_SEARCH_DEBUG,
+    )
 
 # ===============================
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
-# ===============================
+# ===============================\n
 if user_q:
+    # --- streaming aggregator v2: keep deltas for preview, but FINAL wins ---
+    stream_box = None
+    deltas_only = ""
+    final_payload = ""
+    collected_laws = []
+
     if client and AZURE:
-        # 프리뷰/버퍼 초기화
         stream_box = st.empty()
-        full_text, buffer, collected_laws = "", "", []
-        final_text = ""   # NameError 방지
 
     try:
-        stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
+        if stream_box is not None:
+            stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
 
         for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
             if kind == "delta":
-                buffer += (payload or "")
-                if len(buffer) >= 200:
-                    full_text += buffer
-                    buffer = ""
-                    if SHOW_STREAM_PREVIEW and stream_box is not None:
-                        stream_box.markdown(_normalize_text(full_text[-1500:]))
-
-            elif kind == "final":
-                if buffer:
-                    full_text += buffer
-                    buffer = ""
                 if payload:
-                    full_text += payload
+                    deltas_only += payload
+                    if SHOW_STREAM_PREVIEW and stream_box is not None:
+                        stream_box.markdown(_normalize_text(deltas_only[-1500:]))
+            elif kind == "final":
+                final_payload  = (payload or "")
                 collected_laws = law_list or []
                 break
-
-        # 루프 종료 후 남은 버퍼 반영
-        if buffer:
-            full_text += buffer
 
     except Exception as e:
         # 예외 시 폴백
@@ -2119,22 +3985,41 @@ if user_q:
         collected_laws = laws
         law_ctx = format_law_context(laws)
         title = "법률 자문 메모"
-        full_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
-        final_text = apply_final_postprocess(full_text, collected_laws)
+        base_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
+    else:
+        # 정상 경로: final이 있으면 final, 없으면 delta 누적 사용
+        base_text = (final_payload.strip() or deltas_only)
 
-    # --- ✅ 정상 경로 후처리: 항상 실행되도록 보장 ---
-    if not final_text.strip():
-        final_text = apply_final_postprocess(full_text, collected_laws)
+    # --- Postprocess & de-dup ---
+    final_text = apply_final_postprocess(base_text, collected_laws)
+    final_text = _dedupe_repeats(final_text)
 
-    # ▶ 답변을 세션에 넣고 rerun
+    # --- seatbelt: skip if same answer already stored this turn ---
+    _ans_hash = _hash_text(final_text)
+    if st.session_state.get('_last_ans_hash') == _ans_hash:
+        final_text = ""
+    else:
+        st.session_state['_last_ans_hash'] = _ans_hash
+
     if final_text.strip():
-        _append_message("assistant", final_text, law=collected_laws)
-        st.session_state["last_q"] = user_q
-        st.session_state.pop("_pending_user_q", None)
-        st.session_state.pop("_pending_user_nonce", None)
-        st.rerun()
+        # --- per-turn nonce guard: allow only one assistant append per user turn ---
+        _nonce = st.session_state.get('current_turn_nonce') or st.session_state.get('_pending_user_nonce')
+        _done = st.session_state.get('_nonce_done', {})
+        if not (_nonce and _done.get(_nonce)):
+            _append_message('assistant', final_text, law=collected_laws)
+            if _nonce:
+                _done[_nonce] = True
+                st.session_state['_nonce_done'] = _done
+            st.session_state['last_q'] = user_q
+            st.session_state.pop('_pending_user_q', None)
+            st.session_state.pop('_pending_user_nonce', None)
+            st.rerun()
 
     # 프리뷰 컨테이너 비우기
     if stream_box is not None:
-        stream_box.empty()
+        try:
+            stream_box.empty()
+        except Exception:
+            pass
 
+# (moved) post-chat UI is now rendered inline under the last assistant message.
