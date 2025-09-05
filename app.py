@@ -288,6 +288,17 @@ def cached_suggest_for_law(law_name: str):
         return FALLBACK_LAW_KEYWORDS
     except Exception:
         return FALLBACK_LAW_KEYWORDS
+
+# 두 번째 set_page_config 호출부 바로 위에 추가
+if not st.session_state.get("__page_cfg__"):
+    st.set_page_config(
+        page_title="인공지능 법률상담 전문가",
+        page_icon="⚖️",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+    st.session_state["__page_cfg__"] = True
+
 st.set_page_config(
     page_title="인공지능 법률상담 전문가",
     page_icon="⚖️",
@@ -463,8 +474,17 @@ if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
 
 # 직전 사용자 질문 확보 (없으면 앱 일시중지)
+# === Chat input 수집 & 대화상태 업데이트 ===
+prompt = st.chat_input("질문을 입력하세요 (예: 건설산업기본법 제83조 내용 알려줘)")
+if prompt:
+    st.session_state.messages.append({"role": "user", "content": prompt})
+
+# 직전 사용자 질문 확보 (없으면 앱 일시중지)
 if not st.session_state.messages:
-    st.stop()
+    # 🔧 FIX: 초기 렌더가 멈추지 않도록 st.stop() 제거
+    # st.stop()
+    pass
+
 user_question = st.session_state.messages[-1]["content"]
 
 # 최근 대화맥락 + 시스템 안내로 messages 구성
