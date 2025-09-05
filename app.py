@@ -21,16 +21,17 @@ except Exception:
 # ✅ [PATCH] app.py — 최상단 import에 공용 링크 생성기 추가
 from modules.linking import resolve_article_url  # ← 추가
 
-# === [REPLACE] app.py : _deep_article_url (두 군데 모두) ===
+# ✅ [REPLACE] app.py : _deep_article_url
 def _deep_article_url(law: str, art_label: str) -> str:
     """
-    조문 직링크(한글 주소) 우선. 실패 시 내부 로직이 메인으로 폴백.
+    조문 직링크(한글 주소)만 반환. 어떤 경우에도 메인 링크로 폴백하지 않음.
     """
     try:
-        from modules.linking import resolve_article_url
+        from modules.linking import make_pretty_article_url  # 권장 경로
     except Exception:
-        from linking import resolve_article_url  # fallback
-    return resolve_article_url(law, art_label)
+        from linking import make_pretty_article_url  # 로컬/상대 경로 폴백
+    return make_pretty_article_url(law, art_label)
+
 
 # 세션 초기화 시 1회만 실행
 if "__boot__" not in st.session_state:

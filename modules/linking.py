@@ -9,12 +9,35 @@ def _norm_law(n: str) -> str:
     n = (n or "").strip()
     return ALIAS_MAP.get(n, n)
 
+# ✅ [PATCH] modules/linking.py : _norm_art 교체
 def _norm_art(s: str) -> str:
+    """
+    다양한 입력을 '제N조' 또는 '제N조의M'로 표준화.
+    허용 예: '83', '제83조', '83조', '제 83 조', '83조의2', '제83조의 2'
+    """
     s = (s or "").strip()
+
+    import re
+    # 1) '제N조의M' / '제 N 조 의 M'
+    m = re.fullmatch(r'제?\s*(\d{1,4})\s*조\s*의\s*(\d{1,3})', s)
+    if m:
+        return f"제{int(m.group(1))}조의{int(m.group(2))}"
+
+    # 2) 'N조의M' (제 생략)
+    m = re.fullmatch(r'(\d{1,4})\s*조\s*의\s*(\d{1,3})', s)
+    if m:
+        return f"제{int(m.group(1))}조의{int(m.group(2))}"
+
+    # 3) '제N조' / '제 N 조'
+    m = re.fullmatch(r'제?\s*(\d{1,4})\s*조', s)
+    if m:
+        return f"제{int(m.group(1))}조"
+
+    # 4) 숫자만: '83' → '제83조'
     if s.isdigit():
-        return f"제{s}조"
-    if s.endswith("조") and s[:-1].isdigit():
-        return "제" + s
+        return f"제{int(s)}조"
+
+    # 5) 기타는 원본 유지(이미 표준형일 수 있음)
     return s
 
 def make_pretty_article_url(law_name: str, article_label: str) -> str:

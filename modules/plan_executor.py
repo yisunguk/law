@@ -19,21 +19,36 @@ def _make_pretty_article_url(law: str, art: str) -> str:
         except Exception:
             return f"https://www.law.go.kr/법령/{law}/{art}"
 
+# ✅ [REPLACE] modules/plan_executor.py : _slice_article
 def _slice_article(full_text: str, article_label: str) -> str:
-    """페이지 전체 텍스트에서 해당 조문 블록만 잘라내기."""
+    """
+    페이지 전체 텍스트에서 해당 조문 블록만 정밀 추출.
+    - '제83조' 또는 '제83조의2' 모두 지원
+    """
+    import re
     label = (article_label or "").strip()
     if not (full_text and label):
         return ""
-    # 1차: 표기 그대로
-    m = re.search(rf"({re.escape(label)}[^\n]*\n(?:.+\n)*?)(?=\n제\d+조|\n부칙|\Z)", full_text)
+
+    # 1) 표준형 라벨 파싱
+    m = re.search(r'제\s*(\d{1,4})\s*조(?:\s*의\s*(\d{1,3}))?', label)
     if m:
-        return m.group(1).strip()
-    # 2차: 숫자만 추출
-    num = re.sub(r"\D", "", label)
-    if num:
-        m = re.search(rf"(제{num}조(?:의\d+)?[\s\S]*?)(?=\n제\d+조|\n부칙|\Z)", full_text)
-        return (m.group(1) if m else "").strip()
-    return ""
+        main = int(m.group(1))
+        sub  = m.group(2)
+        if sub:
+            # 제83조의2 형태
+            pat = rf"(?m)^(제\s*{main}\s*조\s*의\s*{int(sub)}\b[\s\S]*?)(?=^\s*제\s*\d+\s*조(?:\s*의\s*\d+)?\b|\n부칙|\Z)"
+        else:
+            # 제83조 (단, 뒤의 '의' 조문까지 잡아먹지 않도록 (?!\s*의))
+            pat = rf"(?m)^(제\s*{main}\s*조(?!\s*의)\b[\s\S]*?)(?=^\s*제\s*\d+\s*조(?:\s*의\s*\d+)?\b|\n부칙|\Z)"
+        m2 = re.search(pat, full_text)
+        if m2:
+            return m2.group(1).strip()
+
+    # 2) 라벨 그대로 1차 시도 (비표준 입력 대비)
+    m3 = re.search(rf"(?m)^({re.escape(label)}[^\n]*\n(?:.+\n)*?)(?=^\s*제\d+조|\n부칙|\Z)", full_text)
+    return (m3.group(1).strip() if m3 else "")
+
 
 def _scrape_deeplink(law: str, art: str, timeout: float = 6.0) -> Tuple[str, str]:
     """법제처 한글 주소(딥링크) 페이지를 스크랩해서 해당 조문만 추출."""
