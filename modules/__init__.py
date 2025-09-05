@@ -1,3 +1,7 @@
+# modules/__init__.py
+from __future__ import annotations
+import importlib  # ✅ 추가
+
 __all__ = [
     "AdviceEngine",
     "pick_mode", "Intent", "classify_intent", "build_sys_for_mode",
