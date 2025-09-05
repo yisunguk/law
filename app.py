@@ -385,7 +385,7 @@ def ask_llm_with_tools(
         return
 
     # 1) 모드 결정
-    from modules import Intent, classify_intent, pick_mode, build_sys_for_mode  # 지연 임포트
+    from modules import Intent, classify_intent, build_sys_for_mode  # 지연 임포트
     det_intent, conf = classify_intent(user_q)
     try:
         valid = {m.value for m in Intent}
