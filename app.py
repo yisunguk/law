@@ -39,17 +39,24 @@ except Exception:
 
 # 5) Azure OpenAI 클라이언트 — ★ 여기에서 '먼저' 만듭니다
 def _make_azure_client():
+    # === Azure OpenAI client bootstrap (AZURE 시크릿으로 생성) ===
     try:
         from openai import AzureOpenAI
-        return AzureOpenAI(
-            api_key      = AZURE["api_key"],
-            azure_endpoint = AZURE.get("endpoint") or AZURE.get("azure_endpoint"),
-            api_version  = AZURE.get("api_version", "2024-06-01"),
-        )
     except Exception:
-        return None
+        AzureOpenAI = None
 
-client = _make_azure_client()  # ← AdviceEngine보다 먼저!
+def _make_azure_client():
+    if not AzureOpenAI:
+        return None
+    api_key = (AZURE.get("api_key") or os.getenv("AZURE_OPENAI_API_KEY") or "").strip()
+    endpoint = (AZURE.get("endpoint") or os.getenv("AZURE_OPENAI_ENDPOINT") or "").strip()
+    api_version = (AZURE.get("api_version") or "2024-06-01").strip()
+    if not (api_key and endpoint):
+        return None
+    return AzureOpenAI(api_key=api_key, azure_endpoint=endpoint, api_version=api_version)
+
+client = _make_azure_client()
+
 
 # 6) (필요 시) 도구 컨테이너 — 지금은 내부에서 사용 안함
 TOOLS = None
@@ -430,11 +437,44 @@ engine = AdviceEngine(
     tools=None,  # 전달돼도 내부에서 무시
 )
 
-# ★ LLM 호출 전에 'messages' 리스트 준비 (NameError 예방)
-messages = [
-    {"role": "system", "content": "너는 한국 법률 상담 도우미다. 출처 링크를 항상 함께 제시하라."},
-    {"role": "user", "content": user_question},
-]
+# === Chat input 수집 & 대화상태 업데이트 ===
+prompt = st.chat_input("질문을 입력하세요 (예: 건설산업기본법 제83조 내용 알려줘)")
+if prompt:
+    st.session_state.messages.append({"role": "user", "content": prompt})
+
+# 직전 사용자 질문 확보 (없으면 앱 일시중지)
+if not st.session_state.messages:
+    st.stop()
+user_question = st.session_state.messages[-1]["content"]
+
+# 최근 대화맥락 + 시스템 안내로 messages 구성
+messages = [{"role": "system",
+             "content": "너는 한국 법률 상담 도우미다. 출처를 중요시하고, 법령·조문 링크가 있으면 활용하라."}]
+# 최근 6턴만 컨텍스트로 첨부
+for m in st.session_state.messages[-6:]:
+    messages.append(m)
+
+# === AdviceEngine 준비 (세션에 1회 생성) ===
+if "engine" not in st.session_state:
+    try:
+        from modules.advice_engine import AdviceEngine  # 패키지 경로
+    except Exception:
+        from advice_engine import AdviceEngine          # 로컬 폴백
+    st.session_state["engine"] = AdviceEngine(
+        client=client,
+        model=AZURE.get("deployment", "gpt-4o-mini"),
+        temperature=0.2,
+    )
+engine = st.session_state["engine"]
+
+# (선택) 오른쪽/사이드바에서 '법령명'과 '조문'을 이미 입력받는 UI가 있다면, LLM에 바로 링크를 넘겨줘요.
+# 예: url = resolve_article_url("건설산업기본법", "제83조")
+# messages.append({"role": "system", "content": f"참고 법령 링크: {url}"})
+
+# === LLM 호출 ===
+final_answer = engine.generate(messages, stream=False)
+with st.chat_message("assistant"):
+    st.write(final_answer)
 
 # 1) 라우팅 → 플랜 작성
 plan = make_plan_with_llm(client, user_question, model=getattr(client, "router_model", None) or "gpt-4o-mini")
