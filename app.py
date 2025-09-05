@@ -2429,22 +2429,94 @@ def _norm_art_label(label: str) -> str:
 def _norm_law_name(name: str) -> str:
     return re.sub(r'[「」\s]+', '', (name or ''))  # 중복판별 전용(표시는 원문 유지)
 
+# === [REPLACE] 관계 법령 렌더러 ============================================
+import re
+from urllib.parse import quote as _q
+try:
+    from modules.linking import make_pretty_article_url
+except Exception:
+    from linking import make_pretty_article_url
+
+_LAW_PAIR_RE = re.compile(
+    r'([가-힣A-Za-z0-9·\-\(\)]+?(?:에 관한 법률|법))\s*(시행령|시행규칙)?\s*'
+    r'(제?\s*\d{1,4}\s*조(?:\s*의\s*\d{1,3})?)'
+)
+
+def _extract_law_article_pairs(text: str):
+    pairs, seen = [], set()
+    for m in _LAW_PAIR_RE.finditer(text or ""):
+        law = (m.group(1) + (f" {m.group(2)}" if m.group(2) else "")).strip()
+        art = (m.group(3) or "").strip()
+        key = (law, re.sub(r'\s+', '', art))
+        if key in seen:
+            continue
+        seen.add(key)
+        pairs.append((law, art))
+    return pairs
+
+# 조문 라벨 표준화(중복 제거용)
+_ART_NORM = re.compile(r'제?\s*(\d{1,4})\s*조(?:\s*의\s*(\d{1,3}))?', re.I)
+def _norm_art_label(label: str) -> str:
+    m = _ART_NORM.search(label or "")
+    if not m: 
+        return (label or "").strip()
+    n, ui = m.group(1), m.group(2)
+    return f"제{n}조" + (f"의{ui}" if ui else "")
+
+def _norm_law_name(name: str) -> str:
+    return re.sub(r'[「」『』\s]+', '', (name or ''))
+
+# --- 강력한 법령명 필터/추출기 ------------------------------------------
+_LAW_NAME_RE = re.compile(
+    r'([「『]?[가-힣0-9·\(\) ]{2,40}?(?:헌법|특별법|법|령|규칙|조례))(?=[^\w가-힣·\(\)])'
+)
+
+_BANNED_EXACT = {
+    '법', '관련법', '관계법', '관련법령', '관계법령',
+    '해당법', '동법', '위법', '그법', '이법', '관련규정', '관계규정'
+}
+_BANNED_STARTS = ('관련', '관계', '해당', '동', '위', '그', '이')
+_BANNED_SUBSTR  = ('에따른', '에따라', '방법', '관련 법', '관계 법', '해당 법')
+
+def _is_valid_law_name(nm: str) -> bool:
+    raw = (nm or '').strip()
+    s = _norm_law_name(raw)
+    if len(s) < 4: 
+        return False
+    if not s.endswith(('법','령','규칙','조례','헌법','특별법')):
+        return False
+    if s in _BANNED_EXACT:
+        return False
+    if any(s.startswith(p) for p in _BANNED_STARTS):
+        return False
+    if any(b in s for b in _BANNED_SUBSTR):
+        return False
+    # '관련 법'처럼 띄어쓰기 포함 금지(정규 필터 보강)
+    if re.fullmatch(r'(관련|관계|해당|동|위|그|이)\s*(법|령|규칙|조례)', raw):
+        return False
+    return True
+
+def _extract_law_names_robust(text: str):
+    names, seen = [], set()
+    for m in _LAW_NAME_RE.finditer(text or ''):
+        cand = m.group(1).strip('「」『』 ').strip()
+        if _is_valid_law_name(cand):
+            if cand not in seen:
+                seen.add(cand)
+                names.append(cand)
+    return names
+# -----------------------------------------------------------------------
+
 def render_related_laws_block(*, user_q: str, answer_text: str,
                               primary_pair=None, fallback_law_names=None, limit: int = 8):
-    """
-    답변 맨 끝에 '관련 법령' 섹션을 그립니다.
-    - primary_pair: (법명, 조문) 주된 근거(예: 본문조회 등)
-    - fallback_law_names: 조문이 하나도 없을 때 사용할 법령명 리스트
-    """
     items = []
     if primary_pair and all(primary_pair):
         items.append((primary_pair[0].strip(), _norm_art_label(primary_pair[1])))
 
-    # 답변/질문에서 (법,조문) 추출 → 조문 표준화
     items += [(law, _norm_art_label(art)) for (law, art) in _extract_law_article_pairs(answer_text)]
     items += [(law, _norm_art_label(art)) for (law, art) in _extract_law_article_pairs(user_q)]
 
-    # 중복 제거(법명+표준라벨)
+    # 1) 조문 딥링크 먼저
     seen, out = set(), []
     for law, art in items:
         key = (_norm_law_name(law), art)
@@ -2459,39 +2531,36 @@ def render_related_laws_block(*, user_q: str, answer_text: str,
     if out:
         st.markdown("### 관련 법령")
         for law, art in out:
-            url = make_pretty_article_url(law, art)  # 항상 '조문' 딥링크
+            url = make_pretty_article_url(law, art)  # 항상 조문 딥링크
             st.markdown(f"- [{law} {art}]({url})")
         st.caption("추가로 특정 조문 원문이 필요하시면 요청해 주세요!")
         return
 
-    # ⬇︎ 조문이 하나도 없으면: 법령명 링크로라도 폴백(자문형 답변용)
+    # 2) 조문이 하나도 없으면: '법령명'만 안전하게 노출
     names = []
     if fallback_law_names:
-        names += [n for n in fallback_law_names if n]
-    try:
-        # 답변/질문에서 법령명만 추출하는 기존 헬퍼가 있으면 활용
-        if 'extract_law_names_from_answer' in globals():
-            names += extract_law_names_from_answer(answer_text)  # type: ignore
-            names += extract_law_names_from_answer(user_q)       # type: ignore
-    except Exception:
-        pass
+        names += [n for n in fallback_law_names if _is_valid_law_name(n)]
+    if not names:  # 구조화된 리스트가 없을 때만 본문 스캔
+        names += _extract_law_names_robust(answer_text)
+        names += _extract_law_names_robust(user_q)
 
-    # 순서 보존 중복제거
-    seen2, names2 = set(), []
-    for n in names:
-        if n and n not in seen2:
-            seen2.add(n)
-            names2.append(n)
-        if len(names2) >= limit:
+    # 순서 보존·중복 제거
+    seen2, out2 = set(), []
+    for nm in names:
+        if nm and nm not in seen2:
+            seen2.add(nm)
+            out2.append(nm)
+        if len(out2) >= limit:
             break
-    if not names2:
+    if not out2:
         return
 
     st.markdown("### 관련 법령")
-    for nm in names2:
+    for nm in out2:
         st.markdown(f"- [{nm}](https://www.law.go.kr/법령/{_q(nm, safe='')})")
     st.caption("추가로 특정 조문 원문이 필요하시면 요청해 주세요!")
 # =====================================================================
+
 
 
 # ============= Lawyer-grade Legal Pipeline Utils =============
