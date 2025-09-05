@@ -1,119 +1,14 @@
-# app.py — fixed header
+# app.py — Single-window chat with bottom streaming + robust dedupe + pinned question
 from __future__ import annotations
 
 import streamlit as st
-# app.py
-from law_fetch import _summarize_laws_for_primer as summarize_with_capsules
-
-# 엔진 생성부
-engine = AdviceEngine(
-    client=client,
-    model=AZURE["deployment"],
-    tools=TOOLS,
-    safe_chat_completion=safe_chat_completion,
-    tool_search_one=tool_search_one,
-    tool_search_multi=tool_search_multi,
-    prefetch_law_context=prefetch_law_context,
-    summarize_laws_for_primer=summarize_with_capsules,  # ✅ 본문 포함 버전
-    temperature=0.2,
-)
-
-
-
-from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
-
-
-
-import streamlit as st
-
-# --- per-turn nonce ledger (prevents double appends)
-st.session_state.setdefault('_nonce_done', {})
-# --- cache helpers: suggestions shouldn't jitter on reruns ---
-def cached_suggest_for_tab(tab_key: str):
-    import streamlit as st
-    store = st.session_state.setdefault("__tab_suggest__", {})
-    if tab_key not in store:
-        from modules import suggest_keywords_for_tab
-        store[tab_key] = cached_suggest_for_tab(tab_key)
-    return store[tab_key]
-
-def cached_suggest_for_law(law_name: str):
-    import streamlit as st
-    store = st.session_state.setdefault("__law_suggest__", {})
-    if law_name not in store:
-        from modules import suggest_keywords_for_law
-        store[law_name] = cached_suggest_for_law(law_name)
-    return store[law_name]
 
 st.set_page_config(
-    page_title="인공지능 법률상담 전문가",
+    page_title="법제처 법무 상담사",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-# 최상단 스크롤 기준점
-st.markdown('<div id="__top_anchor__"></div>', unsafe_allow_html=True)
-
-st.markdown("""
-<style>
-:root{
-  --center-col: 980px;   /* 중앙 전체 폭 */
-  --bubble-max: 760px;   /* 말풍선 최대 폭 */
-  --pad-x: 12px;         /* 좌우 여백 */
-}
-
-/* 본문(채팅 전/후 공통) 중앙 폭 고정 */
-.block-container{
-  max-width: var(--center-col) !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-  padding-left: var(--pad-x) !important;
-  padding-right: var(--pad-x) !important;
-}
-
-/* 업로더/폼/카드류도 같은 폭 */
-.block-container [data-testid="stFileUploader"],
-.block-container form,
-.block-container .stForm,
-.block-container .stMarkdown>div{
-  max-width: var(--center-col) !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-}
-
-/* 채팅 메시지 폭(답변 후) */
-[data-testid="stChatMessage"]{
-  max-width: var(--bubble-max) !important;
-  width: 100% !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<style>
-:root{
-  --left-rail: 300px;
-  --right-rail: calc(var(--flyout-width, 0px) + var(--flyout-gap, 0px));
-}
-</style>
-<script>
-(function(){
-  function setLeftRail(){
-    const sb = window.parent.document.querySelector('[data-testid="stSidebar"]');
-    if(!sb) return;
-    const w = Math.round(sb.getBoundingClientRect().width || 300);
-    document.documentElement.style.setProperty('--left-rail', w + 'px');
-  }
-  setLeftRail();
-  window.addEventListener('resize', setLeftRail);
-  new MutationObserver(setLeftRail).observe(window.parent.document.body, {subtree:true, childList:true, attributes:true});
-})();
-</script>
-""", unsafe_allow_html=True)
-
 
 # === [BOOTSTRAP] session keys (must be first) ===
 if "messages" not in st.session_state:
@@ -191,65 +86,15 @@ def ask_llm_with_tools(
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
-    # 2.5) 최근 N개 대화 히스토리 준비 (user/assistant만)
-    try:
-        msgs = st.session_state.get("messages", [])
-        _hist = []
-        for _m in msgs:
-            if not isinstance(_m, dict):
-                continue
-            _r = _m.get("role")
-            _c = (_m.get("content") or "").strip()
-            if _r in ("user", "assistant") and _c:
-                _hist.append({"role": _r, "content": _c})
-        HISTORY_LIMIT = int(st.session_state.get("__history_limit__", 6))
-        history = _hist[-HISTORY_LIMIT:]
-    except Exception:
-        history = []
-
-    # 3) 엔진 호출 (히스토리 전달 시도 + 안전한 폴백)
-    import inspect
-    try:
-        _sig = inspect.signature(engine.generate)
-        _params = set(_sig.parameters.keys())
-    except Exception:
-        _params = set()
-
-    _called = False
-    for _kw in ("history", "messages", "chat_history", "conversation"):
-        if _kw in _params:
-            yield from engine.generate(
-                user_q,
-                system_prompt=sys_prompt,
-                allow_tools=use_tools,
-                num_rows=num_rows,
-                stream=stream,
-                primer_enable=True,
-                **{_kw: history},
-            )
-            _called = True
-            break
-
-    if not _called:
-        # fallback: 히스토리를 system prompt 앞에 텍스트로 주입
-        def _as_transcript(items):
-            _lines = []
-            for it in items:
-                _lines.append(f"{'사용자' if it['role']=='user' else '어시스턴트'}: {it['content']}")
-            return "\n".join(_lines)
-
-        _hist_text = _as_transcript(history)
-        _uq = user_q
-        if _hist_text:
-            _uq = f"[이전 대화]\n{_hist_text}\n\n[현재 질문]\n{user_q}"
-        yield from engine.generate(
-            _uq,
-            system_prompt=sys_prompt,
-            allow_tools=use_tools,
-            num_rows=num_rows,
-            stream=stream,
-            primer_enable=True,
-        )
+    # 3) 엔진 호출 (새 시그니처에 맞게)
+    yield from engine.generate(
+        user_q,
+        system_prompt=sys_prompt,
+        allow_tools=use_tools,
+        num_rows=num_rows,
+        stream=stream,
+        primer_enable=True,
+    )
 
 import io, os, re, json, time, html
 
@@ -302,33 +147,6 @@ from typing import Iterable, List
 
 import hashlib
 
-
-# --- Utilities: de-duplicate repeated paragraphs/halves ---
-def _dedupe_repeats(txt: str) -> str:
-    if not txt:
-        return txt
-    n = len(txt)
-    # Heuristic 1: if halves overlap (common duplication pattern)
-    if n > 600:
-        half = n // 2
-        a, b = txt[:half].strip(), txt[half:].strip()
-        if a and b and (a == b or a.startswith(b[:200]) or b.startswith(a[:200])):
-            return a if len(a) >= len(b) else b
-    # Heuristic 2: paragraph-level dedupe while preserving order
-    parts = re.split(r"\n\s*\n", txt)
-    seen = set()
-    out_parts = []
-    for p in parts:
-        key = p.strip()
-        norm = re.sub(r"\s+", " ", key).strip().lower()
-        if norm and norm in seen:
-            continue
-        if norm:
-            seen.add(norm)
-        out_parts.append(p)
-    return "\n\n".join(out_parts)
-
-
 def _hash_text(s: str) -> str:
     return hashlib.md5((s or "").encode("utf-8")).hexdigest()
 
@@ -363,7 +181,7 @@ SUGGESTED_LAW_KEYWORDS = {
 }
 FALLBACK_LAW_KEYWORDS = ["정의", "목적", "벌칙"]
 
-def cached_suggest_for_law(law_name: str) -> list[str]:
+def suggest_keywords_for_law(law_name: str) -> list[str]:
     if not law_name:
         return FALLBACK_LAW_KEYWORDS
     if law_name in SUGGESTED_LAW_KEYWORDS:
@@ -383,7 +201,7 @@ SUGGESTED_TAB_KEYWORDS = {
     "cc":     ["위헌", "합헌", "각하", "침해", "기각"],
     "expc":   ["유권해석", "질의회신", "법령해석", "적용범위"],
 }
-def cached_suggest_for_tab(tab_kind: str) -> list[str]:
+def suggest_keywords_for_tab(tab_kind: str) -> list[str]:
     return SUGGESTED_TAB_KEYWORDS.get(tab_kind, [])
 
 def inject_sticky_layout_css(mode: str = "wide"):
@@ -400,9 +218,9 @@ def inject_sticky_layout_css(mode: str = "wide"):
         " --bubble-max: 760px;"
         " --chatbar-h: 56px;"
         " --chat-gap: 12px;"
-        " --rail: 460px;"
+        " --rail: 420px;"
         " --hgap: 24px;"
-        "}"
+        " }"
     )
 
     css = f"""
@@ -435,32 +253,26 @@ def inject_sticky_layout_css(mode: str = "wide"):
         width: 720px; max-width: 92vw;
       }}
 
-.post-chat-ui .stFileUploader, .post-chat-ui .stTextInput {{ width: 720px; max-width: 92vw; }}
-.post-chat-ui {{ margin-top: 8px; }}
-
-
       /* 업로더 고정: 앵커 다음 형제 업로더 */
       #bu-anchor + div[data-testid='stFileUploader'] {{
         position: fixed;
         left: 50%; transform: translateX(-50%);
-        bottom: calc(var(--chatbar-h) + var(--chat-gap) + 12px);
-        width: clamp(340px, calc(var(--center-col) - 2*var(--hgap)), calc(100vw - var(--rail) - 2*var(--hgap)));
-        max-width: calc(100vw - var(--rail) - 2*var(--hgap));
+        bottom: calc(12px + var(--chatbar-h) + var(--chat-gap));
         z-index: 60;
-        background: rgba(0,0,0,0.35);
-        padding: 10px 12px; border-radius: 12px;
-        backdrop-filter: blur(6px);
-      }}
-      #bu-anchor + div [data-testid='stFileUploader'] {{
-        background: transparent !important; border: none !important;
+        width: var(--center-col);
+        max-width: 92vw;
+        padding: 8px 0;
       }}
 
-      /* 입력창 하단 고정 */
-      section[data-testid="stChatInput"] {{
-        position: fixed; left: 50%; transform: translateX(-50%);
-        bottom: 0; z-index: 70;
-        width: clamp(340px, calc(var(--center-col) - 2*var(--hgap)), calc(100vw - var(--rail) - 2*var(--hgap)));
-        max-width: calc(100vw - var(--rail) - 2*var(--hgap));
+      /* 데스크톱에서는 우측 레일을 피해 정렬 */
+      @media (min-width:1280px){{
+        body.chat-started #bu-anchor + div[data-testid='stFileUploader'],
+        body.chat-started #chatbar-fixed {{
+          left: calc(50% - var(--rail)/2);
+          transform: translateX(-50%);
+          width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap)));
+          max-width: calc(100vw - var(--rail) - 2*var(--hgap));
+        }}
       }}
 
       /* 본문이 하단 고정 UI와 겹치지 않게 */
@@ -468,64 +280,96 @@ def inject_sticky_layout_css(mode: str = "wide"):
         padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
       }}
 
-      
+      /* 우측 플로팅 검색 패널 */
+      #search-flyout {{
+        position: fixed; top: 72px; right: 24px;
+        width: 360px; max-width: 38vw;
+        height: calc(100vh - 96px);
+        overflow: auto; z-index: 58;   /* 업로더(60)와 입력창(70)보다 낮게 */
+        padding: 12px 14px; border-radius: 12px;
+      }}
+
+      /* 하단 고정 채팅창 스타일 */
+      .fixed-chat-input {{
+          position: fixed;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          background: rgba(255, 255, 255, 0.95);
+          backdrop-filter: blur(10px);
+          border-top: 1px solid #e9ecef;
+          padding: 1rem;
+          z-index: 1000;
+          box-shadow: 0 -4px 20px rgba(0,0,0,0.1);
+      }}
+
+      .fixed-chat-input .stForm {{
+          max-width: 900px;
+          margin: 0 auto;
+          width: 100%;
+      }}
+
+      .fixed-chat-input .stTextArea textarea {{
+          border-radius: 20px;
+          border: 2px solid #e9ecef;
+          padding: 12px 16px;
+          font-size: 16px;
+          resize: none;
+          transition: all 0.3s ease;
+      }}
+
+      .fixed-chat-input .stTextArea textarea:focus {{
+          border-color: #667eea;
+          box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+      }}
+
+      .fixed-chat-input .stButton > button {{
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: white;
+          border: none;
+          border-radius: 20px;
+          padding: 12px 24px;
+          font-weight: 600;
+          transition: all 0.3s ease;
+          box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+      }}
+
+      .fixed-chat-input .stButton > button:hover {{
+          transform: translateY(-2px);
+          box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+      }}
+
+      /* 반응형 디자인 */
+      @media (max-width: 768px) {{
+          .chat-container {{
+              max-width: 100%;
+              padding: 0 0.5rem;
+              padding-bottom: 120px;
+          }}
+          
+          .chat-content {{
+              max-width: 85%;
+          }}
+          
+          .chat-header h1 {{
+              font-size: 2rem;
+          }}
+          
+          .fixed-chat-input {{
+              padding: 0.5rem;
+          }}
+          
+          .fixed-chat-input .stForm {{
+              max-width: 100%;
+              margin: 0 0.5rem;
+          }}
+      }}
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
 
-# 호출 위치: 파일 맨 아래, 모든 컴포넌트를 그린 뒤
+
 inject_sticky_layout_css("wide")
-
-# ----- FINAL OVERRIDE: 우측 통합검색 패널 간격/위치 확정 -----
-
-# --- Right flyout: 상단 고정 + 하단(채팅창)과 겹치지 않게 ---
-# --- Right flyout: 하단 답변창(입력창) 위에 맞춰 고정 ---
-import streamlit as st
-st.markdown("""
-<style>
-  :root{
-    /* 숫자만 바꾸면 미세조정 됩니다 */
-    --flyout-width: 360px;     /* 우측 패널 폭 */
-    --flyout-gap:   80px;      /* 본문과 패널 사이 가로 간격 */
-    --chatbar-h:    56px;      /* 하단 입력창 높이 */
-    --chat-gap:     12px;      /* 입력창 위 여백 */
-    /* 패널 하단이 멈출 위치(= 입력창 바로 위) */
-    --flyout-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 16px);
-  }
-
-  @media (min-width:1280px){
-    /* 본문이 패널과 겹치지 않도록 우측 여백 확보 */
-    .block-container{
-      padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
-    }
-
-    /* 패널: 화면 하단 기준으로 ‘입력창 위’에 딱 붙이기 */
-    #search-flyout{
-      position: fixed !important;
-      bottom: var(--flyout-bottom) !important;  /* ⬅ 핵심: 답변창 위에 정렬 */
-      top: auto !important;                     /* 기존 top 규칙 무력화 */
-      right: 24px !important; left: auto !important;
-
-      width: var(--flyout-width) !important;
-      max-width: 38vw !important;
-
-      /* 패널 내부만 스크롤되게 최대 높이 제한 */
-      max-height: calc(100vh - var(--flyout-bottom) - 24px) !important;
-      overflow: auto !important;
-
-      z-index: 58 !important; /* 입력창(보통 z=70)보다 낮게 */
-    }
-  }
-
-  /* 모바일/좁은 화면은 자연 흐름 */
-  @media (max-width:1279px){
-    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
-    .block-container{ padding-right: 0 !important; }
-  }
-</style>
-""", unsafe_allow_html=True)
-
-
 
 # --- 간단 토큰화/정규화(이미 쓰고 있던 것과 호환) ---
 # === Tokenize & Canonicalize (유틸 최상단에 배치) ===
@@ -598,10 +442,7 @@ def _sanitize_plan_q(user_q: str, q: str) -> str:
     return q
 
 # ---- 오른쪽 플로팅 패널 렌더러 ----
-def render_search_flyout(user_q: str, num_rows: int = 8,
-                         hint_laws: list[str] | None = None,
-                         hint_articles: list[tuple[str,str]] | None = None,
-                         show_debug: bool = False):
+def render_search_flyout(user_q: str, num_rows: int = 8, hint_laws: list[str] | None = None, show_debug: bool = False):
     results = find_all_law_data(user_q, num_rows=num_rows, hint_laws=hint_laws)
 
     def _pick(*cands):
@@ -609,38 +450,15 @@ def render_search_flyout(user_q: str, num_rows: int = 8,
             if isinstance(c, str) and c.strip():
                 return c.strip()
         return ""
-    
+
     def _build_law_link(it, eff):
-        link = _pick(
-            it.get("법령상세링크"),
-            it.get("상세링크"),
-            it.get("url"), it.get("link"), it.get("detail_url"),
-        )
-        if link:
-            return normalize_law_link(link)
+        link = _pick(it.get("url"), it.get("link"), it.get("detail_url"), it.get("상세링크"))
+        if link: return link
         mst = _pick(it.get("MST"), it.get("mst"), it.get("LawMST"))
         if mst:
-            ef = (eff or "").replace("-", "")
-            return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={ef}"
+            return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={eff}"
         return ""
 
-    # ── 여기부터는 기존 HTML 조립부 ─────────────────────────────
-    html: list[str] = []
-    html.append('<div class="flyout">')
-    html.append('<h3>🧠 통합 검색 결과</h3>')
-
-    # ▼▼▼ (NEW) 조문 바로가기: '카테고리 렌더' 들어가기 직전에 삽입 ▼▼▼
-    if hint_articles:
-        html.append('<h4>🔗 조문 바로가기</h4>')
-        html.append('<ol class="law-list">')
-        for law, art in hint_articles:
-            # 예: law="주택임대차보호법", art="제6조" 또는 "제6조의2"
-            url = _deep_article_url(law, art)  # 실패 시 법령 메인으로 폴백하는 기존 함수
-            html.append(
-                f'<li><a href="{url}" target="_blank" rel="noreferrer">{law} {art}</a></li>'
-            )
-        html.append('</ol>')
- 
     def _law_item_li(it):
         title = _pick(it.get("법령명한글"), it.get("법령명"), it.get("title_kr"), it.get("title"), it.get("name_ko"), it.get("name"))
         dept  = _pick(it.get("소관부처"), it.get("부처명"), it.get("dept"), it.get("department"))
@@ -689,14 +507,14 @@ def render_search_flyout(user_q: str, num_rows: int = 8,
 
 # =========================================
 # 세션에 임시로 담아 둔 첫 질문을 messages로 옮기는 유틸
-# (이 블록을 파일 상단 ‘레이아웃/스타일 주입’ 직후 정도로 올려둡니다)
+# (이 블록을 파일 상단 '레이아웃/스타일 주입' 직후 정도로 올려둡니다)
 # =========================================
 from datetime import datetime
 
 has_chat = bool(st.session_state.get("messages")) or bool(st.session_state.get("_pending_user_q"))
 
 
-# ✅ 중요: ‘최초 화면’ 렌더링 전에 먼저 호출
+# ✅ 중요: '최초 화면' 렌더링 전에 먼저 호출
 
 from datetime import datetime
 import time
@@ -710,126 +528,20 @@ def _push_user_from_pending() -> str | None:
         return None
     if nonce and st.session_state.get("_last_user_nonce") == nonce:
         return None
-
-    # === 첨부파일 처리: 업로드된 파일 텍스트를 질문 뒤에 부착 ===
-    try:
-        att_payload = st.session_state.pop("_pending_user_files", None)
-    except Exception:
-        att_payload = None
-
-    # 우선순위: 명시 payload > 포스트-챗 업로더 > 프리챗 업로더 > 하단 업로더
-    files_to_read = []
-    try:
-        if att_payload:
-            for it in att_payload:
-                name = it.get("name") or "uploaded"
-                data = it.get("data", b"")
-                mime = it.get("type") or ""
-                files_to_read.append(("__bytes__", name, data, mime))
-    except Exception:
-        pass
-    # 스트림릿 업로더에서 직접 읽기 (fallback)
-    for key in ("post_files", "first_files", "bottom_files"):
-        try:
-            for f in (st.session_state.get(key) or []):
-                files_to_read.append(("__widget__", getattr(f, "name", "uploaded"), f, getattr(f, "type", "")))
-        except Exception:
-            pass
-
-    def _try_extract(name, src, mime):
-        txt = ""
-        try:
-            # utils_extract 사용 우선
-            if name.lower().endswith(".pdf"):
-                try:
-                    txt = extract_text_from_pdf(src)
-                except Exception:
-                    import io
-                    try:
-                        data = src if isinstance(src, (bytes, bytearray)) else src.read()
-                        txt = extract_text_from_pdf(io.BytesIO(data))
-                    except Exception:
-                        txt = ""
-            elif name.lower().endswith(".docx"):
-                try:
-                    txt = extract_text_from_docx(src)
-                except Exception:
-                    import io
-                    try:
-                        data = src if isinstance(src, (bytes, bytearray)) else src.read()
-                        txt = extract_text_from_docx(io.BytesIO(data))
-                    except Exception:
-                        txt = ""
-            elif name.lower().endswith(".txt"):
-                try:
-                    if hasattr(src, "read"):
-                        data = src.read()
-                        try: src.seek(0)
-                        except Exception: pass
-                    else:
-                        data = src if isinstance(src, (bytes, bytearray)) else b""
-                    txt = read_txt(data)
-                except Exception:
-                    try:
-                        txt = data.decode("utf-8", errors="ignore")
-                    except Exception:
-                        txt = ""
-        except Exception:
-            txt = ""
-        return sanitize(txt) if "sanitize" in globals() else txt
-
-    ATTACH_LIMIT_PER_FILE = 6000   # chars
-    ATTACH_TOTAL_LIMIT    = 16000  # chars
-
-    pieces = []
-    total = 0
-    for kind, name, src, mime in files_to_read[:6]:
-        try:
-            t = _try_extract(name, src if kind=="__widget__" else src, mime) or ""
-        except Exception:
-            t = ""
-        if not t:
-            continue
-        t = t.strip()
-        if not t:
-            continue
-        t = t[:ATTACH_LIMIT_PER_FILE]
-        if total + len(t) > ATTACH_TOTAL_LIMIT:
-            t = t[: max(0, ATTACH_TOTAL_LIMIT - total) ]
-        if not t:
-            break
-        pieces.append(f"### {name}\\n{t}")
-        total += len(t)
-        if total >= ATTACH_TOTAL_LIMIT:
-            break
-
-    attach_block = "\\n\\n".join(pieces) if pieces else ""
-
-    # === 최종 콘텐츠 합성 ===
-    content_final = q.strip()
-    if attach_block:
-        content_final += "\\n\\n[첨부 문서 발췌]\\n" + attach_block + "\\n"
-    else:
-        content_final = q.strip()
-    # (NEW) content_final이 없으면 질문만으로 초기화
-    content_final = locals().get('content_final', (q or "").strip())
     st.session_state.messages.append({
         "role": "user",
-        "content": content_final,
+        "content": q.strip(),
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     })
     st.session_state["_last_user_nonce"] = nonce
-    st.session_state["current_turn_nonce"] = nonce  # ✅ 이 턴의 nonce 확정
-    # reset duplicate-answer guard for a NEW user turn
-    st.session_state.pop('_last_ans_hash', None)
-
-    return content_final
+    return q
 
 def render_pre_chat_center():
+    """대화 전: 중앙 히어로 + 중앙 업로더(키: first_files) + 전송 폼"""
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
     st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
 
-    # 중앙 업로더
+    # 중앙 업로더 (대화 전 전용)
     st.file_uploader(
         "Drag and drop files here",
         type=["pdf", "docx", "txt"],
@@ -837,35 +549,10 @@ def render_pre_chat_center():
         key="first_files",
     )
 
-    # 입력 폼
+    # 입력 폼 (전송 시 pending에 저장 후 rerun)
     with st.form("first_ask", clear_on_submit=True):
         q = st.text_input("질문을 입력해 주세요...", key="first_input")
         sent = st.form_submit_button("전송", use_container_width=True)
-
-    # ✅ 대화 스타터 버튼 (2줄 2줄)
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("건설현장 중대재해 발생시 처리 절차는?", use_container_width=True):
-            st.session_state["_pending_user_q"] = "건설현장 중대재해 발생시 처리 절차는?"
-            st.session_state["_pending_user_nonce"] = time.time_ns()
-            st.rerun()
-    with col2:
-        if st.button("임대차 계약 해지 방법 알려줘", use_container_width=True):
-            st.session_state["_pending_user_q"] = "임대차 계약 해지 방법 알려줘"
-            st.session_state["_pending_user_nonce"] = time.time_ns()
-            st.rerun()
-
-    col3, col4 = st.columns(2)
-    with col3:
-        if st.button("유료주차장에 주차된 차에서 도난 사건이 났어", use_container_width=True):
-            st.session_state["_pending_user_q"] = "유료주차장에 주차된 차에서 도난 사건이 났어?"
-            st.session_state["_pending_user_nonce"] = time.time_ns()
-            st.rerun()
-    with col4:
-        if st.button("교통사고 합의 시 주의할 점은?", use_container_width=True):
-            st.session_state["_pending_user_q"] = "교통사고 합의 시 주의할 점은?"
-            st.session_state["_pending_user_nonce"] = time.time_ns()
-            st.rerun()
 
     st.markdown("</section>", unsafe_allow_html=True)
 
@@ -874,50 +561,7 @@ def render_pre_chat_center():
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
 
-
 # 기존 render_bottom_uploader() 전부 교체
-
-# [ADD] 답변 완료 후에도 프리챗과 동일한 UI 사용
-def render_post_chat_simple_ui():
-    import time, io
-    st.markdown('<section class="post-chat-ui">', unsafe_allow_html=True)
-
-    # 업로더 (프리챗과 동일)
-    post_files = st.file_uploader(
-        "Drag and drop files here",
-        type=["pdf", "docx", "txt"],
-        accept_multiple_files=True,
-        key="post_files",
-    )
-
-    # 텍스트 입력 + 전송 버튼 (프리챗과 동일)
-    with st.form("next_ask", clear_on_submit=True):
-        q = st.text_input("질문을 입력해 주세요...", key="next_input")
-        sent = st.form_submit_button("전송", use_container_width=True)
-
-    st.markdown("</section>", unsafe_allow_html=True)
-
-    if sent and (q or "").strip():
-        # 업로드된 파일을 안전하게 세션에 보관 (바로 rerun할 것이므로 바이트로 저장)
-        safe_payload = []
-        try:
-            for f in (post_files or []):
-                try:
-                    data = f.read()
-                    f.seek(0)
-                except Exception:
-                    data = None
-                safe_payload.append({
-                    "name": getattr(f, "name", "uploaded"),
-                    "type": getattr(f, "type", ""),
-                    "data": data,
-                })
-        except Exception:
-            pass
-        st.session_state["_pending_user_q"] = (q or "").strip()
-        st.session_state["_pending_user_nonce"] = time.time_ns()
-        st.session_state["_pending_user_files"] = safe_payload
-        st.rerun()
 def render_bottom_uploader():
     # 업로더 바로 앞에 '앵커'만 출력
     st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
@@ -980,45 +624,6 @@ def _chat_started() -> bool:
     ) or bool(st.session_state.get("_pending_user_q"))
 
 # --- 최종 후처리 유틸: 답변 본문을 정리하고 조문에 인라인 링크를 붙인다 ---
-# === [NEW] MEMO 템플릿 강제 & '핵심 판단' 링크 제거 유틸 ===
-import re as _re_memo
-
-_MEMO_HEADS = [
-    (_re_memo.compile(r'(?mi)^\s*1\s*[\.\)]\s*(사건\s*요지|자문\s*요지)\s*:?.*$', _re_memo.M), "1. 자문요지 :"),
-    (_re_memo.compile(r'(?mi)^\s*2\s*[\.\)]\s*(적용\s*법령\s*/?\s*근거|법적\s*근거)\s*:?.*$', _re_memo.M), "2. 적용 법령/근거"),
-    (_re_memo.compile(r'(?mi)^\s*3\s*[\.\)]\s*(핵심\s*판단)\s*:?.*$', _re_memo.M), "3. 핵심 판단"),
-    (_re_memo.compile(r'(?mi)^\s*4\s*[\.\)]\s*(권고\s*조치)\s*:?.*$', _re_memo.M), "4. 권고 조치"),
-]
-
-def enforce_memo_template(md: str) -> str:
-    if not md:
-        return md
-    out = md
-    for pat, fixed in _MEMO_HEADS:
-        out = pat.sub(fixed, out)
-    # 본문 내 '사건요지' 표기를 '자문요지'로 통일
-    out = _re_memo.sub(r'(?i)사건\s*요지', '자문요지', out)
-    return out
-
-_SEC_CORE_TITLE = _re_memo.compile(r'(?mi)^\s*3\s*[\.\)]\s*핵심\s*판단\s*$', _re_memo.M)
-_SEC_NEXT_TITLE2 = _re_memo.compile(r'(?m)^\s*\d+\s*[\.\)]\s+')
-
-def strip_links_in_core_judgment(md: str) -> str:
-    if not md:
-        return md
-    m = _SEC_CORE_TITLE.search(md)
-    if not m:
-        return md
-    start = m.end()
-    n = _SEC_NEXT_TITLE2.search(md, start)
-    end = n.start() if n else len(md)
-    block = md[start:end]
-    # [텍스트](http...) 형태의 링크 제거
-    block = _re_memo.sub(r'\[([^\]]+)\]\((?:https?:\/\/)[^)]+\)', r'\1', block)
-    return md[:start] + block + md[end:]
-# === [END NEW] ===
-
-
 def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
     # 1) normalize (fallback 포함)
     try:
@@ -1039,23 +644,11 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
           .replace("* ", "- ")
     )
 
-    # ✅ (NEW) MEMO 제목/번호/콜론 강제
-    ft = enforce_memo_template(ft)
-
-
     # 3) 조문 인라인 링크 변환:  - 민법 제839조의2 → [민법 제839조의2](...)
-    ft = link_articles_in_law_and_explain_sections(ft)
-    ft = strip_redundant_article_link_words(ft)   # ← 잉여 "제n조 링크" 제거
-# 4) 본문 내 [법령명](URL) 교정 ...
-    ft = fix_links_with_lawdata(ft, collected_laws)
-
+    ft = link_inline_articles_in_bullets(ft)
 
     # 4) 본문 내 [법령명](URL) 교정(법제처 공식 링크로)
     ft = fix_links_with_lawdata(ft, collected_laws)
-
-    # ✅ (NEW) '3. 핵심 판단' 섹션의 링크 제거
-    ft = strip_links_in_core_judgment(ft)
-
 
     # 5) 맨 아래 '참고 링크(조문)' 섹션 제거(중복 방지)
     ft = strip_reference_links_block(ft)
@@ -1101,27 +694,6 @@ def extract_law_names_from_answer(md: str) -> list[str]:
             out.append(n2)
     return out[:6]
 
-# ===== 조문 추출: 답변에서 (법령명, 제n조[의m]) 페어 추출 =====
-import re as _re_art
-
-_ART_INLINE = _re_art.compile(
-    r'(?P<law>[가-힣A-Za-z0-9·\s]{2,40}?(?:법|령|규칙|조례))\s*제(?P<num>\d{1,4})조(?P<ui>의\d{1,3})?'
-)
-
-def extract_article_pairs_from_answer(md: str) -> list[tuple[str, str]]:
-    pairs = []
-    for m in _ART_INLINE.finditer(md or ""):
-        law = (m.group("law") or "").strip()
-        art = f"제{m.group('num')}조{m.group('ui') or ''}"
-        if law:
-            pairs.append((law, art))
-    # 순서 유지 중복 제거
-    seen = set(); out = []
-    for p in pairs:
-        if p not in seen:
-            seen.add(p)
-            out.append(p)
-    return out[:8]
 
 def normalize_law_link(u: str) -> str:
     """상대/스킴누락 링크를 www.law.go.kr 절대 URL로 교정"""
@@ -1166,165 +738,9 @@ import re
 from urllib.parse import quote
 
 # 조문 패턴: 민법 제839조의2, 민사소송법 제163조 등
-# app.py — [PATCH] 조문 패턴: 불릿(*)이 '선택'이 되도록
 _ART_PAT_BULLET = re.compile(
-    r'(?m)^(?P<prefix>\s*(?:[-*•]\s*)?)'                  # 불릿 기호를 옵션으로
-    r'(?P<law>[가-힣A-Za-z0-9·()\s]{2,40})\s*'
-    r'제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})'
-    r'(?P<tail>[^\n]*)$'
+    r'(?m)^(?P<prefix>\s*[-*•]\s*)(?P<law>[가-힣A-Za-z0-9·()\s]{2,40})\s*제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})(?P<tail>[^\n]*)$'
 )
-
-
-# --- [NEW] '적용 법령/근거' + '해설' 섹션에서만 조문 링크 활성화 ---
-# 섹션 제목 인식
-_SEC_LAW_TITLES    = re.compile(r'(?mi)^\s*\d+\s*[\.\)]\s*(적용\s*법령\s*/?\s*근거|법적\s*근거)\s*$')
-_SEC_EXPLAIN_TITLE = re.compile(r'(?mi)^\s*(?:#{1,6}\s*)?해설\s*:?\s*$')
-# 다음 상위 섹션(예: "3. 핵심 판단") 시작 라인
-_SEC_NEXT_TITLE = re.compile(r'(?m)^\s*\d+\s*[\.\)]\s+')
-
-# 해설 섹션 내부의 '맨몸 URL'(순수 문자열 URL)을 <URL> 형태로 감싸서 자동 링크화
-_URL_BARE = re.compile(r'(?<!\()(?<!\])\b(https?://[^\s<>)]+)\b')
-def autolink_bare_urls_in_explain(md: str) -> str:
-    if not md:
-        return md
-    m = _SEC_EXPLAIN_TITLE.search(md)
-    if not m:
-        return md
-    start = m.end()
-    n = _SEC_NEXT_TITLE.search(md, start)
-    end = n.start() if n else len(md)
-    block = md[start:end]
-    # 기존 마크다운 링크([text](url))는 그대로 두고, 맨몸 URL만 <url>로 감싼다
-    def _wrap(match):
-        url = match.group(1)
-        return f'<{url}>'
-    block = _URL_BARE.sub(_wrap, block)
-    return md[:start] + block + md[end:]
-st.markdown(
-    """
-    <div style="text-align:center; padding: 6px 0 2px;">
-      <h1 style="
-          margin:0;
-          font-size:48px;
-          font-weight:800;
-          line-height:1.1;
-          letter-spacing:-0.5px;">
-        인공지능 <span style="color:#2F80ED">법률 상담가</span>
-      </h1>
-    </div>
-    <hr style="margin: 12px 0 20px; border: 0; height: 1px; background: #eee;">
-    """,
-    unsafe_allow_html=True
-)
-
-# 본문
-st.markdown("""
-국가법령정보 DB를 직접 접속하여 최신 법령을 조회하여 답변합니다.  
-저는 내부 DB를 사용하지 않아 채팅 기록, 첨부파일 등 사용자의 기록을 저장하지 않습니다.             
-""")
-
-# 하위 법령 소제목(예: "1) 산업안전보건법")
-# 번호/헤딩/불릿이 있어도 없어도 잡히게 완화
-_LAW_HEADING_LINE = re.compile(
-    r'(?m)^\s*(?:\d+\s*[\.\)]\s*)?(?:#{1,6}\s*)?(?:[*-]\s*)?(?P<law>[가-힣A-Za-z0-9·()\s]{2,40}?법)\s*$'
-)
-
-
-# 불릿에 "법령명 제n조 ..." 패턴(기존 전역의 _ART_PAT_BULLET 재사용)
-# _ART_PAT_BULLET, _deep_article_url 이 이미 정의돼 있어야 합니다.
-
-# 불릿에 "제n조"만 있고 법령명이 생략된 단순형
-_BULLET_ART_SIMPLE = re.compile(
-    r'(?m)^(?P<prefix>\s*[-*•]\s*)제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})?(?P<title>\([^)]+\))?(?P<tail>[^\n]*)$'
-)
-
-# 해설 섹션에서의 인라인 "법령명 제n조" 패턴
-_ART_INLINE_IN_EXPL = re.compile(
-    r'(?P<law>[가-힣A-Za-z0-9·()\s]{1,40}?법)\s*제(?P<num>\d{1,4})조(?P<ui>(의\d{1,3}){0,2})?'
-)
-
-def _link_block_with_bullets(block: str) -> str:
-    """법령/근거 섹션 블록: 소제목의 법령명을 기억해 아래 불릿의 '제n조'에 링크 부여."""
-    cur_law = None
-    out = []
-    for line in block.splitlines():
-        mh = _LAW_HEADING_LINE.match(line)
-        if mh:
-            cur_law = (mh.groupdict().get('law') or (mh.group(1) if mh.lastindex else "") or "").strip() or cur_law
-            out.append(line)
-            continue
-
-        mf = _ART_PAT_BULLET.match(line)
-        if mf:
-            law = (mf.group("law") or "").strip() or cur_law
-            if law:
-                art  = f"제{mf.group('num')}조{mf.group('ui') or ''}"
-                url  = _deep_article_url(law, art)
-                tail = (mf.group("tail") or "")
-                out.append(f"{mf.group('prefix')}[{law} {art}]({url}){tail}")
-                continue
-
-        ms = _BULLET_ART_SIMPLE.match(line)
-        if ms and cur_law:
-            art   = f"제{ms.group('num')}조{ms.group('ui') or ''}"
-            title = (ms.group('title') or '')
-            tail  = (ms.group('tail') or '')
-            url   = _deep_article_url(cur_law, art)
-            txt = f"{art}{title or ''}"                      # 예: "제76조(외국에서의 혼인신고)"
-            out.append(f"{ms.group('prefix')}[{txt}]({url}){tail}")
-
-            continue
-
-        out.append(line)
-    return "\n".join(out)
-
-def _link_inline_in_explain(block: str) -> str:
-    """해설 섹션 블록: 인라인 '법령명 제n조'를 링크로 치환."""
-    def repl(m):
-        law = m.group('law').strip()
-        art = f"제{m.group('num')}조{m.group('ui') or ''}"
-        return f"[{law} {art}]({_deep_article_url(law, art)})"
-    return _ART_INLINE_IN_EXPL.sub(repl, block)
-
-def link_articles_in_law_and_explain_sections(md: str) -> str:
-    """
-    '2. 적용 법령/근거'와 '해설' 섹션에서만 조문 링크를 활성화한다.
-    그 외(예: '3. 핵심 판단')에는 링크를 만들지 않는다.
-    """
-    if not md:
-        return md
-
-    ranges = []
-
-    # 적용 법령/근거 섹션(1개 가정)
-    m = _SEC_LAW_TITLES.search(md)
-    if m:
-        n = _SEC_NEXT_TITLE.search(md, m.end())
-        ranges.append(("law", m.start(), n.start() if n else len(md)))
-
-    # 해설 섹션(여러 개일 수 있음)
-    for m in _SEC_EXPLAIN_TITLE.finditer(md):
-        n = _SEC_NEXT_TITLE.search(md, m.end())
-        ranges.append(("explain", m.start(), n.start() if n else len(md)))
-
-    if not ranges:
-        return md
-
-    ranges.sort(key=lambda x: x[1])
-
-    out = []
-    last = 0
-    for kind, s, e in ranges:
-        out.append(md[last:s])
-        block = md[s:e]
-        if kind == "law":
-            out.append(_link_block_with_bullets(block))
-        else:  # explain
-            out.append(_link_inline_in_explain(block))
-        last = e
-    out.append(md[last:])
-    return "".join(out)
-
 
 # 하단 '참고 링크' 제목(모델이 7. 또는 7) 등으로 출력하는 케이스 포함)
 _REF_BLOCK_PAT = re.compile(
@@ -1333,34 +749,9 @@ _REF_BLOCK_PAT = re.compile(
 # 앞에 공백이 있어도 매칭되도록 보강
 _REF_BLOCK2_PAT = re.compile(r'\n[ \t]*###\s*참고\s*링크\(조문\)[\s\S]*$', re.M)
 
-# app.py — 안전 링크 헬퍼 (기존 _deep_article_url 대체)
-from urllib.parse import quote as _q
-
-def _article_url_or_main(law: str, art_label: str, verify: bool = True, timeout: float = 2.5) -> str:
-    base = "https://www.law.go.kr/법령"
-    law = (law or "").strip(); art = (art_label or "").strip()
-    cand = [
-        f"{base}/{law}/{art}",                         # 1) 미인코딩
-        f"{base}/{_q(law, safe='')}/{_q(art, safe='')}" # 2) 인코딩
-    ]
-    if not verify:
-        return cand[0]
-    try:
-        import requests
-        bad = ["삭제", "존재하지 않는 조문입니다", "해당 한글주소명을 찾을 수 없습니다", "한글 법령주소를 확인해 주시기 바랍니다"]
-        for deep in cand:
-            r = requests.get(deep, timeout=timeout, allow_redirects=True)
-            if (200 <= r.status_code < 400) and not any(sig in r.text[:6000] for sig in bad):
-                return deep
-        return f"{base}/{law}"  # 모두 실패 → 메인
-    except Exception:
-        return f"{base}/{law}"
-
-
 
 def _deep_article_url(law: str, art_label: str) -> str:
-    # 과거 호출부 호환용. 항상 안전 검증 + 메인페이지 폴백.
-    return _article_url_or_main(law, art_label, verify=True)
+    return f"https://www.law.go.kr/법령/{quote((law or '').strip())}/{quote(art_label)}"
 
 def link_inline_articles_in_bullets(markdown: str) -> str:
     """불릿 라인 중 '법령명 제N조(의M)'를 [텍스트](조문URL)로 교체"""
@@ -1381,14 +772,6 @@ def strip_reference_links_block(markdown: str) -> str:
     txt = _REF_BLOCK_PAT.sub("", markdown)
     txt = _REF_BLOCK2_PAT.sub("", txt)
     return txt
-
-
-# 모델이 종종 만들어내는 "제n조 링크" 같은 잉여 단어 제거
-import re as _re_fix
-_WORD_LINK_GHOST = _re_fix.compile(r'(?mi)\s*제\d{1,4}조(?:의\d{1,3}){0,2}\s*링크\b')
-
-def strip_redundant_article_link_words(s: str) -> str:
-    return _WORD_LINK_GHOST.sub('', s)
 
 
 # === 새로 추가: 중복 제거 유틸 ===
@@ -1546,7 +929,7 @@ def render_bubble_with_copy(message: str, key: str):
     st.markdown(message)
     safe_raw_json = json.dumps(message)
     html_tpl = '''
-    <div class="copy-row" style="margin-bottom:8px">
+    <div class="copy-row">
       <button id="copy-__KEY__" class="copy-btn">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
           <path d="M9 9h9v12H9z" stroke="currentColor"/>
@@ -1866,7 +1249,7 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
 # 통합 미리보기 전용: 과한 문장부호/따옴표 제거 + '법령명 (제n조)'만 추출
 def _clean_query_for_api(q: str) -> str:
     q = (q or "").strip()
-    q = re.sub(r'[“”"\'‘’.,!?()<>\\[\\]{}:;~…]', ' ', q)
+    q = re.sub(r'[“"\'‘’.,!?()<>\\[\\]{}:;~…]', ' ', q)
     q = re.sub(r'\\s+', ' ', q).strip()
     # 법령명(OO법/령/규칙/조례) + (제n조) 패턴
     name = re.search(r'([가-힣A-Za-z0-9·\\s]{1,40}?(법|령|규칙|조례))', q)
@@ -2323,190 +1706,16 @@ def extract_keywords_llm(q: str) -> list[str]:
     st.session_state["_kw_extract_debug"] = "all_stages_failed"
     return []
 
-
-# 간단 폴백(예비 — 도구 모드 기본이므로 최소화)
-def find_law_with_fallback(user_query: str, num_rows: int = 10):
-    laws, endpoint, err = search_law_data(user_query, num_rows=num_rows)
-    if laws: return laws, endpoint, err, "primary"
-    keyword_map = {"정당방위":"형법","전세":"주택임대차보호법","상가임대차":"상가건물 임대차보호법","근로계약":"근로기준법","해고":"근로기준법","개인정보":"개인정보 보호법","산재":"산업재해보상보험법","이혼":"민법"}
-    text = (user_query or "")
-    for k, law_name in keyword_map.items():
-        if k in text:
-            laws2, ep2, err2 = search_law_data(law_name, num_rows=num_rows)
-            if laws2: return laws2, ep2, err2, f"fallback:{law_name}"
-    return [], endpoint, err, "none"
-
-def _append_message(role: str, content: str, **extra):
-    
-    txt = (content or "").strip()
-    is_code_only = (txt.startswith("```") and txt.endswith("```"))
-    if not txt or is_code_only:
-        return
-    msgs = st.session_state.get("messages", [])
-    if msgs and isinstance(msgs[-1], dict) and msgs[-1].get("role")==role and (msgs[-1].get("content") or "").strip()==txt:
-        # skip exact duplicate of the last message (role+content)
-        return
-    st.session_state.messages.append({"role": role, "content": txt, **extra})
-
-
-
-def format_law_context(law_data: list[dict]) -> str:
-    if not law_data: return "관련 법령 검색 결과가 없습니다."
-    rows = []
-    for i, law in enumerate(law_data, 1):
-        rows.append(
-            f"{i}. {law['법령명']} ({law['법령구분']})\n"
-            f"   - 소관부처: {law['소관부처명']}\n"
-            f"   - 시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}\n"
-            f"   - 링크: {law['법령상세링크'] or '없음'}"
-        )
-    return "\n\n".join(rows)
-
-def animate_law_results(law_data: list[dict], delay: float = 1.0):
-    if not law_data:
-        st.info("관련 법령 검색 결과가 없습니다.")
-        return
-    n = len(law_data)
-    prog = st.progress(0.0, text="관련 법령 미리보기")
-    placeholder = st.empty()
-    for i, law in enumerate(law_data, 1):
-        with placeholder.container():
-            st.markdown(
-                f"""
-                <div class='law-slide'>
-                    <div style='font-weight:700'>🔎 {i}. {law['법령명']} <span style='opacity:.7'>({law['법령구분']})</span></div>
-                    <div style='margin-top:6px'>소관부처: {law['소관부처명']}</div>
-                    <div>시행일자: {law['시행일자']} / 공포일자: {law['공포일자']}</div>
-                    {f"<div style='margin-top:6px'><a href='{law['법령상세링크']}' target='_blank'>법령 상세보기</a></div>" if law.get('법령상세링크') else ''}
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        prog.progress(i / n, text=f"관련 법령 미리보기 {i}/{n}")
-        time.sleep(max(0.0, delay))
-    prog.empty()
-
-# =============================
-# Azure 함수콜(툴) — 래퍼 & 스키마 & 오케스트레이션
-# =============================
-SUPPORTED_TARGETS = ["law", "admrul", "ordin", "trty"]
-
-def tool_search_one(target: str, query: str, num_rows: int = 5):
-    if target not in SUPPORTED_TARGETS:
-        return {"error": f"unsupported target: {target}"}
-    items, endpoint, err = _call_moleg_list(target, query, num_rows=num_rows)
-    return {"target": target, "query": query, "endpoint": endpoint, "error": err, "items": items}
-
-def tool_search_multi(queries: list, num_rows: int = 5):
-    out = []
-    for q in queries:
-        t = q.get("target","law"); s = q.get("query","")
-        out.append(tool_search_one(t, s, num_rows=num_rows))
-    return out
-
-TOOLS = [
-    {
-        "type":"function",
-        "function":{
-            "name":"search_one",
-            "description":"MOLEG 목록 API에서 단일 카테고리를 검색한다.",
-            "parameters":{
-                "type":"object",
-                "properties":{
-                    "target":{"type":"string","enum":SUPPORTED_TARGETS},
-                    "query":{"type":"string"},
-                    "num_rows":{"type":"integer","minimum":1,"maximum":10,"default":5}
-                },
-                "required":["target","query"]
-            }
-        }
-    },
-    {
-        "type":"function",
-        "function":{
-            "name":"search_multi",
-            "description":"여러 카테고리/질의어를 한 번에 검색한다.",
-            "parameters":{
-                "type":"object",
-                "properties":{
-                    "queries":{
-                        "type":"array",
-                        "items":{
-                            "type":"object",
-                            "properties":{
-                                "target":{"type":"string","enum":SUPPORTED_TARGETS},
-                                "query":{"type":"string"}
-                            },
-                            "required":["target","query"]
-                        }
-                    },
-                    "num_rows":{"type":"integer","minimum":1,"maximum":10,"default":5}
-                },
-                "required":["queries"]
-            }
-        }
-    }
-]
-
-# ============================
-# [GPT PATCH] app.py 연결부
-# 붙여넣는 위치: client/AZURE/TOOLS 등 준비가 끝난 "아래",
-#               사이드바/레이아웃 렌더링이 시작되기 "위"
-# ============================
-
-# 1) imports
-from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
-
-# 2) 엔진 생성 (한 번만)
-engine = None
-try:
-    # 아래 객체들은 app.py 상단에서 이미 정의되어 있어야 합니다.
-    # - client, AZURE, TOOLS
-    # - safe_chat_completion
-    # - tool_search_one, tool_search_multi
-    # - prefetch_law_context, _summarize_laws_for_primer
-    if client and AZURE and TOOLS:
-        engine = AdviceEngine(
-            client=client,
-            model=AZURE["deployment"],
-            tools=TOOLS,
-            safe_chat_completion=safe_chat_completion,
-            tool_search_one=tool_search_one,
-            tool_search_multi=tool_search_multi,
-            prefetch_law_context=prefetch_law_context,            # 있으면 그대로
-            summarize_laws_for_primer=_summarize_laws_for_primer, # 있으면 그대로
-            temperature=0.2,
-        )
-except NameError:
-    # 만약 위 객체들이 아직 정의되기 전 위치라면,
-    # 이 패치를 해당 정의 '아래'로 옮겨 붙이세요.
-    pass
-
-# =============================
-# 키워드 기본값/위젯 헬퍼 (with st.sidebar: 위에 배치)
-# =============================
-
-# 탭별 기본 키워드 1개(없으면 첫 항목 사용)
-DEFAULT_KEYWORD = {
-    "법령": "개정",
-    "행정규칙": "개정",
-    "자치법규": "개정",
-    "조약": "비준",
-    "판례": "대법원",
-    "헌재": "위헌",
-    "해석례": "유권해석",
-    "용어/별표": "정의",   # ← '용어' 대신 '정의'를 기본으로 권장
-}
+# st_tags가 있으면 태그 위젯, 없으면 multiselect로 동작
+# 기본 프리셋(탭별 선호 키워드를 지정할 수 있음). 비어 있으면 첫 항목을 기본으로 사용.
+DEFAULT_KEYWORD = {}
 
 def one_default(options, prefer=None):
-    """옵션 목록에서 기본으로 1개만 선택해 반환"""
-    if not options:
-        return []
-    if prefer and prefer in options:
+    opts = list(options or [])
+    if prefer and prefer in opts:
         return [prefer]
-    return [options[0]]
+    return [opts[0]] if opts else []
 
-# st_tags가 있으면 태그 위젯, 없으면 multiselect로 동작
 try:
     from streamlit_tags import st_tags
     def kw_input(label, options, key, tab_name=None):
@@ -2544,49 +1753,13 @@ with st.sidebar:
     st.header("🔗 링크 생성기 (무인증)")
     tabs = st.tabs(["법령", "행정규칙", "자치법규", "조약", "판례", "헌재", "해석례", "용어/별표"])
 
-    # persist/restore active sidebar tab across reruns
-    st.markdown("""
-<script>
-(function(){
-  const KEY = "left_sidebar_active_tab";
-  function labelOf(btn){ return (btn?.innerText || btn?.textContent || "").trim(); }
-  function restore(){
-    const want = sessionStorage.getItem(KEY);
-    if(!want) return false;
-    const btns = Array.from(window.parent.document.querySelectorAll('[data-testid="stSidebar"] [role="tablist"] button[role="tab"]'));
-    if(btns.length === 0) return false;
-    const match = btns.find(b => labelOf(b) === want);
-    if(!match) return false;
-    if(match.getAttribute('aria-selected') !== 'true'){ match.click(); }
-    return true;
-  }
-  function bind(){
-    const root = window.parent.document.querySelector('[data-testid="stSidebar"]');
-    if(!root) return;
-    // Save when user clicks a tab
-    root.addEventListener('click', (e)=>{
-      const b = e.target.closest('button[role="tab"]');
-      if(b){ sessionStorage.setItem(KEY, labelOf(b)); }
-    }, true);
-    // Keep trying to restore selection until ready
-    const tid = setInterval(()=>{ if(restore()) clearInterval(tid); }, 100);
-    setTimeout(()=>clearInterval(tid), 4000);
-    // Also restore when DOM changes (e.g., reruns)
-    new MutationObserver(()=>restore()).observe(root, {subtree:true, childList:true, attributes:true});
-  }
-  window.addEventListener('load', bind, {once:true});
-  setTimeout(bind, 0);
-})();
-</script>
-""", unsafe_allow_html=True)
-
     # 공통 추천 프리셋(모두 1개만 기본 선택되도록 kw_input + DEFAULT_KEYWORD 활용)
-    adm_suggest    = cached_suggest_for_tab("admrul")
-    ordin_suggest  = cached_suggest_for_tab("ordin")
-    trty_suggest   = cached_suggest_for_tab("trty")
-    case_suggest   = cached_suggest_for_tab("prec")
-    cc_suggest     = cached_suggest_for_tab("cc")
-    interp_suggest = cached_suggest_for_tab("expc")
+    adm_suggest    = suggest_keywords_for_tab("admrul")
+    ordin_suggest  = suggest_keywords_for_tab("ordin")
+    trty_suggest   = suggest_keywords_for_tab("trty")
+    case_suggest   = suggest_keywords_for_tab("prec")
+    cc_suggest     = suggest_keywords_for_tab("cc")
+    interp_suggest = suggest_keywords_for_tab("expc")
     term_suggest   = ["정의", "용어", "별표", "서식"]
 
     # ───────────────────────── 법령
@@ -2594,7 +1767,7 @@ with st.sidebar:
         law_name = st.text_input("법령명", value="민법", key="sb_law_name")
         # 법령명 기반 추천
         law_keys = kw_input("키워드(자동 추천)",
-                            cached_suggest_for_law(law_name),
+                            suggest_keywords_for_law(law_name),
                             key="sb_law_keys",
                             tab_name="법령")
 
@@ -2769,13 +1942,9 @@ with st.sidebar:
             d = st.session_state["gen_file"]
             present_url_with_fallback(d["url"], d["kind"], d["q"])
 
+
 # 1) pending → messages 먼저 옮김
 user_q = _push_user_from_pending()
-
-# capture the nonce associated with this pending input (if any)
-# === 지금 턴이 '답변을 생성하는 런'인지 여부 (스트리밍 중 표시/숨김에 사용)
-ANSWERING = bool(user_q)
-st.session_state["__answering__"] = ANSWERING
 
 # 2) 대화 시작 여부 계산 (교체된 함수)
 chat_started = _chat_started()
@@ -2784,96 +1953,39 @@ chat_started = _chat_started()
 st.markdown(f"""
 <script>
 document.body.classList.toggle('chat-started', {str(chat_started).lower()});
-document.body.classList.toggle('answering', {str(ANSWERING).lower()});
 </script>
 """, unsafe_allow_html=True)
 
-st.markdown("""
-<style>
-/* ✅ 포스트-챗 UI(업로더+입력폼)는 '답변 생성 중'에만 숨김 */
-body.answering .post-chat-ui{ margin-top: 8px; }
-
-/* ✅ 기존 chatbar 컴포넌트는 사용하지 않으므로 완전 숨김 */
-#chatbar-fixed { display: none !important; }
-/* 답변 중일 때만 하단 여백 축소 */
-body.answering .block-container { 
-    padding-bottom: calc(var(--chat-gap) + 24px) !important; 
-}
-</style>
-""", unsafe_allow_html=True)
 
 # ✅ PRE-CHAT: 완전 중앙(뷰포트 기준) + 여백 제거
 if not chat_started:
     st.markdown("""
     <style>
-      /* 프리챗: 우측 패널만 숨기고, 스크롤을 잠가 상단 고정 */
-      #search-flyout{ display:none !important; }
-      html, body{ height:100%; overflow-y:hidden !important; }
-      .main > div:first-child{ height:100vh !important; }
-      .block-container{ min-height:100vh !important; padding-top:12px !important; padding-bottom:0 !important; }
-      /* 전역 가운데 정렬 규칙이 있어도 프리챗에선 히어로를 '위에서부터' 배치 */
-      .center-hero{ min-height:auto !important; display:block !important; }
-    </style>
-    <script>
-    (function(){
-      try{ history.scrollRestoration='manual'; }catch(e){}
-      const up=()=>{ window.scrollTo(0,0); if(document.activeElement) document.activeElement.blur(); };
-      up(); setTimeout(up,0); setTimeout(up,50);
-      document.addEventListener('focusin', up, true);
-      new MutationObserver(up).observe(document.body, {subtree:true, childList:true});
-    })();
-    </script>
-    """, unsafe_allow_html=True)
-
-    st.markdown("""
-    <style>
-      /* 우측 패널만 숨김 */
+      /* 우측 패널 숨김 */
       #search-flyout{ display:none !important; }
 
-      /* ⛳️ 프리챗: 스크롤 생기지 않게 잠그고 상단 고정 */
-      html, body{ height:100%; overflow-y:hidden !important; }
-      .main > div:first-child{ height:100vh !important; }              /* Streamlit 루트 */
-      .block-container{
-        min-height:100vh !important;   /* 화면만큼만 */
-        padding-top:12px !important;
-        padding-bottom:0 !important;   /* 바닥 여백 제거 */
-        margin-left:auto !important; margin-right:auto !important;
+      /* 우측/하단 여백 제거 */
+      @media (min-width:1280px){ .block-container{ padding-right:0 !important; } }
+      .block-container{ padding-bottom:0 !important; }
+
+      /* 히어로를 뷰포트 절대 중앙에 고정 */
+      .center-hero{
+        position: fixed !important;
+        left: 50% !important; top: 50% !important;
+        transform: translate(-50%, -50%) !important;
+        width: var(--center-col); max-width: 92vw;
+        margin: 0 !important; padding: 0 !important;
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center;
+      }
+
+      /* 히어로 내부 위젯 폭 */
+      .center-hero .stFileUploader, .center-hero .stTextInput{
+        width: 720px; max-width: 92vw;
       }
     </style>
-    <script>
-    (function(){
-      try{ history.scrollRestoration='manual'; }catch(e){}
-      const up=()=>{ window.scrollTo(0,0); if(document.activeElement) document.activeElement.blur(); };
-      up(); setTimeout(up,0); setTimeout(up,50);    // 자동 포커스 대비
-      document.addEventListener('focusin', up, true);
-      new MutationObserver(up).observe(document.body, {subtree:true, childList:true});
-    })();
-    </script>            
-               
     """, unsafe_allow_html=True)
 
-    render_pre_chat_center()
-    st.stop()
-    
-else:
-    st.markdown("""
-    <style>
-      /* 채팅 시작 후: 스크롤 정상 복원 */
-      html, body{ overflow-y:auto !important; }
-      .main > div:first-child{ height:auto !important; }
-      .block-container{ min-height:auto !important; }
-    </style>
-    """, unsafe_allow_html=True)
-
-    st.markdown("""
-    <style>
-      /* 📌 채팅 시작 후에는 정상 스크롤 */
-      html, body{ overflow-y:auto !important; }
-      .block-container{ min-height:auto !important; }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # ... 기존 렌더링 계속
 
 
 # 🎯 대화 전에는 우측 패널 숨기고, 여백을 0으로 만들어 완전 중앙 정렬
@@ -2896,112 +2008,43 @@ if not chat_started:
     render_pre_chat_center()   # 중앙 히어로 + 중앙 업로더
     st.stop()
 else:
-    # 🔧 대화 시작 후에는 첨부파일 박스를 렌더링하지 않음 (완전히 제거)
-    # 스트리밍 중에는 업로더 숨김 (렌더 자체 생략)
-    # if not ANSWERING:
-    #     render_bottom_uploader()   # 하단 고정 업로더 - 주석 처리
-    pass
-
+    render_bottom_uploader()   # 하단 고정 업로더
 # === 대화 시작 후: 우측 레일을 피해서 배치(침범 방지) ===
-# ----- RIGHT FLYOUT: align once to the question box, stable -----
 st.markdown("""
 <style>
   :root{
-    --flyout-width: 360px;   /* 우측 패널 폭 */
-    --flyout-gap:   80px;    /* 본문(답변영역)과의 가로 간격 */
-  }
+  --chatbar-h: 56px;
+  --chat-gap: 12px;
+  --rail: 420px;   /* 우측 패널(360) + 여유 60 */
+  --hgap: 24px;
+}
 
-  /* 본문이 우측 패널을 피해 배치되도록 여백 확보 */
-  @media (min-width:1280px){
-    .block-container{
-      padding-right: calc(var(--flyout-width) + var(--flyout-gap)) !important;
-    }
-  }
+/* 본문이 가려지지 않도록 하단 패딩 확보 */
+.block-container{
+  padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
+}
 
-  /* ====== 패널 배치 모드 ======
-     (A) 화면 고정(스크롤해도 항상 보임) → position: fixed (기본)
-     (B) 따라오지 않게(본문과 함께 위로 올라가도록) → position: sticky 로 교체
-     원하는 쪽 한 줄만 쓰세요.
-  */
-  @media (min-width:1280px){
-    #search-flyout{
-      position: fixed !important;                 /* ← A) 화면 고정 */
-      /* position: sticky !important;             /* ← B) 따라오지 않게: 이 줄로 교체 */
-      top: var(--flyout-top, 120px) !important;   /* JS가 한 번 계산해 넣음 */
-      right: 24px !important;
-      left: auto !important; bottom: auto !important;
-
-      width: var(--flyout-width) !important;
-      max-width: 38vw !important;
-      max-height: calc(100vh - var(--flyout-top,120px) - 24px) !important;
-      overflow: auto !important;
-      z-index: 58 !important;                     /* 업로더(60), 입력창(70)보다 낮게 */
-    }
+/* 데스크톱 + 대화 시작 상태에서만 우측 레일을 피해서 배치 */
+@media (min-width:1280px){
+  body.chat-started .block-container{
+    padding-right: var(--rail) !important;
   }
-
-  /* 모바일/좁은 화면은 자연스럽게 문서 흐름 */
-  @media (max-width:1279px){
-    #search-flyout{ position: static !important; max-height:none !important; overflow:visible !important; }
-    .block-container{ padding-right: 0 !important; }
+  body.chat-started #chatbar-fixed,
+  body.chat-started #bu-anchor + div[data-testid="stFileUploader"]{
+    left: calc(50% - var(--rail)/2) !important;
+    transform: translateX(-50%) !important;
+    width: min(var(--center-col), calc(100vw - var(--rail) - 2*var(--hgap))) !important;
+    max-width: calc(100vw - var(--rail) - 2*var(--hgap)) !important;
   }
+}
+
 </style>
-
-<script>
-(() => {
-  // 질문 입력 위치를 "한 번만" 읽어서 --flyout-top 을 설정
-  const CANDIDATES = [
-    '#chatbar-fixed',
-    'section[data-testid="stChatInput"]',
-    '.block-container textarea'
-  ];
-  let done = false;
-
-  function alignOnce(){
-    if (done) return;
-    const fly = document.querySelector('#search-flyout');
-    if (!fly) return;
-
-    let target = null;
-    for (const sel of CANDIDATES){
-      target = document.querySelector(sel);
-      if (target) break;
-    }
-    if (!target) return;
-
-    const r = target.getBoundingClientRect();       // viewport 기준
-    const top = Math.max(12, Math.round(r.top));
-    document.documentElement.style.setProperty('--flyout-top', top + 'px');
-    done = true;  // 한 번만
-  }
-
-  // 1) 첫 렌더 직후
-  window.addEventListener('load', () => setTimeout(alignOnce, 0));
-
-  // 2) 대상이 늦게 생겨도 한 번만 정렬
-  const mo = new MutationObserver(() => alignOnce());
-  mo.observe(document.body, {childList: true, subtree: true});
-  (function stopWhenDone(){ if (done) mo.disconnect(); requestAnimationFrame(stopWhenDone); })();
-
-  // 3) 창 크기 변경 시 한 번 재정렬
-  window.addEventListener('resize', () => { done = false; alignOnce(); });
-})();
-</script>
 """, unsafe_allow_html=True)
 
 
 
-
 with st.container():
-    st.session_state['_prev_assistant_txt'] = ''  # reset per rerun
     for i, m in enumerate(st.session_state.messages):
-        # --- UI dedup guard: skip if same assistant content as previous ---
-        if isinstance(m, dict) and m.get('role')=='assistant':
-            _t = (m.get('content') or '').strip()
-            if '_prev_assistant_txt' not in st.session_state:
-                st.session_state['_prev_assistant_txt'] = ''
-            if _t and _t == st.session_state.get('_prev_assistant_txt',''):
-                continue
-            st.session_state['_prev_assistant_txt'] = _t
         role = m.get("role")
         content = (m.get("content") or "")
         if role == "assistant" and not content.strip():
@@ -3019,11 +2062,6 @@ with st.container():
             else:
                 st.markdown(content)
 
-
-# ✅ 답변 말풍선 바로 아래에 입력/업로더 붙이기 (답변 생성 중이 아닐 때만)
-if chat_started and not st.session_state.get("__answering__", False):
-    render_post_chat_simple_ui()
-
 # ✅ 메시지 루프 바로 아래(이미 _inject_right_rail_css() 다음 추천) — 항상 호출
 def _current_q_and_answer():
     msgs = st.session_state.get("messages", [])
@@ -3032,55 +2070,48 @@ def _current_q_and_answer():
     return (last_q or {}).get("content",""), (last_a or {}).get("content","")
 
 # 🔽 대화가 시작된 뒤에만 우측 패널 노출
-# ✅ 로딩(스트리밍) 중에는 패널을 렌더링하지 않음
-# 🔽 대화가 시작된 뒤에만 우측 패널 노출
-# ✅ 로딩(스트리밍) 중에는 패널을 렌더링하지 않음
-if chat_started and not st.session_state.get("__answering__", False):
+if chat_started:
     q_for_panel, ans_for_panel = _current_q_and_answer()
+    hints = extract_law_names_from_answer(ans_for_panel) if ans_for_panel else None
+    render_search_flyout(q_for_panel or user_q, num_rows=8, hint_laws=hints, show_debug=SHOW_SEARCH_DEBUG)
 
-    # 함수들이 파일의 더 아래에서 정의되어 있을 수 있으므로 안전 가드
-    _ext_names = globals().get("extract_law_names_from_answer")
-    _ext_arts  = globals().get("extract_article_pairs_from_answer")
 
-    hints = _ext_names(ans_for_panel) if (_ext_names and ans_for_panel) else None
-    arts  = _ext_arts(ans_for_panel)  if (_ext_arts  and ans_for_panel) else None
-
-    render_search_flyout(
-        q_for_panel or user_q,
-        num_rows=8,
-        hint_laws=hints,
-        hint_articles=arts,   # ← 조문 힌트도 함께 전달
-        show_debug=SHOW_SEARCH_DEBUG,
-    )
 
 
 # ===============================
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)
-# ===============================\n
+# ===============================
 if user_q:
-    # --- streaming aggregator v2: keep deltas for preview, but FINAL wins ---
-    stream_box = None
-    deltas_only = ""
-    final_payload = ""
-    collected_laws = []
-
     if client and AZURE:
+        # 프리뷰/버퍼 초기화
         stream_box = st.empty()
+        full_text, buffer, collected_laws = "", "", []
+        final_text = ""   # NameError 방지
 
     try:
-        if stream_box is not None:
-            stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
+        stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
 
         for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
             if kind == "delta":
-                if payload:
-                    deltas_only += payload
+                buffer += (payload or "")
+                if len(buffer) >= 200:
+                    full_text += buffer
+                    buffer = ""
                     if SHOW_STREAM_PREVIEW and stream_box is not None:
-                        stream_box.markdown(_normalize_text(deltas_only[-1500:]))
+                        stream_box.markdown(_normalize_text(full_text[-1500:]))
+
             elif kind == "final":
-                final_payload  = (payload or "")
+                if buffer:
+                    full_text += buffer
+                    buffer = ""
+                if payload:
+                    full_text += payload
                 collected_laws = law_list or []
                 break
+
+        # 루프 종료 후 남은 버퍼 반영
+        if buffer:
+            full_text += buffer
 
     except Exception as e:
         # 예외 시 폴백
@@ -3088,41 +2119,22 @@ if user_q:
         collected_laws = laws
         law_ctx = format_law_context(laws)
         title = "법률 자문 메모"
-        base_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
-    else:
-        # 정상 경로: final이 있으면 final, 없으면 delta 누적 사용
-        base_text = (final_payload.strip() or deltas_only)
+        full_text = f"{title}\n\n{law_ctx}\n\n(오류: {e})"
+        final_text = apply_final_postprocess(full_text, collected_laws)
 
-    # --- Postprocess & de-dup ---
-    final_text = apply_final_postprocess(base_text, collected_laws)
-    final_text = _dedupe_repeats(final_text)
+    # --- ✅ 정상 경로 후처리: 항상 실행되도록 보장 ---
+    if not final_text.strip():
+        final_text = apply_final_postprocess(full_text, collected_laws)
 
-    # --- seatbelt: skip if same answer already stored this turn ---
-    _ans_hash = _hash_text(final_text)
-    if st.session_state.get('_last_ans_hash') == _ans_hash:
-        final_text = ""
-    else:
-        st.session_state['_last_ans_hash'] = _ans_hash
-
+    # ▶ 답변을 세션에 넣고 rerun
     if final_text.strip():
-        # --- per-turn nonce guard: allow only one assistant append per user turn ---
-        _nonce = st.session_state.get('current_turn_nonce') or st.session_state.get('_pending_user_nonce')
-        _done = st.session_state.get('_nonce_done', {})
-        if not (_nonce and _done.get(_nonce)):
-            _append_message('assistant', final_text, law=collected_laws)
-            if _nonce:
-                _done[_nonce] = True
-                st.session_state['_nonce_done'] = _done
-            st.session_state['last_q'] = user_q
-            st.session_state.pop('_pending_user_q', None)
-            st.session_state.pop('_pending_user_nonce', None)
-            st.rerun()
+        _append_message("assistant", final_text, law=collected_laws)
+        st.session_state["last_q"] = user_q
+        st.session_state.pop("_pending_user_q", None)
+        st.session_state.pop("_pending_user_nonce", None)
+        st.rerun()
 
     # 프리뷰 컨테이너 비우기
     if stream_box is not None:
-        try:
-            stream_box.empty()
-        except Exception:
-            pass
+        stream_box.empty()
 
-# (moved) post-chat UI is now rendered inline under the last assistant message.
