@@ -59,3 +59,13 @@ def build_sys_for_mode(mode: str, *, brief: bool = False) -> str:
         )
     # 기본값
     return "당신은 신중하고 정확한 한국어 어시스턴트입니다." + (" (간결히 답변)." if brief else "")
+
+def pick_mode(det_intent: str, conf: float) -> str:
+    # 신뢰도 기준 간단 라우팅(필요시 임계값 조절)
+    if det_intent == Intent.LAWFINDER and conf >= 0.70:
+        return Intent.LAWFINDER
+    if det_intent == Intent.DRAFT and conf >= 0.65:
+        return Intent.DRAFT
+    if det_intent == Intent.MEMO and conf >= 0.60:
+        return Intent.MEMO
+    return Intent.QUICK
