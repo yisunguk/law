@@ -1,4 +1,4 @@
-# modules/__init__.py — lazy exports
+# modules/__init__.py — REPLACE ALL
 import importlib
 
 __all__ = [
@@ -8,17 +8,12 @@ __all__ = [
 ]
 
 def __getattr__(name: str):
-    # 필요할 때만 해당 서브모듈을 import
     if name in ("AdviceEngine", "pick_mode"):
-        mod = importlib.import_module(".advice_engine", __name__)
-        return getattr(mod, name)
+        return getattr(importlib.import_module(".advice_engine", __name__), name)
     if name in ("Intent", "classify_intent", "build_sys_for_mode"):
-        mod = importlib.import_module(".legal_modes", __name__)
-        return getattr(mod, name)
+        return getattr(importlib.import_module(".legal_modes", __name__), name)
     if name in ("make_plan_with_llm", "ROUTER_SYSTEM"):
-        mod = importlib.import_module(".router_llm", __name__)
-        return getattr(mod, name)
+        return getattr(importlib.import_module(".router_llm", __name__), name)
     if name == "execute_plan":
-        mod = importlib.import_module(".plan_executor", __name__)
-        return getattr(mod, name)
+        return getattr(importlib.import_module(".plan_executor", __name__), name)
     raise AttributeError(name)

@@ -1,51 +1,95 @@
 # =========================
-# app.py — Clean Import Header
+# app.py — CLEAN IMPORT HEADER (FINAL)
 # =========================
 from __future__ import annotations
+import os, sys, importlib.util, html
 
-# --- Path bootstrap (modules 패키지 우선) ---
-import os, sys, importlib.util
+# 1) path bootstrap — app.py 에만 둡니다
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MOD_DIR  = os.path.join(BASE_DIR, "modules")
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
-if os.path.isdir(MOD_DIR) and MOD_DIR not in sys.path:
-    sys.path.insert(0, MOD_DIR)
+if BASE_DIR not in sys.path: sys.path.insert(0, BASE_DIR)
+if os.path.isdir(MOD_DIR) and MOD_DIR not in sys.path: sys.path.insert(0, MOD_DIR)
 
-# --- Stdlib / optional third-party ---
-import html  # html.escape / html.unescape
+# 2) optional third-party
 try:
     import streamlit as st  # type: ignore
 except Exception:
     st = None  # type: ignore
 
-# --- modules: lazy export 허브 사용 ---
-#   AdviceEngine / Intent / classify_intent / build_sys_for_mode 등은
-#   modules/__init__.py를 통해 지연 임포트됩니다.
-from modules import AdviceEngine, Intent, classify_intent, build_sys_for_mode  # :contentReference[oaicite:0]{index=0}
+# 3) project modules (lazy hub)
+from modules import AdviceEngine, Intent, classify_intent, build_sys_for_mode
+from modules.router_llm import make_plan_with_llm as _MAKE_PLAN, ROUTER_SYSTEM
+from modules.linking import resolve_article_url, make_pretty_article_url
 
-# --- Router (LLM → 실행 계획) ---
-from modules.router_llm import make_plan_with_llm as _MAKE_PLAN, ROUTER_SYSTEM  # :contentReference[oaicite:1]{index=1}
+# (선택) 안전 래퍼 / 외부 컨텐츠
+from llm_safety import safe_chat_completion     # :contentReference[oaicite:9]{index=9}
+from external_content import is_url, extract_first_url, extract_all_urls, fetch_article_text  # :contentReference[oaicite:10]{index=10}
 
-# --- 법령 한글 주소 유틸(딥링크) ---
-from modules.linking import resolve_article_url, make_pretty_article_url  # 
-
-# --- LLM 안전 래퍼 / 외부 기사 스크랩 유틸(필요 시) ---
-from llm_safety import safe_chat_completion  # :contentReference[oaicite:3]{index=3}
-from external_content import is_url, extract_first_url, extract_all_urls, fetch_article_text  # :contentReference[oaicite:4]{index=4}
-
-# --- (선택) plan executor: 딥링크 스크랩 파이프라인 ---
+# (선택) 딥링크 스크랩 파이프라인
 try:
-    from modules.plan_executor import execute_plan  # :contentReference[oaicite:5]{index=5}
+    from modules.plan_executor import execute_plan
 except Exception:
     execute_plan = None  # 런타임 가드
 
-# --- secrets → env (Azure만; DRF/OC는 여기서 다루지 않음) ---
+# 4) secrets
 try:
     AZURE = st.secrets.get("azure_openai", {}) if st else {}
 except Exception:
     AZURE = {}
 
+# 5) Azure OpenAI 클라이언트 — ★ 여기에서 '먼저' 만듭니다
+def _make_azure_client():
+    try:
+        from openai import AzureOpenAI
+        return AzureOpenAI(
+            api_key      = AZURE["api_key"],
+            azure_endpoint = AZURE.get("endpoint") or AZURE.get("azure_endpoint"),
+            api_version  = AZURE.get("api_version", "2024-06-01"),
+        )
+    except Exception:
+        return None
+
+client = _make_azure_client()  # ← AdviceEngine보다 먼저!
+
+# 6) (필요 시) 도구 컨테이너 — 지금은 내부에서 사용 안함
+TOOLS = None
+
+# (예) 엔진 지연 준비
+engine = None
+if client and AZURE.get("deployment"):
+    engine = AdviceEngine(
+        client=client,
+        model=AZURE["deployment"],
+        temperature=0.2,
+        tools=TOOLS,  # 무시됨(호환용)
+    )
+else:
+    # Streamlit이면 화면 경고
+    if st:
+        miss = []
+        if not client: miss.append("client")
+        if not AZURE.get("deployment"): miss.append("AZURE['deployment']")
+        if miss:
+            st.warning("엔진 초기화 보류: " + ", ".join(miss))
+
+
+# === Azure OpenAI client (app.py - secrets 읽은 직후, engine 생성보다 위) ===
+try:
+    from openai import AzureOpenAI
+except Exception:
+    AzureOpenAI = None  # 배포 환경에서 라이브러리 유무 안전 가드
+
+def _make_azure_client():
+    if not AZURE or not AzureOpenAI:
+        return None
+    # st.secrets["azure_openai"] 예: {endpoint, api_key, api_version, deployment, router_deployment?}
+    return AzureOpenAI(
+        api_key=AZURE.get("api_key"),
+        api_version=AZURE.get("api_version"),
+        azure_endpoint=AZURE.get("endpoint"),
+    )
+
+client = _make_azure_client()
 
 # =========================
 # END CLEAN IMPORT HEADER

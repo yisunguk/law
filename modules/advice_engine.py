@@ -1,20 +1,14 @@
-# modules/advice_engine.py
+# modules/advice_engine.py — REPLACE ALL
 from __future__ import annotations
 from typing import List, Dict, Any
 
 class AdviceEngine:
     def __init__(self, client, *, model: str, temperature: float = 0.3, tools=None):
-        """
-        client: OpenAI/Azure OpenAI Chat Completions 호환 객체
-        model : 최종 답변용 모델
-        tools : (호환용) 전달만 받고 내부에서는 사용하지 않음
-        """
         self.client = client
         self.model = model
         self.temperature = temperature
-        self._tools_ignored = tools  # keep for compatibility
+        self._tools_ignored = tools
 
-    # 안전 래퍼
     def scc(self, client, *, messages: List[Dict[str, str]], model: str,
             stream: bool, allow_retry: bool, temperature: float,
             max_tokens: int, tools=None):
@@ -28,26 +22,17 @@ class AdviceEngine:
         )
 
     def generate(self, messages: List[Dict[str, str]], *, stream: bool = True) -> str:
-        """
-        앞단 도구(검색/스크랩) 결과가 messages에 이미 들어있다는 가정.
-        여기서는 '최종 답변'만 작성한다. (도구 재호출 금지)
-        """
         messages.append({
             "role": "system",
             "content": "위 도구(검색/스크랩) 결과는 이미 반영됐다. 도구를 다시 호출하지 말고 한국어 최종 답변만 작성하라."
         })
-
-        final_text = ""
-        tool_called = False
-
+        final_text, tool_called = "", False
         try:
             if stream:
-                stream_resp = self.scc(
-                    self.client, messages=messages, model=self.model,
-                    tools=None, stream=True, allow_retry=True,
-                    temperature=self.temperature, max_tokens=1400,
-                )
-                for ev in stream_resp:
+                evs = self.scc(self.client, messages=messages, model=self.model,
+                               tools=None, stream=True, allow_retry=True,
+                               temperature=self.temperature, max_tokens=1400)
+                for ev in evs:
                     try:
                         delta = ev.choices[0].delta
                     except Exception:
@@ -56,27 +41,16 @@ class AdviceEngine:
                         tool_called = True
                     if getattr(delta, "content", None):
                         final_text += delta.content
-
                 if (not final_text.strip()) or tool_called:
-                    resp2 = self.scc(
-                        self.client, messages=messages, model=self.model,
-                        tools=None, stream=False, allow_retry=True,
-                        temperature=self.temperature, max_tokens=1400,
-                    )
+                    resp2 = self.scc(self.client, messages=messages, model=self.model,
+                                     tools=None, stream=False, allow_retry=True,
+                                     temperature=self.temperature, max_tokens=1400)
                     final_text = (resp2.choices[0].message.content or "").strip()
             else:
-                resp2 = self.scc(
-                    self.client, messages=messages, model=self.model,
-                    tools=None, stream=False, allow_retry=True,
-                    temperature=self.temperature, max_tokens=1400,
-                )
-                final_text = (resp2.choices[0].message.content or "").strip()
+                resp = self.scc(self.client, messages=messages, model=self.model,
+                                tools=None, stream=False, allow_retry=True,
+                                temperature=self.temperature, max_tokens=1400)
+                final_text = (resp.choices[0].message.content or "").strip()
         except Exception:
-            if not final_text.strip():
-                final_text = "모델 스트리밍 중 오류가 발생했습니다. 아래 참고 링크와 함께 핵심만 요약해 드립니다."
-
-        return (final_text or "").strip()
-
-# (호환) 과거 코드에서 import 할 수 있으므로 최소 구현
-def pick_mode(_: Any = None) -> str:
-    return "final"
+            final_text = "죄송합니다. 답변 작성 중 오류가 발생했습니다."
+        return final_text or "죄송합니다. 답변을 생성하지 못했습니다."
