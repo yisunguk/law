@@ -2391,21 +2391,21 @@ BAD_SNIPPETS = [
     "로그인한 사용자 OC만 사용가능합니다",
 ]
 
-# === [ADD] 관계 법령 렌더러 ============================================
+# === [REPLACE] 관계 법령 렌더러 ============================================
 import re
+from urllib.parse import quote as _q
 try:
-    from modules.linking import make_pretty_article_url  # 조문 딥링크 생성기
+    from modules.linking import make_pretty_article_url  # 조문 딥링크 생성기(표준화 내장)
 except Exception:
     from linking import make_pretty_article_url
 
-# (법 이름) (선택: 시행령/시행규칙) (조문) 패턴
+# (법 이름) (선택: 시행령/시행규칙) (조문) 패턴 — 그대로 사용
 _LAW_PAIR_RE = re.compile(
     r'([가-힣A-Za-z0-9·\-\(\)]+?(?:에 관한 법률|법))\s*(시행령|시행규칙)?\s*'
     r'(제?\s*\d{1,4}\s*조(?:\s*의\s*\d{1,3})?)'
 )
 
 def _extract_law_article_pairs(text: str):
-    """문장에서 (법명, 조문라벨) 리스트 추출. 중복 제거, 입력 순서 유지."""
     pairs, seen = [], set()
     for m in _LAW_PAIR_RE.finditer(text or ""):
         law = (m.group(1) + (f" {m.group(2)}" if m.group(2) else "")).strip()
@@ -2417,37 +2417,79 @@ def _extract_law_article_pairs(text: str):
         pairs.append((law, art))
     return pairs
 
-def render_related_laws_block(*, user_q: str, answer_text: str, primary_pair=None, limit: int = 8):
+# ⬇︎ 추가: 조문라벨/법령명 표준화(중복 제거용)
+_ART_NORM = re.compile(r'제?\s*(\d{1,4})\s*조(?:\s*의\s*(\d{1,3}))?', re.I)
+def _norm_art_label(label: str) -> str:
+    m = _ART_NORM.search(label or "")
+    if not m: 
+        return (label or "").strip()
+    n, ui = m.group(1), m.group(2)
+    return f"제{n}조" + (f"의{ui}" if ui else "")
+
+def _norm_law_name(name: str) -> str:
+    return re.sub(r'[「」\s]+', '', (name or ''))  # 중복판별 전용(표시는 원문 유지)
+
+def render_related_laws_block(*, user_q: str, answer_text: str,
+                              primary_pair=None, fallback_law_names=None, limit: int = 8):
     """
-    답변 맨 끝에 '관계 법령' 섹션을 그립니다.
-    - primary_pair: (법명, 조문) 주된 근거(예: 플래너로 직접 조회한 조문)
-    - answer_text / user_q 에서도 자동 추출하여 합칩니다.
+    답변 맨 끝에 '관련 법령' 섹션을 그립니다.
+    - primary_pair: (법명, 조문) 주된 근거(예: 본문조회 등)
+    - fallback_law_names: 조문이 하나도 없을 때 사용할 법령명 리스트
     """
     items = []
     if primary_pair and all(primary_pair):
-        items.append(primary_pair)
-    items += _extract_law_article_pairs(answer_text)
-    items += _extract_law_article_pairs(user_q)
+        items.append((primary_pair[0].strip(), _norm_art_label(primary_pair[1])))
 
-    # 중복 제거 후 상한
+    # 답변/질문에서 (법,조문) 추출 → 조문 표준화
+    items += [(law, _norm_art_label(art)) for (law, art) in _extract_law_article_pairs(answer_text)]
+    items += [(law, _norm_art_label(art)) for (law, art) in _extract_law_article_pairs(user_q)]
+
+    # 중복 제거(법명+표준라벨)
     seen, out = set(), []
     for law, art in items:
-        key = (law, re.sub(r'\s+', '', art))
+        key = (_norm_law_name(law), art)
         if key in seen:
             continue
         seen.add(key)
-        out.append((law, art))
+        out.append((law.strip(), art))
         if len(out) >= limit:
             break
 
-    if not out:
-        return  # 추출 결과 없으면 섹션 생략(나머지 UI엔 영향 없음)
-
     import streamlit as st
+    if out:
+        st.markdown("### 관련 법령")
+        for law, art in out:
+            url = make_pretty_article_url(law, art)  # 항상 '조문' 딥링크
+            st.markdown(f"- [{law} {art}]({url})")
+        st.caption("추가로 특정 조문 원문이 필요하시면 요청해 주세요!")
+        return
+
+    # ⬇︎ 조문이 하나도 없으면: 법령명 링크로라도 폴백(자문형 답변용)
+    names = []
+    if fallback_law_names:
+        names += [n for n in fallback_law_names if n]
+    try:
+        # 답변/질문에서 법령명만 추출하는 기존 헬퍼가 있으면 활용
+        if 'extract_law_names_from_answer' in globals():
+            names += extract_law_names_from_answer(answer_text)  # type: ignore
+            names += extract_law_names_from_answer(user_q)       # type: ignore
+    except Exception:
+        pass
+
+    # 순서 보존 중복제거
+    seen2, names2 = set(), []
+    for n in names:
+        if n and n not in seen2:
+            seen2.add(n)
+            names2.append(n)
+        if len(names2) >= limit:
+            break
+    if not names2:
+        return
+
     st.markdown("### 관련 법령")
-    for law, art in out:
-        url = make_pretty_article_url(law, art)  # 항상 '조문' 딥링크 사용
-        st.markdown(f"- [{law} {art}]({url})")
+    for nm in names2:
+        st.markdown(f"- [{nm}](https://www.law.go.kr/법령/{_q(nm, safe='')})")
     st.caption("추가로 특정 조문 원문이 필요하시면 요청해 주세요!")
 # =====================================================================
 
@@ -3736,25 +3778,46 @@ with st.container():
             else:
                 st.markdown(content)
 
-# === [NEW] 마지막 답변 아래 '관련 법령' 석션(조문 딥링크) ===
+# === [NEW] 마지막 답변 아래 '관련 법령' 섹션(조문 딥링크) ===
 try:
     msgs = st.session_state.get("messages", [])
-    last_q = next((m for m in reversed(msgs)
-                   if m.get("role") == "user" and (m.get("content") or "").strip()), None)
-    last_a = next((m for m in reversed(msgs)
-                   if m.get("role") == "assistant" and (m.get("content") or "").strip()), None)
+    last_q = next(
+        (m for m in reversed(msgs)
+         if m.get("role") == "user" and (m.get("content") or "").strip()),
+        None
+    )
+    last_a = next(
+        (m for m in reversed(msgs)
+         if m.get("role") == "assistant" and (m.get("content") or "").strip()),
+        None
+    )
 
     if last_a:
+        # 이번 턴에서 수집된 법령 목록을 폴백으로 넘김(자문형 답변에서 링크 보장)
+        _fallback_names = []
+        try:
+            for it in (last_a.get("law") or []):
+                if isinstance(it, dict):
+                    nm = it.get("법령명") or it.get("name") or it.get("law")
+                    if nm:
+                        _fallback_names.append(nm)
+        except Exception:
+            pass  # law 필드가 없거나 형식이 달라도 전체 렌더는 계속
+
+        # '관계 법령' 섹션 출력
         render_related_laws_block(
             user_q=(last_q or {}).get("content", ""),
             answer_text=(last_a or {}).get("content", ""),
-            # 메시지 메타에 (법명, 조문) 쌍을 저장해두셨다면 우선 적용됩니다.
             primary_pair=(last_a.get("article_pair") if isinstance(last_a, dict) else None),
+            fallback_law_names=_fallback_names,   # ← 추가
             limit=8,
         )
-except Exception:
-    pass
+
+except Exception as e:
+    # 이 블록에서 예외가 나도 화면 전체가 죽지 않도록 방어
+    print("related-laws block error:", e)
 # === [END NEW] ===
+
 
 # ✅ 답변 말풍선 바로 아래에 입력/업로더 붙이기 (답변 생성 중이 아닐 때만)
 if chat_started and not st.session_state.get("__answering__", False):
