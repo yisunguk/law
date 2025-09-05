@@ -37,25 +37,45 @@ try:
 except Exception:
     AZURE = {}
 
-# 5) Azure OpenAI 클라이언트 — ★ 여기에서 '먼저' 만듭니다
-def _make_azure_client():
-    # === Azure OpenAI client bootstrap (AZURE 시크릿으로 생성) ===
-    try:
-        from openai import AzureOpenAI
-    except Exception:
-        AzureOpenAI = None
+# --- Azure OpenAI import guard & client factory --------------------
+try:
+    # openai 1.x
+    from openai import AzureOpenAI  # 공식 Azure SDK 진입점
+except Exception:
+    AzureOpenAI = None  # 런타임 가드: 라이브러리 미설치/미지원 환경
 
 def _make_azure_client():
-    if not AzureOpenAI:
+    """
+    AZURE(secrets/env)로부터 Azure OpenAI 클라이언트를 만들고,
+    라우터에서 쓸 수 있도록 router_model 힌트도 심어준다.
+    - Azure 설정이 없거나 라이브러리가 없으면 None 반환
+    - 필요 키: api_key, endpoint(=azure_endpoint), api_version
+    """
+    if AzureOpenAI is None:
         return None
-    api_key = (AZURE.get("api_key") or os.getenv("AZURE_OPENAI_API_KEY") or "").strip()
-    endpoint = (AZURE.get("endpoint") or os.getenv("AZURE_OPENAI_ENDPOINT") or "").strip()
-    api_version = (AZURE.get("api_version") or "2024-06-01").strip()
-    if not (api_key and endpoint):
-        return None
-    return AzureOpenAI(api_key=api_key, azure_endpoint=endpoint, api_version=api_version)
 
+    # secrets → env 양쪽 모두 지원
+    api_key   = (AZURE.get("api_key") or os.getenv("AZURE_OPENAI_API_KEY") or "").strip()
+    endpoint  = (AZURE.get("endpoint") or os.getenv("AZURE_OPENAI_ENDPOINT") or "").strip()
+    api_ver   = (AZURE.get("api_version") or os.getenv("AZURE_OPENAI_API_VERSION") or "").strip()
+
+    if not (api_key and endpoint and api_ver):
+        return None
+
+    cli = AzureOpenAI(api_key=api_key, azure_endpoint=endpoint, api_version=api_ver)
+    # 라우터/요약 등에서 모델 힌트로 씀 (없으면 최종 모델로 대체)
+    cli.router_model = (
+        AZURE.get("router_deployment")
+        or AZURE.get("deployment")
+        or os.getenv("AZURE_OPENAI_ROUTER_DEPLOYMENT")
+        or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+        or ""
+    )
+    return cli
+
+# 전역 클라이언트(없으면 None)
 client = _make_azure_client()
+
 
 
 # 6) (필요 시) 도구 컨테이너 — 지금은 내부에서 사용 안함
