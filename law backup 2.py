@@ -1,50 +1,192 @@
-# app.py — fixed header
 from __future__ import annotations
-
 import streamlit as st
-# app.py
-from law_fetch import _summarize_laws_for_primer as summarize_with_capsules
+from html import unescape
 
-# 엔진 생성부
-engine = AdviceEngine(
-    client=client,
-    model=AZURE["deployment"],
-    tools=TOOLS,
-    safe_chat_completion=safe_chat_completion,
-    tool_search_one=tool_search_one,
-    tool_search_multi=tool_search_multi,
-    prefetch_law_context=prefetch_law_context,
-    summarize_laws_for_primer=summarize_with_capsules,  # ✅ 본문 포함 버전
-    temperature=0.2,
+from modules import Intent, classify_intent, pick_mode, build_sys_for_mode
+from modules.router_llm import make_plan_with_llm
+from modules.plan_executor import execute_plan
+# === secrets → env bridge (put near top of app.py) ===
+import os
+try:
+    import streamlit as st
+    _oc  = str(st.secrets.get("LAW_API_OC",  "")).strip()
+    _key = str(st.secrets.get("LAW_API_KEY", "")).strip()
+    if _oc:  os.environ["LAW_API_OC"]  = _oc      # DRF용
+    if _key: os.environ["LAW_API_KEY"] = _key     # OpenAPI용
+    # (선택) Azure도 딕셔너리로 꺼내서 클라이언트 초기화에 쓰세요
+    AZURE = st.secrets.get("azure_openai", {})
+except Exception:
+    AZURE = {}
+
+# ✅ [PATCH] app.py — 최상단 import에 공용 링크 생성기 추가
+from modules.linking import resolve_article_url  # ← 추가
+
+# ✅ [REPLACE] app.py : _deep_article_url
+def _deep_article_url(law: str, art_label: str) -> str:
+    """
+    조문 직링크(한글 주소)만 반환. 어떤 경우에도 메인 링크로 폴백하지 않음.
+    """
+    try:
+        from modules.linking import make_pretty_article_url  # 권장 경로
+    except Exception:
+        from linking import make_pretty_article_url  # 로컬/상대 경로 폴백
+    return make_pretty_article_url(law, art_label)
+
+
+# 세션 초기화 시 1회만 실행
+if "__boot__" not in st.session_state:
+    st.session_state["__ctx_router__"] = True   # 라우터에도 문맥 주입 ON
+    # st.session_state["__ctx_answer__"] = True # (이미 기본 True지만 확실히 하려면)
+    st.session_state["__boot__"] = True
+
+# === [ADD] app.py : 원문요청 감지 유틸 ===
+import re
+
+_VERBATIM_PAT = re.compile(
+    r"(원문|본문|전문)\s*(보여|출력|줘|보여줘|보여주)|조문\s*(그대로|원문)|그대로\s*(보내|출력)",
+    re.I
 )
 
+def wants_verbatim(user_text: str) -> bool:
+    return bool(_VERBATIM_PAT.search((user_text or "").strip()))
 
-
-from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
-
-
-
+# === Chat memory helpers ======================================================
 import streamlit as st
+
+# ─────────────────────────────────────────────────────────────
+# 대화 컨텍스트 유틸 (imports 바로 아래에 한 번만 정의)
+# 필요: import streamlit as st, (선택) globals()["AZURE"], globals()["client"]
+# ─────────────────────────────────────────────────────────────
+
+def _recent_msgs(max_turns: int = 6, max_chars: int = 3500):
+    """
+    최근 대화를 (user/assistant만) 역할/내용 그대로 리스트로 반환.
+    - user 기준 max_turns 턴까지만
+    - 총 글자수 max_chars 초과 시 앞쪽부터 잘라냄
+    """
+    try:
+        raw = st.session_state.get("messages", []) or []
+    except Exception:
+        raw = []
+    buf, chars, user_turns = [], 0, 0
+    for m in reversed(raw):
+        if not isinstance(m, dict):
+            continue
+        r = m.get("role")
+        c = (m.get("content") or "").strip()
+        if r not in ("user", "assistant") or not c:
+            continue
+        buf.append({"role": r, "content": c})
+        chars += len(c)
+        if r == "user":
+            user_turns += 1
+            if user_turns >= max_turns:
+                break
+        if chars >= max_chars:
+            break
+    return list(reversed(buf))
+
+def _to_transcript(msgs):
+    """역할 라벨을 붙인 간단한 대화문으로 변환."""
+    if not msgs:
+        return ""
+    label = {"user": "사용자", "assistant": "어시스턴트"}
+    lines = []
+    for m in msgs:
+        try:
+            lines.append(f"{label.get(m['role'], m['role'])}: {m['content']}")
+        except Exception:
+            continue
+    return "\n".join(lines)
+
+def _ensure_running_summary(client, transcript: str, max_len: int = 900):
+    """
+    대화가 길어지면 빠르게 요약(LLM 1회)하여 세션에 저장.
+    - 요약은 시스템 메모리 용도로만 사용
+    - client 없으면 기존 요약 사용
+    """
+    try:
+        if not transcript:
+            return st.session_state.get("__summary__", "")
+        if st.session_state.get("__summary__") and len(transcript) < 1200:
+            return st.session_state["__summary__"]
+    except Exception:
+        pass
+
+    if client is None:
+        return st.session_state.get("__summary__", "")
+
+    try:
+        AZURE = globals().get("AZURE") or {}
+        model_name = (
+            getattr(client, "router_model", None)
+            or AZURE.get("router_deployment")
+            or AZURE.get("deployment")
+            or "gpt-4o-mini"
+        )
+        resp = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": "다음을 8줄 이내의 불릿 요약으로 만들어라. 핵심 결론과 사용자의 요구만 남겨라."},
+                {"role": "user", "content": transcript[:4000]},
+            ],
+            temperature=0.1,
+            max_tokens=max(200, max_len // 2),
+        )
+        summ = (resp.choices[0].message.content or "").strip()
+        if summ:
+            st.session_state["__summary__"] = summ[:max_len]
+    except Exception:
+        # 요약 실패 시 이전 값 유지
+        pass
+    return st.session_state.get("__summary__", "")
+
+def _compose_with_context(user_q: str, transcript: str, summary: str = "") -> str:
+    """LLM에 보낼 컨텍스트 포함 사용자 프롬프트."""
+    parts = []
+    if summary:
+        parts.append(f"[이전 대화 요약]\n{summary}")
+    if transcript:
+        parts.append(f"[최근 대화]\n{transcript}")
+    parts.append(f"[현재 질문]\n{user_q}")
+    out = "\n\n".join(parts)
+    # 보호: 과도한 길이 컷
+    return out[-5000:]
+
 
 # --- per-turn nonce ledger (prevents double appends)
 st.session_state.setdefault('_nonce_done', {})
 # --- cache helpers: suggestions shouldn't jitter on reruns ---
 def cached_suggest_for_tab(tab_key: str):
-    import streamlit as st
-    store = st.session_state.setdefault("__tab_suggest__", {})
-    if tab_key not in store:
-        from modules import suggest_keywords_for_tab
-        store[tab_key] = cached_suggest_for_tab(tab_key)
-    return store[tab_key]
-
+    """
+    안전 캐시: 탭 기본 추천 키워드.
+    (중복 정의 방지용 재정의) — 내부 재귀 호출 버그 제거.
+    """
+    try:
+        return SUGGESTED_TAB_KEYWORDS.get(tab_key, [])
+    except Exception:
+        try:
+            import streamlit as st  # fallback: 과거 캐시 구조 존중
+            store = st.session_state.setdefault("__tab_suggest__", {})
+            return store.get(tab_key, [])
+        except Exception:
+            return []
 def cached_suggest_for_law(law_name: str):
-    import streamlit as st
-    store = st.session_state.setdefault("__law_suggest__", {})
-    if law_name not in store:
-        from modules import suggest_keywords_for_law
-        store[law_name] = cached_suggest_for_law(law_name)
-    return store[law_name]
-
+    """
+    안전 캐시: 법령명 기반 추천 키워드.
+    (중복 정의 방지용 재정의) — 내부 재귀 호출 버그 제거.
+    """
+    try:
+        if not law_name:
+            return FALLBACK_LAW_KEYWORDS
+        if law_name in SUGGESTED_LAW_KEYWORDS:
+            return SUGGESTED_LAW_KEYWORDS[law_name]
+        for k in SUGGESTED_LAW_KEYWORDS:
+            if k in law_name:
+                return SUGGESTED_LAW_KEYWORDS[k]
+        return FALLBACK_LAW_KEYWORDS
+    except Exception:
+        return FALLBACK_LAW_KEYWORDS
 st.set_page_config(
     page_title="인공지능 법률상담 전문가",
     page_icon="⚖️",
@@ -124,9 +266,7 @@ if "_last_user_nonce" not in st.session_state:
 
 KEY_PREFIX = "main"
 
-from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
-
-# 지연 초기화: 필요한 전역들이 준비된 뒤에 한 번만 엔진 생성
+# [PATCH] app.py — _init_engine_lazy 교정
 def _init_engine_lazy():
     import streamlit as st
     if "engine" in st.session_state and st.session_state.engine is not None:
@@ -136,50 +276,117 @@ def _init_engine_lazy():
     c      = g.get("client")
     az     = g.get("AZURE")
     tools  = g.get("TOOLS")
-    scc    = g.get("safe_chat_completion")
-    t_one  = g.get("tool_search_one")
-    t_multi= g.get("tool_search_multi")
-    pre    = g.get("prefetch_law_context")
-    summar = g.get("_summarize_laws_for_primer")
 
-    # 필수 구성요소가 아직 준비 안 되었으면 None을 캐시하고 리턴
-    if not (c and az and tools and scc and t_one and t_multi):
+    # 필수 요소 확인
+    if not (c and az):
         st.session_state.engine = None
         return None
 
+    # AdviceEngine은 (client, model, temperature=..., tools=...)만 받음
+    from modules import AdviceEngine
     st.session_state.engine = AdviceEngine(
         client=c,
         model=az["deployment"],
         tools=tools,
-        safe_chat_completion=scc,
-        tool_search_one=t_one,
-        tool_search_multi=t_multi,
-        prefetch_law_context=pre,             # 있으면 그대로
-        summarize_laws_for_primer=summar,     # 있으면 그대로
         temperature=0.2,
     )
     return st.session_state.engine
 
-# 기존 ask_llm_with_tools를 얇은 래퍼로 교체
-from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode
+
+DEBUG = st.sidebar.checkbox("DRF 디버그", value=False, key="__debug__")
+
+# ==== DRF 링크/보강 유틸 (모듈 레벨에 한 번만 선언) ====
+import os, re
+from urllib.parse import urlencode
+
+def _resolve_mst(law_name: str) -> tuple[str, str]:
+    """
+    통합검색으로 MST와 시행일자(efYd)를 얻는다.
+    return (mst, efYd) — 없으면 빈 문자열
+    """
+    try:
+        items, _, _ = _call_moleg_list("law", law_name, num_rows=5)
+        if not items:
+            return "", ""
+        # 정확 일치 우선
+        for it in items:
+            if (it.get("법령명") or "").strip() == (law_name or "").strip():
+                mst = (it.get("MST") or it.get("LawMST") or "").strip()
+                eff = (it.get("시행일자") or it.get("eff_date") or "").replace("-", "")
+                return mst, eff
+        it = items[0]
+        return (it.get("MST") or it.get("LawMST") or "").strip(), (it.get("시행일자") or "").replace("-", "")
+    except Exception:
+        return "", ""
+
+# JO 생성기는 별도로 정의되어 있어야 합니다.
+# def jo_from_label(label: str) -> str:
+#     m = re.search(r'(\d+)\s*조', label or "")
+#     return f"{int(m.group(1)):04d}00" if m else ""
+
+from urllib.parse import urlencode
+import os, re
+
+# ✅ 단일 정본: DRF 링크 빌더 (HTML/JSON 모두 생성 가능)
+def build_drf_link(
+    *, law_name: str = "", article_label: str = "",
+    mst: str = "", law_id: str = "", efYd: str = "",
+    typ: str = "HTML", lang: str = "KO",
+) -> str:
+    """
+    lawService.do 링크 생성:
+      1) mst 없으면 통합검색으로 보강(resolve_mst_and_efyd)
+      2) efYd 없으면 검색 결과 시행일자 사용
+      3) JO는 '제83조' -> '008300' 규칙(jo_from_label)
+    용도: 클릭 가능한 '원문 링크' 제공/사이드바 DRF 테스트
+    """
+    from urllib.parse import urlencode
+    import os, re
+
+    jo = jo_from_label(article_label)  # '제83조' → '008300'
+
+    # mst/efYd 보강
+    if not mst and not law_id and law_name:
+        mst2, eff2 = resolve_mst_and_efyd(law_name)
+        mst = mst or mst2
+        efYd = efYd or eff2
+
+    # 최소 한 가지 식별자(MST/ID) 필요
+    if not (mst or law_id):
+        return ""
+
+    q = {
+        "OC": os.environ.get("LAW_API_OC", ""),
+        "target": "law",
+        "type": typ,   # "HTML" or "JSON"
+        "LANG": lang,
+    }
+    if mst:    q["MST"] = str(mst)
+    if law_id: q["ID"]  = str(law_id)
+    if jo:     q["JO"]  = jo
+    if efYd:   q["efYd"] = re.sub(r"\D", "", str(efYd))
+
+    return "https://www.law.go.kr/DRF/lawService.do?" + urlencode(q, doseq=False, encoding="utf-8")
+
+
+# [PATCH] app.py — ask_llm_with_tools 교정 (호출부만 교체)
+import json, streamlit as st
+from typing import List, Dict
 
 def ask_llm_with_tools(
     user_q: str,
     num_rows: int = 5,
     stream: bool = True,
-    forced_mode: str | None = None,  # 유지해도 됨: 아래에서 직접 처리
+    forced_mode: str | None = None,
     brief: bool = False,
 ):
-    """
-    UI 진입점: 의도→모드 결정, 시스템 프롬프트 합성, 툴 사용 여부 결정 후
-    AdviceEngine.generate()에 맞는 인자(system_prompt, allow_tools)로 호출.
-    """
     engine = _init_engine_lazy() if "_init_engine_lazy" in globals() else globals().get("engine")
     if engine is None:
         yield ("final", "엔진이 아직 초기화되지 않았습니다. (client/AZURE/TOOLS 확인)", [])
         return
 
     # 1) 모드 결정
+    from modules import Intent, classify_intent, build_sys_for_mode  # 지연 임포트
     det_intent, conf = classify_intent(user_q)
     try:
         valid = {m.value for m in Intent}
@@ -187,83 +394,48 @@ def ask_llm_with_tools(
     except Exception:
         mode = pick_mode(det_intent, conf)
 
-    # 2) 프롬프트/툴 사용 여부
+    # 2) 시스템 프롬프트 생성 (툴 사용 여부는 내부 정책 유지)
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
-    # 2.5) 최근 N개 대화 히스토리 준비 (user/assistant만)
+    # 2.5) 최근 히스토리 구성 (user/assistant만)
     try:
         msgs = st.session_state.get("messages", [])
-        _hist = []
+        _hist: List[Dict[str, str]] = []
         for _m in msgs:
-            if not isinstance(_m, dict):
-                continue
-            _r = _m.get("role")
-            _c = (_m.get("content") or "").strip()
-            if _r in ("user", "assistant") and _c:
-                _hist.append({"role": _r, "content": _c})
+            if isinstance(_m, dict):
+                _r = _m.get("role"); _c = (_m.get("content") or "").strip()
+                if _r in ("user", "assistant") and _c:
+                    _hist.append({"role": _r, "content": _c})
         HISTORY_LIMIT = int(st.session_state.get("__history_limit__", 6))
         history = _hist[-HISTORY_LIMIT:]
     except Exception:
         history = []
 
-    # 3) 엔진 호출 (히스토리 전달 시도 + 안전한 폴백)
-    import inspect
-    try:
-        _sig = inspect.signature(engine.generate)
-        _params = set(_sig.parameters.keys())
-    except Exception:
-        _params = set()
-
-    _called = False
-    for _kw in ("history", "messages", "chat_history", "conversation"):
-        if _kw in _params:
-            yield from engine.generate(
-                user_q,
-                system_prompt=sys_prompt,
-                allow_tools=use_tools,
-                num_rows=num_rows,
-                stream=stream,
-                primer_enable=True,
-                **{_kw: history},
-            )
-            _called = True
-            break
-
-    if not _called:
-        # fallback: 히스토리를 system prompt 앞에 텍스트로 주입
-        def _as_transcript(items):
-            _lines = []
-            for it in items:
-                _lines.append(f"{'사용자' if it['role']=='user' else '어시스턴트'}: {it['content']}")
-            return "\n".join(_lines)
-
-        _hist_text = _as_transcript(history)
-        _uq = user_q
-        if _hist_text:
-            _uq = f"[이전 대화]\n{_hist_text}\n\n[현재 질문]\n{user_q}"
-        yield from engine.generate(
-            _uq,
-            system_prompt=sys_prompt,
-            allow_tools=use_tools,
-            num_rows=num_rows,
-            stream=stream,
-            primer_enable=True,
+    # 3) AdviceEngine.generate(messages, stream=...)에 맞춰 메시지 준비
+    messages: List[Dict[str, str]] = []
+    if sys_prompt:
+        messages.append({"role": "system", "content": sys_prompt})
+    # 필요 시, 과거 대화의 압축/전사 텍스트를 system으로 주입 (폴백)
+    if history:
+        transcript = "\n".join(
+            f"{'사용자' if h['role']=='user' else '어시스턴트'}: {h['content']}"
+            for h in history
         )
+        messages.append({"role": "system", "content": f"[최근 대화 일부]\n{transcript}"})
+    # 이번 사용자 입력
+    messages.append({"role": "user", "content": user_q})
 
-import io, os, re, json, time, html
+    # 4) 실제 호출
+    try:
+        text = engine.generate(messages, stream=stream)
+    except Exception as e:
+        text = f"죄송합니다. 답변 생성 중 오류가 발생했습니다: {e}"
 
-if "_normalize_text" not in globals():
-    def _normalize_text(s: str) -> str:
-        """불필요한 공백/빈 줄을 정돈하는 안전한 기본 버전"""
-        s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
-        # 앞뒤 공백 정리
-        s = s.strip()
-        # 3개 이상 연속 개행 → 2개로
-        s = re.sub(r"\n{3,}", "\n\n", s)
-        # 문장 끝 공백 제거
-        s = re.sub(r"[ \t]+\n", "\n", s)
-        return s
+    yield ("final", text, [])
+
+
+
 
 def _esc(s: str) -> str:
     """HTML escape only"""
@@ -467,8 +639,8 @@ def inject_sticky_layout_css(mode: str = "wide"):
       .block-container {{
         padding-bottom: calc(var(--chatbar-h) + var(--chat-gap) + 130px) !important;
       }}
-
       
+           
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
@@ -1063,7 +1235,11 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
     # 6) 중복/빈 줄 정리
     ft = _dedupe_blocks(ft)
 
+    # ✅ NEW: 답변 맨 아래 '관련 법령' 섹션 자동 부착
+    ft = _append_related_laws_footer(ft)
+
     return ft
+
 
 
 
@@ -1107,6 +1283,74 @@ import re as _re_art
 _ART_INLINE = _re_art.compile(
     r'(?P<law>[가-힣A-Za-z0-9·\s]{2,40}?(?:법|령|규칙|조례))\s*제(?P<num>\d{1,4})조(?P<ui>의\d{1,3})?'
 )
+
+# --- [NEW] Footer: '관련 법령' 자동 생성 ---
+import re as _re_footer
+
+# 본문에 "법령명 제n조(제목)" 형태가 있으면 제목까지 잡아둔다.
+_RE_ART_WITH_TITLE = _re_footer.compile(
+    r'(?P<law>[가-힣A-Za-z0-9·()\s]{2,40}?(?:법|령|규칙|조례))\s*'
+    r'제(?P<num>\d{1,4})조(?P<ui>의\d{1,3})?\s*'
+    r'\((?P<title>[^)]+)\)'
+)
+
+def _append_related_laws_footer(md: str, max_items: int = 6) -> str:
+    """답변 맨 아래에 '관련 법령' 섹션(조문 깊은 링크)을 생성/추가한다."""
+    if not md:
+        return md
+    # 이미 '관련 법령' 섹션이 있으면 중복 추가 금지
+    if _re_footer.search(r'(?mi)^\s*관련\s*법령\s*$', md):
+        return md
+
+    # 1) (법령명, 제n조) → 제목 매핑(가능할 때만)
+    titles: dict[tuple[str, str], str] = {}
+    for m in _RE_ART_WITH_TITLE.finditer(md):
+        law = (m.group('law') or '').strip()
+        art = f"제{m.group('num')}조{m.group('ui') or ''}"
+        titles[(law, art)] = (m.group('title') or '').strip()
+
+    # 2) 본문에서 실제로 등장한 (법령명, 제n조) 페어를 추출
+    try:
+        pairs = extract_article_pairs_from_answer(md)  # 이미 app.py에 있음
+    except Exception:
+        pairs = []
+
+    bullets: list[str] = []
+    seen: set[tuple[str, str]] = set()
+
+    # 3) 조문에 우선 링크 부여
+    for law, art in pairs:
+        key = (law, art)
+        if key in seen:
+            continue
+        seen.add(key)
+        url = _deep_article_url(law, art)  # 이미 패치된 조문 한글주소 해석기
+        title = titles.get(key, '')
+        art_txt = f"{art}{f'({title})' if title else ''}"
+        bullets.append(f"- 「{law}」 [{art_txt}]({url})")
+        if len(bullets) >= max_items:
+            break
+
+    # 4) 조문이 하나도 없으면, 법령명만이라도 링크(메인 상세 링크)로 제공
+    if not bullets:
+        try:
+            names = extract_law_names_from_answer(md)  # 이미 app.py에 있음
+        except Exception:
+            names = []
+        for nm in names[:max_items]:
+            bullets.append(f"- [{nm}](https://www.law.go.kr/법령/{_henc(nm)})")
+
+    if not bullets:
+        return md  # 붙일 게 없으면 원문 그대로
+
+    footer = (
+        "\n\n---\n\n"
+        "### 관련 법령\n" +
+        "\n".join(bullets) +
+        "\n\n_추가로 특정 조문 원문이 필요하시면 요청해 주세요!_"
+    )
+    return md.rstrip() + "\n\n" + footer
+
 
 def extract_article_pairs_from_answer(md: str) -> list[tuple[str, str]]:
     pairs = []
@@ -1356,11 +1600,17 @@ def _article_url_or_main(law: str, art_label: str, verify: bool = True, timeout:
     except Exception:
         return f"{base}/{law}"
 
-
-
+# === [REPLACE] app.py : _deep_article_url (두 군데 모두) ===
 def _deep_article_url(law: str, art_label: str) -> str:
-    # 과거 호출부 호환용. 항상 안전 검증 + 메인페이지 폴백.
-    return _article_url_or_main(law, art_label, verify=True)
+    """
+    조문 직링크(한글 주소) 우선. 실패 시 내부 로직이 메인으로 폴백.
+    """
+    try:
+        from modules.linking import resolve_article_url
+    except Exception:
+        from linking import resolve_article_url  # fallback
+    return resolve_article_url(law, art_label)
+
 
 def link_inline_articles_in_bullets(markdown: str) -> str:
     """불릿 라인 중 '법령명 제N조(의M)'를 [텍스트](조문URL)로 교체"""
@@ -1746,16 +1996,68 @@ def fix_links_with_lawdata(markdown: str, law_data: list[dict]) -> str:
 # Secrets / Clients / Session
 # =============================
 LAW_API_KEY, AZURE = load_secrets()
+
+# 👉 OC 브릿지: law_fetch.py가 환경변수에서만 OC를 읽으므로 여기서 연결
+import os, streamlit as st
+try:
+    _oc = st.secrets.get("LAW_API_OC", "")
+except Exception:
+    _oc = ""
+if _oc and not os.environ.get("LAW_API_OC"):
+    os.environ["LAW_API_OC"] = _oc  # DRF 호출용
+
+# Azure 클라이언트 초기화 (그대로 두되, 예외 시 폴백 로깅 유지)
 client = None
 if AZURE:
     try:
+        from openai import AzureOpenAI
         client = AzureOpenAI(
             api_key=AZURE["api_key"],
             api_version=AZURE["api_version"],
             azure_endpoint=AZURE["endpoint"],
         )
     except Exception as e:
-        st.error(f"Azure OpenAI 초기화 실패: {e}")
+        st.warning(f"Azure 초기화 실패, OpenAI로 폴백합니다: {e}")
+
+if client is None:
+    client = get_llm_client()
+
+
+import os
+try:
+    from openai import OpenAI
+    from openai import AzureOpenAI
+except Exception:
+    OpenAI = None
+    AzureOpenAI = None
+
+    # app.py — Secrets 로딩 바로 다음
+import os, streamlit as st
+os.environ.setdefault("LAW_API_OC", st.secrets.get("LAW_API_OC", ""))
+
+
+def get_llm_client():
+    # 기존 load_secrets() 쓰시던 구조면 그대로 사용
+    try:
+        from modules.advice_engine import load_secrets  # 프로젝트에 이미 있을 가능성 높음
+    except Exception:
+        load_secrets = lambda: (os.environ.get("OPENAI_API_KEY"), {
+            "api_key": os.environ.get("AZURE_OPENAI_API_KEY"),
+            "api_version": os.environ.get("AZURE_OPENAI_API_VERSION"),
+            "endpoint": os.environ.get("AZURE_OPENAI_ENDPOINT"),
+        })
+
+    OPENAI_KEY, AZURE = load_secrets()
+    if AZURE and AzureOpenAI and AZURE.get("api_key"):
+        return AzureOpenAI(
+            api_key=AZURE["api_key"],
+            api_version=AZURE["api_version"],
+            azure_endpoint=AZURE["endpoint"]
+        )
+    if OpenAI and (OPENAI_KEY or os.environ.get("OPENAI_API_KEY")):
+        return OpenAI()
+    raise RuntimeError("LLM client 초기화 실패: 환경변수/시크릿을 확인하세요.")
+
 
 # =============================
 # MOLEG API (Law Search) — unified
@@ -2015,6 +2317,311 @@ def extract_law_candidates_llm(q: str) -> list[str]:
 
 # === LLM 플래너 & 플랜 필터 ===
 import re, json
+
+# === Fallback utilities for article text extraction (law.go.kr deep link) ===
+import re as _re_fallback
+from html import unescape as _unescape_fallback
+from urllib.parse import quote as _quote_fallback
+
+# === [REPLACE] app.py : _deep_article_url (두 군데 모두) ===
+def _deep_article_url(law: str, art_label: str) -> str:
+    """
+    조문 직링크(한글 주소) 우선. 실패 시 내부 로직이 메인으로 폴백.
+    """
+    try:
+        from modules.linking import resolve_article_url
+    except Exception:
+        from linking import resolve_article_url  # fallback
+    return resolve_article_url(law, art_label)
+
+
+def _strip_html_keep_lines(s: str) -> str:
+    if not s:
+        return ""
+    s = _re_fallback.sub(r"(?is)<(script|style)[\s\S]*?</\1>", "", s)
+    s = _re_fallback.sub(r"(?is)<br\s*/?>", "\n", s)
+    s = _re_fallback.sub(r"(?is)</p\s*>", "\n", s)
+    s = _re_fallback.sub(r"(?is)<[^>]+>", "", s)
+    s = _unescape_fallback(s)
+    s = _re_fallback.sub(r"[ \t]+\n", "\n", s)
+    s = _re_fallback.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+def _extract_article_block(html_text: str) -> str:
+    if not html_text:
+        return ""
+    CANDS = [
+        r'(?is)<div[^>]+class="[^"]*(?:lawArticle|article-body|article|law-viewer|con_box|contants)[^"]*"[^>]*>([\s\S]{200,}?)</div>',
+        r'(?is)<table[^>]*class="[^"]*(?:tbl|law)[^"]*"[^>]*>([\s\S]{200,}?)</table>',
+        r'(?is)<body[^>]*>([\s\S]{400,}?)</body>',
+    ]
+    for pat in CANDS:
+        m = _re_fallback.search(pat, html_text)
+        if m:
+            txt = _strip_html_keep_lines(m.group(1))
+            if len(txt) >= 60:
+                return txt
+    return ""
+
+def fetch_article_text_fallback(
+    law_name: str,
+    article_label: str,
+    via_url: str | None = None,
+    timeout: float = 7.0,
+) -> tuple[str, str]:
+    """
+    1) 공개 한글주소(깊은 링크) 먼저 시도
+    2) 실패하면 DRF URL 시도
+    3) DRF의 '기관/IP 차단'·'오류 페이지'를 본문으로 오인하지 않도록 필터링
+    4) 어느 쪽이든 본문 파싱 실패 시 공백 반환(링크만 돌려줌)
+    """
+    import re, requests
+    from bs4 import BeautifulSoup
+
+    # fetch_article_text_fallback 내부
+BAD_SNIPPETS = [
+    "페이지 접속에 실패하였습니다",
+    "접속하신 기관에 문의하여 주시기 바랍니다",
+    "유지보수팀(02-2109-6446)",
+    "접근이 제한되었습니다",
+    # ⬇︎ 추가
+    "일치하는 법령이 없습니다",
+    "URL에 MST 요청값이 없습니다",
+    "lawService는 page 요청변수를 사용하지 않습니다",
+    "로그인한 사용자 OC만 사용가능합니다",
+]
+
+# ============= Lawyer-grade Legal Pipeline Utils =============
+import os, re, requests, json
+from urllib.parse import urlencode
+from typing import Optional, Tuple, Dict, Any, List
+
+# (권장) 시크릿 → env 브릿지 (앱 시작 직후 1회)
+try:
+    import streamlit as st  # noqa
+    os.environ.setdefault("LAW_API_OC", st.secrets.get("LAW_API_OC", ""))
+except Exception:
+    pass
+
+def jo_from_label(label: str) -> str:
+    """'제83조' → '008300' (조 번호 4자리 zero-pad + '00')"""
+    m = re.search(r'(\d+)\s*조', label or "")
+    return f"{int(m.group(1)):04d}00" if m else ""
+
+def resolve_mst_and_efyd(law_name: str) -> Tuple[str, str]:
+    """
+    OpenAPI(통합검색)로 정확 일치 법령을 찾아 MST와 시행일자(YYYYMMDD)를 확정.
+    실패 시 ("","") 반환.
+    """
+    try:
+        items, _, _ = _call_moleg_list("law", law_name, num_rows=5)  # 기존 헬퍼 사용
+        if not items:
+            return "", ""
+        for it in items:
+            if (it.get("법령명") or "").strip() == (law_name or "").strip():
+                mst = (it.get("MST") or it.get("LawMST") or "").strip()
+                eff = (it.get("시행일자") or it.get("eff_date") or "").replace("-", "")
+                return mst, eff
+        it = items[0]
+        return (it.get("MST") or it.get("LawMST") or "").strip(), (it.get("시행일자") or "").replace("-", "")
+    except Exception:
+        return "", ""
+
+def _drf_json_url(*, oc: str, mst: Optional[str], jo: str, efYd: Optional[str]) -> str:
+    q = {"OC": oc, "target": "law", "type": "JSON", "LANG": "KO"}
+    if mst:   q["MST"]  = str(mst)
+    q["JO"] = jo
+    if efYd:  q["efYd"] = re.sub(r"\D", "", efYd)
+    return "https://www.law.go.kr/DRF/lawService.do?" + urlencode(q, encoding="utf-8")
+
+def _find_article_node(obj: Any, want_label: str) -> Optional[Dict[str, Any]]:
+    """
+    DRF JSON 트리에서 조문번호 == want_label 인 노드를 찾는다.
+    (공백 제거 후 비교)
+    """
+    want = re.sub(r"\s+", "", want_label or "")
+    if not want:
+        return None
+    def _walk(o: Any) -> Optional[Dict[str, Any]]:
+        if isinstance(o, dict):
+            no = re.sub(r"\s+", "", str(o.get("조문번호") or ""))
+            if no and no == want:
+                return o
+            for v in o.values():
+                r = _walk(v)
+                if r: return r
+        elif isinstance(o, list):
+            for v in o:
+                r = _walk(v)
+                if r: return r
+        return None
+    return _walk(obj)
+
+def _collect_article_text(node: Dict[str, Any]) -> Tuple[str, List[Dict[str, str]]]:
+    """
+    조문 노드에서 본문 텍스트와 항/호 구조를 추출.
+    반환: (flattened_text, clauses[ {항번호, 항내용, 호:[{호번호, 호내용}]} ])
+    """
+    flattened: List[str] = []
+    clauses: List[Dict[str, Any]] = []
+
+    # 조문 내용
+    body = (node.get("조문내용") or "").strip()
+    if body:
+        flattened.append(body)
+
+    # 항
+    _항 = node.get("항") or []
+    if isinstance(_항, dict):  # 단일 항이 dict로 오는 경우
+        _항 = [_항]
+    for par in _항:
+        항번호 = str(par.get("항번호") or "").strip()
+        항내용 = str(par.get("항내용") or "").strip()
+        if 항내용:
+            flattened.append(f"{항번호} {항내용}".strip())
+        # 호
+        hos = []
+        _호 = par.get("호") or []
+        if isinstance(_호, dict):
+            _호 = [_호]
+        for ho in _호:
+            호번호 = str(ho.get("호번호") or "").strip()
+            호내용 = str(ho.get("호내용") or "").strip()
+            if 호내용:
+                hos.append({"호번호": 호번호, "호내용": 호내용})
+                flattened.append(f"{호번호} {호내용}".strip())
+        clauses.append({"항번호": 항번호, "항내용": 항내용, "호": hos})
+
+    return "\n".join(x for x in flattened if x).strip(), clauses
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DRF(JSON)로 조문을 구조화 수집 → LLM 컨텍스트로 바로 쓰는 번들 생성
+# 반환: (bundle, used_url)
+#   bundle = {
+#     law, article_label, mst, efYd, jo, title, body_text, clauses, source_url
+#   }
+# ─────────────────────────────────────────────────────────────────────────────
+from typing import Optional, Tuple, Dict, Any
+import os, requests
+
+def fetch_article_via_api_struct(
+    law_name: str,
+    article_label: str,
+    *,
+    mst: Optional[str] = None,
+    efYd: Optional[str] = None,
+    timeout: float = 7.0,
+) -> Tuple[Dict[str, Any], str]:
+    """
+    DRF(JSON) 한 번으로 '정확한 조문 + 구조화 메타' 확보.
+    - MST/efYd가 비어 있으면 resolve_mst_and_efyd(law_name)로 보강 (정본 1개만 사용)
+    - JO는 jo_from_label('제83조') → '008300' 규칙으로 통일
+    - 실패시 예외 발생(상위에서 폴백)
+    """
+    oc = os.environ.get("LAW_API_OC", "")
+    if not oc:
+        try:
+            import streamlit as st  # optional
+            oc = st.secrets.get("LAW_API_OC", "")
+        except Exception:
+            oc = ""
+    if not oc:
+        raise RuntimeError("LAW_API_OC is empty")
+
+    # 1) MST/efYd 확정 (정본 해석기 한 개만 사용)
+    mst = (mst or "").strip()
+    efYd = (efYd or "").strip()
+    if not mst:
+        mst2, ef2 = resolve_mst_and_efyd(law_name)
+        mst = mst or mst2
+        efYd = efYd or ef2
+    if not mst:
+        raise ValueError(f"MST not found for law: {law_name!r}")
+
+    # 2) JO 계산 (6자리 규칙 고정)
+    jo = jo_from_label(article_label)
+    if not jo:
+        raise ValueError(f"Invalid article label: {article_label!r}")
+
+    # 3) DRF(JSON) 호출
+    url = _drf_json_url(oc=oc, mst=mst, jo=jo, efYd=efYd)
+    r = requests.get(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
+    head = (r.text or "")[:3000]
+    if not (200 <= r.status_code < 300):
+        raise RuntimeError(f"DRF HTTP {r.status_code}")
+    # DRF의 오류페이지 문자열 방어
+    if any(s in head for s in (
+        "페이지 접속에 실패하였습니다",
+        "일치하는 법령이 없습니다",
+        "URL에 MST 요청값이 없습니다",
+        "접근이 제한되었습니다",
+        "로그인한 사용자 OC만 사용가능합니다",
+    )):
+        raise RuntimeError("DRF returned error page (params/access)")
+
+    try:
+        data = r.json()
+    except Exception as e:
+        raise RuntimeError("Invalid JSON from DRF") from e
+
+    # 4) 대상 조문 노드 추출 → 본문/항·호 평문화
+    node = _find_article_node(data, article_label)
+    if not node:
+        raise RuntimeError("Target article node not found in JSON")
+
+    title = (node.get("조문제목") or "").strip()
+    body_text, clauses = _collect_article_text(node)
+    if not (body_text or clauses):
+        raise RuntimeError("Empty article content in JSON")
+
+    bundle: Dict[str, Any] = {
+        "law": law_name,
+        "article_label": article_label,
+        "mst": mst,
+        "efYd": efYd or "",
+        "jo": jo,
+        "title": title,
+        "body_text": body_text,
+        "clauses": clauses,       # [{항번호, 항내용, 호:[{호번호, 호내용}]}]
+        "source_url": url,        # 근거로 노출
+    }
+    return bundle, url
+
+
+def render_article_context_for_llm(bundle: Dict[str, Any]) -> str:
+    """
+    LLM 컨텍스트로 바로 넣을 고정 포맷 생성
+    (메타 + 본문 + 항/호 요약 포함)
+    """
+    meta = (
+        f"법령명: {bundle.get('law','')}\n"
+        f"MST: {bundle.get('mst','')} / efYd: {bundle.get('efYd','')}\n"
+        f"조문: {bundle.get('article_label','')} (JO {bundle.get('jo','')})\n"
+        f"원문(API JSON): {bundle.get('source_url','')}\n"
+    )
+
+    # 항/호 요약
+    parts: List[str] = []
+    for cl in (bundle.get("clauses") or []):
+        if cl.get("항내용"):
+            parts.append(f"{cl.get('항번호','')} {cl.get('항내용','')}".strip())
+        for ho in (cl.get("호") or []):
+            if ho.get("호내용"):
+                parts.append(f"{ho.get('호번호','')} {ho.get('호내용','')}".strip())
+    clauses_flat = "\n".join(parts).strip()
+
+    title = bundle.get("title", "")
+    header = f"{bundle.get('article_label','')}{(' - ' + title) if title else ''}".strip()
+
+    return (
+        "[법령 메타]\n" + meta + "\n"
+        "[조문 본문]\n" + header + "\n" + (bundle.get("body_text","") or "") + "\n\n"
+        + ("[항/호]\n" + clauses_flat + "\n" if clauses_flat else "")
+    )
+# ==============================================================
+
+
+
 
 # === LLM 플래너 & 플랜 필터 ===
 def _filter_items_by_plan(user_q: str, items: list[dict], plan: dict) -> list[dict]:
@@ -2454,9 +3061,6 @@ TOOLS = [
 #               사이드바/레이아웃 렌더링이 시작되기 "위"
 # ============================
 
-# 1) imports
-from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
-
 # 2) 엔진 생성 (한 번만)
 engine = None
 try:
@@ -2769,6 +3373,58 @@ with st.sidebar:
             d = st.session_state["gen_file"]
             present_url_with_fallback(d["url"], d["kind"], d["q"])
 
+
+# app.py 사이드바 어딘가
+import streamlit as st
+
+law_name_for_mst = st.sidebar.text_input("MST 찾기 - 법령명", value="건설산업기본법")
+if st.sidebar.button("MST 조회"):
+    try:
+        items, _, _ = _call_moleg_list("law", law_name_for_mst, num_rows=5)
+        if items:
+            # 정확 일치 우선
+            mst = next((it.get("MST") for it in items if (it.get("법령명") or "").strip()==law_name_for_mst.strip()), items[0].get("MST"))
+            st.sidebar.success(f"MST: {mst}")
+        else:
+            st.sidebar.warning("검색 결과가 없습니다.")
+    except Exception as e:
+        st.sidebar.error(f"조회 실패: {e}")
+
+# app.py (사이드바 섹션 어딘가)
+import requests, streamlit as st
+from urllib.parse import urlencode
+import os, re
+
+def _jo(label:str)->str:
+    m = re.search(r'(\d+)\s*조', label or "")
+    return f"{int(m.group(1)):06d}" if m else ""
+
+# 사이드바 DRF 연결 테스트 (교체)
+import os, requests
+from urllib.parse import urlencode
+
+if st.sidebar.button("DRF 연결 테스트"):
+    q = {
+        "OC": os.environ.get("LAW_API_OC",""),
+        "target":"law",
+        "type":"HTML",
+        "LANG":"KO",
+        "MST": st.session_state.get("__test_mst__", ""),   # 위 MST 조회 결과를 복사/붙여넣기 해도 됨
+        "efYd":"20250828",                                 # 시행일자 필요시
+        "JO": jo_from_label("제83조"),                     # ← 이제 008300이 됩니다
+    }
+    url = "https://www.law.go.kr/DRF/lawService.do?" + urlencode({k:v for k,v in q.items() if v})
+    try:
+        r = requests.get(url, timeout=6, headers={"User-Agent":"Mozilla/5.0"})
+        ok = r.ok and ("페이지 접속에 실패하였습니다" not in r.text)
+        st.sidebar.write("URL:", url)
+        st.sidebar.success("DRF access OK ✅" if ok else "DRF access DENIED ❌")
+        st.sidebar.write("status:", r.status_code, " length:", len(r.text))
+    except Exception as e:
+        st.sidebar.error(f"요청 실패: {e}")
+
+
+
 # 1) pending → messages 먼저 옮김
 user_q = _push_user_from_pending()
 
@@ -3033,8 +3689,6 @@ def _current_q_and_answer():
 
 # 🔽 대화가 시작된 뒤에만 우측 패널 노출
 # ✅ 로딩(스트리밍) 중에는 패널을 렌더링하지 않음
-# 🔽 대화가 시작된 뒤에만 우측 패널 노출
-# ✅ 로딩(스트리밍) 중에는 패널을 렌더링하지 않음
 if chat_started and not st.session_state.get("__answering__", False):
     q_for_panel, ans_for_panel = _current_q_and_answer()
 
@@ -3052,7 +3706,6 @@ if chat_started and not st.session_state.get("__answering__", False):
         hint_articles=arts,   # ← 조문 힌트도 함께 전달
         show_debug=SHOW_SEARCH_DEBUG,
     )
-
 
 # ===============================
 # 좌우 분리 레이아웃: 왼쪽(답변) / 오른쪽(통합검색)

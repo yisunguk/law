@@ -1235,9 +1235,6 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
     # 6) 중복/빈 줄 정리
     ft = _dedupe_blocks(ft)
 
-    # ✅ NEW: 답변 맨 아래 '관련 법령' 섹션 자동 부착
-    ft = _append_related_laws_footer(ft)
-
     return ft
 
 
@@ -1247,8 +1244,11 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
 
 # [민법 제839조의2](...), [가사소송법 제2조](...) 등
 _LAW_IN_LINK = re.compile(r'\[([^\]\n]+?)\s+제\d+조(의\d+)?\]')
-# 불릿/일반 문장 내: "OO법/령/규칙/조례" (+선택적 '제n조')
-_LAW_INLINE  = re.compile(r'([가-힣A-Za-z0-9·\s]{2,40}?(?:법|령|규칙|조례))(?:\s*제\d+조(의\d+)?)?')
+# '방법' 같은 일반 단어 끝의 '법'은 제외(오탐 방지)
+_LAW_INLINE  = re.compile(
+    r'(?<!방법)([가-힣A-Za-z0-9·\s]{2,40}?(?:법|령|규칙|조례))(?:\s*제\d{1,4}조(의\d{1,3})?)?'
+)
+
 
 def extract_law_names_from_answer(md: str) -> list[str]:
     if not md:
@@ -2390,6 +2390,67 @@ BAD_SNIPPETS = [
     "lawService는 page 요청변수를 사용하지 않습니다",
     "로그인한 사용자 OC만 사용가능합니다",
 ]
+
+# === [ADD] 관계 법령 렌더러 ============================================
+import re
+try:
+    from modules.linking import make_pretty_article_url  # 조문 딥링크 생성기
+except Exception:
+    from linking import make_pretty_article_url
+
+# (법 이름) (선택: 시행령/시행규칙) (조문) 패턴
+_LAW_PAIR_RE = re.compile(
+    r'([가-힣A-Za-z0-9·\-\(\)]+?(?:에 관한 법률|법))\s*(시행령|시행규칙)?\s*'
+    r'(제?\s*\d{1,4}\s*조(?:\s*의\s*\d{1,3})?)'
+)
+
+def _extract_law_article_pairs(text: str):
+    """문장에서 (법명, 조문라벨) 리스트 추출. 중복 제거, 입력 순서 유지."""
+    pairs, seen = [], set()
+    for m in _LAW_PAIR_RE.finditer(text or ""):
+        law = (m.group(1) + (f" {m.group(2)}" if m.group(2) else "")).strip()
+        art = (m.group(3) or "").strip()
+        key = (law, re.sub(r'\s+', '', art))
+        if key in seen: 
+            continue
+        seen.add(key)
+        pairs.append((law, art))
+    return pairs
+
+def render_related_laws_block(*, user_q: str, answer_text: str, primary_pair=None, limit: int = 8):
+    """
+    답변 맨 끝에 '관계 법령' 섹션을 그립니다.
+    - primary_pair: (법명, 조문) 주된 근거(예: 플래너로 직접 조회한 조문)
+    - answer_text / user_q 에서도 자동 추출하여 합칩니다.
+    """
+    items = []
+    if primary_pair and all(primary_pair):
+        items.append(primary_pair)
+    items += _extract_law_article_pairs(answer_text)
+    items += _extract_law_article_pairs(user_q)
+
+    # 중복 제거 후 상한
+    seen, out = set(), []
+    for law, art in items:
+        key = (law, re.sub(r'\s+', '', art))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((law, art))
+        if len(out) >= limit:
+            break
+
+    if not out:
+        return  # 추출 결과 없으면 섹션 생략(나머지 UI엔 영향 없음)
+
+    import streamlit as st
+    st.markdown("### 관련 법령")
+    for law, art in out:
+        url = make_pretty_article_url(law, art)  # 항상 '조문' 딥링크 사용
+        st.markdown(f"- [{law} {art}]({url})")
+    st.caption("추가로 특정 조문 원문이 필요하시면 요청해 주세요!")
+# =====================================================================
+
 
 # ============= Lawyer-grade Legal Pipeline Utils =============
 import os, re, requests, json
@@ -3675,6 +3736,25 @@ with st.container():
             else:
                 st.markdown(content)
 
+# === [NEW] 마지막 답변 아래 '관련 법령' 석션(조문 딥링크) ===
+try:
+    msgs = st.session_state.get("messages", [])
+    last_q = next((m for m in reversed(msgs)
+                   if m.get("role") == "user" and (m.get("content") or "").strip()), None)
+    last_a = next((m for m in reversed(msgs)
+                   if m.get("role") == "assistant" and (m.get("content") or "").strip()), None)
+
+    if last_a:
+        render_related_laws_block(
+            user_q=(last_q or {}).get("content", ""),
+            answer_text=(last_a or {}).get("content", ""),
+            # 메시지 메타에 (법명, 조문) 쌍을 저장해두셨다면 우선 적용됩니다.
+            primary_pair=(last_a.get("article_pair") if isinstance(last_a, dict) else None),
+            limit=8,
+        )
+except Exception:
+    pass
+# === [END NEW] ===
 
 # ✅ 답변 말풍선 바로 아래에 입력/업로더 붙이기 (답변 생성 중이 아닐 때만)
 if chat_started and not st.session_state.get("__answering__", False):
