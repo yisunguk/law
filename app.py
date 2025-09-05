@@ -2988,9 +2988,6 @@ TOOLS = [
 #               사이드바/레이아웃 렌더링이 시작되기 "위"
 # ============================
 
-# 1) imports
-from modules import AdviceEngine, Intent, classify_intent, pick_mode, build_sys_for_mode  # noqa: F401
-
 # 2) 엔진 생성 (한 번만)
 engine = None
 try:
