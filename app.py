@@ -2466,10 +2466,11 @@ def _norm_art_label(label: str) -> str:
 def _norm_law_name(name: str) -> str:
     return re.sub(r'[「」『』\s]+', '', (name or ''))
 
-# --- 강력한 법령명 필터/추출기 ------------------------------------------
-_LAW_NAME_RE = re.compile(
-    r'([「『]?[가-힣0-9·\(\) ]{2,40}?(?:헌법|특별법|법|령|규칙|조례))(?=[^\w가-힣·\(\)])'
+# 예: law-only 링크 정규식 강화
+_LAW_NAME_STRICT_RE = re.compile(
+    r'(?<!관련\s)([가-힣A-Za-z0-9·\-\(\)]{2,30}(?:에 관한 법률|법))(?!령)'
 )
+
 
 _BANNED_EXACT = {
     '법', '관련법', '관계법', '관련법령', '관계법령',
@@ -3874,13 +3875,17 @@ try:
             pass  # law 필드가 없거나 형식이 달라도 전체 렌더는 계속
 
         # '관계 법령' 섹션 출력
+        # 예시: 최종 후처리된 답변 문자열
+        assistant_md = final_answer_text  # ← st.chat_message("assistant")에 출력하는 것과 같은 문자열
+
         render_related_laws_block(
             user_q=(last_q or {}).get("content", ""),
-            answer_text=(last_a or {}).get("content", ""),
-            primary_pair=(last_a.get("article_pair") if isinstance(last_a, dict) else None),
-            fallback_law_names=_fallback_names,   # ← 추가
+            answer_text=assistant_md,   # ← (last_a or {}).get("content","") 대신 이걸 넘김
+            primary_pair=st.session_state.get("article_pair"),
+            fallback_law_names=fallback_names,
             limit=8,
-        )
+)
+
 
 except Exception as e:
     # 이 블록에서 예외가 나도 화면 전체가 죽지 않도록 방어
