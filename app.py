@@ -2499,13 +2499,14 @@ def _is_valid_law_name(nm: str) -> bool:
 
 def _extract_law_names_robust(text: str):
     names, seen = [], set()
-    for m in _LAW_NAME_RE.finditer(text or ''):
+    for m in _LAW_NAME_STRICT_RE.finditer(text or ''):   # ← 이름 교체
         cand = m.group(1).strip('「」『』 ').strip()
         if _is_valid_law_name(cand):
             if cand not in seen:
                 seen.add(cand)
                 names.append(cand)
     return names
+
 # -----------------------------------------------------------------------
 
 def render_related_laws_block(*, user_q: str, answer_text: str,
@@ -3874,15 +3875,16 @@ try:
         except Exception:
             pass  # law 필드가 없거나 형식이 달라도 전체 렌더는 계속
 
-        # '관계 법령' 섹션 출력
-        # 예시: 최종 후처리된 답변 문자열
-        assistant_md = final_answer_text  # ← st.chat_message("assistant")에 출력하는 것과 같은 문자열
+        # (2) 아직 정의되지 않은 final_answer_text 대신 안전한 값 사용
+        assistant_md = (last_a or {}).get("content", "")  # ← 이걸로 교체
+        # 기존: assistant_md = final_answer_text   (정의 안 되어 있음)
+
 
         render_related_laws_block(
             user_q=(last_q or {}).get("content", ""),
             answer_text=assistant_md,   # ← (last_a or {}).get("content","") 대신 이걸 넘김
             primary_pair=st.session_state.get("article_pair"),
-            fallback_law_names=fallback_names,
+            fallback_law_names=_fallback_names,
             limit=8,
 )
 
