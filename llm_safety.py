@@ -1,6 +1,12 @@
 # llm_safety.py
 from typing import Any, Dict, List, Union
 from errors import is_content_filter_error
+# [PATCH] llm_safety.py — import 가드 추가
+try:
+    from errors import is_content_filter_error  # 기존
+except Exception:
+    def is_content_filter_error(_e):
+        return None  # 폴백: 차단 사유 미분류
 
 USER_FRIENDLY_GUIDE = (
     "현재 질문은 안전 관련 민감 표현으로 인식되어 자동 보호 장치에 의해 응답이 제한되었습니다. "
