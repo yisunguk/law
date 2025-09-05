@@ -1235,7 +1235,11 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
     # 6) 중복/빈 줄 정리
     ft = _dedupe_blocks(ft)
 
+    # ✅ NEW: 답변 맨 아래 '관련 법령' 섹션 자동 부착
+    ft = _append_related_laws_footer(ft)
+
     return ft
+
 
 
 
@@ -1279,6 +1283,74 @@ import re as _re_art
 _ART_INLINE = _re_art.compile(
     r'(?P<law>[가-힣A-Za-z0-9·\s]{2,40}?(?:법|령|규칙|조례))\s*제(?P<num>\d{1,4})조(?P<ui>의\d{1,3})?'
 )
+
+# --- [NEW] Footer: '관련 법령' 자동 생성 ---
+import re as _re_footer
+
+# 본문에 "법령명 제n조(제목)" 형태가 있으면 제목까지 잡아둔다.
+_RE_ART_WITH_TITLE = _re_footer.compile(
+    r'(?P<law>[가-힣A-Za-z0-9·()\s]{2,40}?(?:법|령|규칙|조례))\s*'
+    r'제(?P<num>\d{1,4})조(?P<ui>의\d{1,3})?\s*'
+    r'\((?P<title>[^)]+)\)'
+)
+
+def _append_related_laws_footer(md: str, max_items: int = 6) -> str:
+    """답변 맨 아래에 '관련 법령' 섹션(조문 깊은 링크)을 생성/추가한다."""
+    if not md:
+        return md
+    # 이미 '관련 법령' 섹션이 있으면 중복 추가 금지
+    if _re_footer.search(r'(?mi)^\s*관련\s*법령\s*$', md):
+        return md
+
+    # 1) (법령명, 제n조) → 제목 매핑(가능할 때만)
+    titles: dict[tuple[str, str], str] = {}
+    for m in _RE_ART_WITH_TITLE.finditer(md):
+        law = (m.group('law') or '').strip()
+        art = f"제{m.group('num')}조{m.group('ui') or ''}"
+        titles[(law, art)] = (m.group('title') or '').strip()
+
+    # 2) 본문에서 실제로 등장한 (법령명, 제n조) 페어를 추출
+    try:
+        pairs = extract_article_pairs_from_answer(md)  # 이미 app.py에 있음
+    except Exception:
+        pairs = []
+
+    bullets: list[str] = []
+    seen: set[tuple[str, str]] = set()
+
+    # 3) 조문에 우선 링크 부여
+    for law, art in pairs:
+        key = (law, art)
+        if key in seen:
+            continue
+        seen.add(key)
+        url = _deep_article_url(law, art)  # 이미 패치된 조문 한글주소 해석기
+        title = titles.get(key, '')
+        art_txt = f"{art}{f'({title})' if title else ''}"
+        bullets.append(f"- 「{law}」 [{art_txt}]({url})")
+        if len(bullets) >= max_items:
+            break
+
+    # 4) 조문이 하나도 없으면, 법령명만이라도 링크(메인 상세 링크)로 제공
+    if not bullets:
+        try:
+            names = extract_law_names_from_answer(md)  # 이미 app.py에 있음
+        except Exception:
+            names = []
+        for nm in names[:max_items]:
+            bullets.append(f"- [{nm}](https://www.law.go.kr/법령/{_henc(nm)})")
+
+    if not bullets:
+        return md  # 붙일 게 없으면 원문 그대로
+
+    footer = (
+        "\n\n---\n\n"
+        "### 관련 법령\n" +
+        "\n".join(bullets) +
+        "\n\n_추가로 특정 조문 원문이 필요하시면 요청해 주세요!_"
+    )
+    return md.rstrip() + "\n\n" + footer
+
 
 def extract_article_pairs_from_answer(md: str) -> list[tuple[str, str]]:
     pairs = []
