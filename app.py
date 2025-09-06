@@ -1185,6 +1185,20 @@ _fallback_names = [
     it.get("법령명") for it in (st.session_state.get("__last_collected_laws__") or [])
     if isinstance(it, dict) and it.get("법령명")
 ]
+# ▼▼▼ (추가) 원인 구분용 디버그 캡션 ▼▼▼
+SHOW_DEBUG = True  # 필요 없으면 False로
+if SHOW_DEBUG:
+    pair = st.session_state.get("article_pair")
+    # 수집 성공 여부(fetched)는 변수명이 코드에 따라 다를 수 있어 안전하게 확인
+    fetched_flag = bool(
+        locals().get("article_text") or
+        locals().get("article_md")   or
+        st.session_state.get("article_text")
+    )
+    st.caption(
+        f"debug: intent={intent}, pair={pair}, fetched={fetched_flag}"
+    )
+# ▲▲▲ (추가 끝) ▲▲▲
 
 def render_bottom_uploader():
     # 업로더 바로 앞에 '앵커'만 출력
@@ -3882,7 +3896,6 @@ try:
 
         # (2) 아직 정의되지 않은 final_answer_text 대신 안전한 값 사용
         assistant_md = (last_a or {}).get("content", "")  # ← 이걸로 교체
-        # 기존: assistant_md = final_answer_text   (정의 안 되어 있음)
 
 
         render_related_laws_block(
