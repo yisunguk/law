@@ -5,12 +5,11 @@ import re, logging
 # [ADD ①] 전 분야 리소스 본문 가져오기 유틸
 import re, requests
 from bs4 import BeautifulSoup
+from modules.linking import (
+    build_korean_resource_url as make_pretty_resource_url,
+    make_pretty_article_url,
+)
 
-# linking 경로 호환
-try:
-    from modules.linking import build_korean_resource_url as make_pretty_resource_url, make_pretty_article_url
-except Exception:
-    from linking import build_korean_resource_url as make_pretty_resource_url, make_pretty_article_url
 
 _HTTP_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
