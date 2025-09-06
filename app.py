@@ -1047,7 +1047,33 @@ def render_pre_chat_center():
         st.rerun()
 
 
-# 기존 render_bottom_uploader() 전부 교체
+# (위쪽 어딘가에서 최종 답변을 만들 때 저장)
+# st.session_state["__last_answer_text__"] = final_text
+# st.session_state["__last_collected_laws__"] = collected_laws or []
+
+# ... (말풍선 렌더 루프 끝)
+# ▼▼▼ 여기( #6 앵커: render_post_chat_simple_ui() 바로 위 ) ▼▼▼
+msgs = st.session_state.get("messages", [])
+last_q = next((m for m in reversed(msgs) if m.get("role")=="user" and (m.get("content") or "").strip()), None)
+last_a = next((m for m in reversed(msgs) if m.get("role")=="assistant" and (m.get("content") or "").strip()), None)
+
+assistant_md = st.session_state.get("__last_answer_text__", (last_a or {}).get("content",""))
+_fallback_names = [
+    it.get("법령명") for it in (st.session_state.get("__last_collected_laws__") or [])
+    if isinstance(it, dict) and it.get("법령명")
+]
+
+render_related_laws_block(
+    user_q=(last_q or {}).get("content",""),
+    answer_text=assistant_md,                         # 자문형도 여기서 잡힘
+    primary_pair=st.session_state.get("article_pair"),
+    fallback_law_names=_fallback_names,               # 자문형 대비 폴백
+    limit=8,
+)
+
+# ↓ 기존 입력창/업로더
+render_post_chat_simple_ui()
+
 
 # [ADD] 답변 완료 후에도 프리챗과 동일한 UI 사용
 def render_post_chat_simple_ui():
