@@ -387,6 +387,7 @@ def ask_llm_with_tools(
         mode = Intent(forced_mode) if forced_mode in valid else pick_mode(det_intent, conf)
     except Exception:
         mode = pick_mode(det_intent, conf)
+    st.session_state["__intent__"] = intent
 
     # 2) 시스템 프롬프트 생성 (툴 사용 여부는 내부 정책 유지)
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
@@ -1185,20 +1186,27 @@ _fallback_names = [
     it.get("법령명") for it in (st.session_state.get("__last_collected_laws__") or [])
     if isinstance(it, dict) and it.get("법령명")
 ]
-# ▼▼▼ (추가) 원인 구분용 디버그 캡션 ▼▼▼
-SHOW_DEBUG = True  # 필요 없으면 False로
+# ▼▼▼ 안전한 디버그 캡션(스코프 이슈 방지) ▼▼▼
+SHOW_DEBUG = True
 if SHOW_DEBUG:
+    # intent는 세션 또는 로컬 어느 쪽이든 OK
+    _intent_obj = st.session_state.get("__intent__") or locals().get("intent")
+    _intent_str = (
+        getattr(_intent_obj, "value", None) or
+        getattr(_intent_obj, "name",  None) or
+        (str(_intent_obj) if _intent_obj is not None else "N/A")
+    )
+
     pair = st.session_state.get("article_pair")
-    # 수집 성공 여부(fetched)는 변수명이 코드에 따라 다를 수 있어 안전하게 확인
     fetched_flag = bool(
+        st.session_state.get("article_text") or
         locals().get("article_text") or
-        locals().get("article_md")   or
-        st.session_state.get("article_text")
+        locals().get("article_md")
     )
-    st.caption(
-        f"debug: intent={intent}, pair={pair}, fetched={fetched_flag}"
-    )
-# ▲▲▲ (추가 끝) ▲▲▲
+
+    st.caption(f"debug: intent={_intent_str}, pair={pair}, fetched={fetched_flag}")
+# ▲▲▲ 디버그 끝 ▲▲▲
+
 
 def render_bottom_uploader():
     # 업로더 바로 앞에 '앵커'만 출력
