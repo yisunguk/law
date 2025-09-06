@@ -18,13 +18,13 @@ try:
 except Exception:
     AZURE = {}
 
-# ✅ [PATCH] app.py — 최상단 import에 공용 링크 생성기 추가
-from modules.linking import resolve_article_url  # ← 추가
-from modules.linking import make_pretty_article_url  # ← 이 임포트가 함수 정의보다 위에 위치해야 함
-try:
-    from modules.linking import _deep_article_url
-except Exception:
-    from linking import _deep_article_url
+# app.py — TOP
+from modules.linking import (
+    deep_article_url as _deep_article_url,   # 통일된 공식 엔트리
+    extract_article_citations,               # 필요시 사용
+    render_article_links,                    # 필요시 사용
+    merge_article_links_block,               # 필요시 사용
+)
 
 # 세션 초기화 시 1회만 실행
 if "__boot__" not in st.session_state:
@@ -2489,50 +2489,6 @@ _LAW_PAIR_RE = re.compile(
     r'([가-힣A-Za-z0-9·\-\(\)]+?(?:에\s*관한\s*법률|법|령|규칙|조례))(?![가-힣A-Za-z])\s*'
     r'(제?\s*\d{1,4}\s*조(?:\s*의\s*\d{1,3})?)'
 )
-
-
-# app.py : _LAW_PAIR_RE 바로 아래 함수 전체 교체
-def _extract_law_article_pairs(text: str):
-    pairs, seen = [], set()
-    for m in _LAW_PAIR_RE.finditer(text or ""):
-        law = (m.group(1) or "").strip()    # ← 조문을 더하지 말 것
-        art = (m.group(2) or "").strip()    # ← 기존 group(3) → group(2)
-        key = (law, re.sub(r'\s+', '', art))
-        if key in seen:
-            continue
-        seen.add(key)
-        pairs.append((law, art))
-    return pairs
-
-
-# ⬇︎ 추가: 조문라벨/법령명 표준화(중복 제거용)
-_ART_NORM = re.compile(r'제?\s*(\d{1,4})\s*조(?:\s*의\s*(\d{1,3}))?', re.I)
-def _norm_art_label(label: str) -> str:
-    m = _ART_NORM.search(label or "")
-    if not m: 
-        return (label or "").strip()
-    n, ui = m.group(1), m.group(2)
-    return f"제{n}조" + (f"의{ui}" if ui else "")
-
-def _norm_law_name(name: str) -> str:
-    return re.sub(r'[「」\s]+', '', (name or ''))  # 중복판별 전용(표시는 원문 유지)
-
-# === [REPLACE] 관계 법령 렌더러 ============================================
-import re
-from urllib.parse import quote as _q
-try:
-    from modules.linking import make_pretty_article_url
-except Exception:
-    from linking import make_pretty_article_url
-
-# app.py
-_LAW_PAIR_RE = re.compile(
-    r'([가-힣A-Za-z0-9·\-\(\)]+?(?:에\s*관한\s*법률|법|령|규칙|조례))(?![가-힣A-Za-z])\s*'
-    r'(제?\s*\d{1,4}\s*조(?:\s*의\s*\d{1,3})?)'
-)
-
-
-# app.py : _LAW_PAIR_RE 바로 아래 함수 전체 교체
 def _extract_law_article_pairs(text: str):
     pairs, seen = [], set()
     for m in _LAW_PAIR_RE.finditer(text or ""):
