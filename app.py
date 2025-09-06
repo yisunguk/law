@@ -387,7 +387,7 @@ def ask_llm_with_tools(
         mode = Intent(forced_mode) if forced_mode in valid else pick_mode(det_intent, conf)
     except Exception:
         mode = pick_mode(det_intent, conf)
-    st.session_state["__intent__"] = intent
+    st.session_state["__intent__"] = mode
 
     # 2) 시스템 프롬프트 생성 (툴 사용 여부는 내부 정책 유지)
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
