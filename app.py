@@ -1186,13 +1186,6 @@ _fallback_names = [
     if isinstance(it, dict) and it.get("법령명")
 ]
 
-render_related_laws_block(
-    user_q=(last_q or {}).get("content",""),
-    answer_text=assistant_md,                         # 자문형도 여기서 잡힘
-    primary_pair=st.session_state.get("article_pair"),
-    fallback_law_names=_fallback_names,               # 자문형 대비 폴백
-    limit=8,
-)
 def render_bottom_uploader():
     # 업로더 바로 앞에 '앵커'만 출력
     st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
