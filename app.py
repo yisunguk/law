@@ -1,5 +1,6 @@
 from __future__ import annotations
 import streamlit as st
+import html
 from html import unescape
 
 from modules import Intent, classify_intent, pick_mode, build_sys_for_mode
@@ -2116,17 +2117,7 @@ if AZURE:
     except Exception as e:
         st.warning(f"Azure 초기화 실패, OpenAI로 폴백합니다: {e}")
 
-if client is None:
-    client = get_llm_client()
 
-
-import os
-try:
-    from openai import OpenAI
-    from openai import AzureOpenAI
-except Exception:
-    OpenAI = None
-    AzureOpenAI = None
 
     # app.py — Secrets 로딩 바로 다음
 import os, streamlit as st
@@ -2155,7 +2146,17 @@ def get_llm_client():
         return OpenAI()
     raise RuntimeError("LLM client 초기화 실패: 환경변수/시크릿을 확인하세요.")
 
+if client is None:
+    client = get_llm_client()
 
+
+import os
+try:
+    from openai import OpenAI
+    from openai import AzureOpenAI
+except Exception:
+    OpenAI = None
+    AzureOpenAI = None
 # =============================
 # MOLEG API (Law Search) — unified
 # =============================
