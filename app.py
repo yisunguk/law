@@ -1047,35 +1047,60 @@ def render_pre_chat_center():
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
 
-# REPLACE: render_related_laws_block
+# ── DROP-IN REPLACE: render_related_laws_block (self-contained, no NameError)
 def render_related_laws_block(*, user_q: str, answer_text: str,
                               primary_pair=None, fallback_law_names=None, limit: int = 8):
     import re
     from urllib.parse import quote
     import streamlit as st
+    # URL 생성기는 modules.linking에 이미 있음 (상단 import 완료 가정)
+    from modules.linking import make_pretty_article_url
 
-    # 로컬 헬퍼(외부 의존 제거)
-    ART_NORM = re.compile(r'제?\s*(\d{1,4})\s*조(?:\s*의\s*(\d{1,3}))?', re.I)
+    # 라벨/이름 표준화
+    _ART_NORM = re.compile(r'제?\s*(\d{1,4})\s*조(?:\s*의\s*(\d{1,3}))?', re.I)
     def _norm_art(label: str) -> str:
-        m = ART_NORM.search(label or "")
+        m = _ART_NORM.search(label or "")
         if not m: return (label or "").strip()
         n, ui = m.group(1), m.group(2)
         return f"제{n}조" + (f"의{ui}" if ui else "")
     def _norm_name(name: str) -> str:
-        # 중복 제거용 간단 표준화
         return re.sub(r'[「」『』\s]+', '', (name or ''))
 
+    # 가능한 한 전역 추출기를 쓰되, 없으면 여기서 폴백 추출
+    def _extract_pairs(text: str):
+        # 1) 전역(있으면) 사용
+        try:
+            return extract_article_pairs_from_answer(text)  # 있을 때
+        except Exception:
+            pass
+        try:
+            return _extract_law_article_pairs(text)         # 예전 이름이 있을 때
+        except Exception:
+            pass
+        # 2) 초간단 폴백 정규식
+        _INLINE = re.compile(
+            r'(?P<law>[가-힣A-Za-z0-9·()\s]{2,40}?(?:법|령|규칙|조례))\s*제(?P<num>\d{1,4})조(?P<ui>의\d{1,3})?'
+        )
+        pairs = []
+        seen = set()
+        for m in _INLINE.finditer(text or ""):
+            law = (m.group('law') or '').strip()
+            art = f"제{m.group('num')}조{m.group('ui') or ''}"
+            key = (law, art)
+            if law and key not in seen:
+                seen.add(key); pairs.append(key)
+        return pairs[:limit]
+
+    # 수집
     items = []
     if primary_pair and all(primary_pair):
         items.append((primary_pair[0].strip(), _norm_art(primary_pair[1])))
-
-    # 이미 파일에 정의되어 있는 헬퍼만 사용 (의존성 최소화)
-    for (law, art) in extract_article_pairs_from_answer(answer_text):
+    for (law, art) in _extract_pairs(answer_text):
         items.append((law, _norm_art(art)))
-    for (law, art) in extract_article_pairs_from_answer(user_q):
+    for (law, art) in _extract_pairs(user_q):
         items.append((law, _norm_art(art)))
 
-    # 1) 조문 딥링크 먼저
+    # 1) 조문 딥링크 우선
     seen, out = set(), []
     for law, art in items:
         key = (_norm_name(law), art)
@@ -1089,27 +1114,24 @@ def render_related_laws_block(*, user_q: str, answer_text: str,
     if out:
         st.markdown("### 관련 법령")
         for law, art in out:
-            url = make_pretty_article_url(law, art)  # 이미 상단에서 import된 함수
-            st.markdown(f"- [{law} {art}]({url})")
+            st.markdown(f"- [{law} {art}]({make_pretty_article_url(law, art)})")
         st.caption("추가로 특정 조문 원문이 필요하시면 요청해 주세요!")
         return
 
-    # 2) 조문이 하나도 없으면: '법령명'만 안전하게 노출
+    # 2) 조문이 전혀 없으면 법령명만 노출
     names = []
     if fallback_law_names:
         names += [n for n in fallback_law_names if n]
-
-    # 파일에 이미 있는 추출기 사용
-    if not names:
+    try:
         names += extract_law_names_from_answer(answer_text)
         names += extract_law_names_from_answer(user_q)
+    except Exception:
+        pass
 
-    uniq = []
-    seen2 = set()
+    uniq, seen2 = [], set()
     for nm in names:
         if nm and nm not in seen2:
-            seen2.add(nm)
-            uniq.append(nm)
+            seen2.add(nm); uniq.append(nm)
         if len(uniq) >= limit:
             break
     if not uniq:
@@ -1119,6 +1141,7 @@ def render_related_laws_block(*, user_q: str, answer_text: str,
     for nm in uniq:
         st.markdown(f"- [{nm}](https://www.law.go.kr/법령/{quote(nm)})")
     st.caption("추가로 특정 조문 원문이 필요하시면 요청해 주세요!")
+
 
 # =====================================================================
 # (위쪽 어딘가에서 최종 답변을 만들 때 저장)
