@@ -21,15 +21,10 @@ except Exception:
 # ✅ [PATCH] app.py — 최상단 import에 공용 링크 생성기 추가
 from modules.linking import resolve_article_url  # ← 추가
 from modules.linking import make_pretty_article_url  # ← 이 임포트가 함수 정의보다 위에 위치해야 함
-
-def _deep_article_url(law: str, art_label: str) -> str:
-    """
-    조문 직링크 우선. 유효성 검사 실패 시 법령 메인으로 폴백.
-    """
-    art = _norm_art_label(art_label)  # '제N조(의M)' 표준화
-    return _article_url_or_main(law, art, verify=True)
-
-
+try:
+    from modules.linking import _deep_article_url
+except Exception:
+    from linking import _deep_article_url
 
 # 세션 초기화 시 1회만 실행
 if "__boot__" not in st.session_state:
@@ -1714,15 +1709,6 @@ def _article_url_or_main(law: str, art_label: str, verify: bool = True, timeout:
     except Exception:
         return f"{base}/{law}"
 
-def _deep_article_url(law: str, art_label: str) -> str:
-    """
-    조문 직링크 우선. 유효성 검사 실패 시 법령 메인으로 폴백.
-    """
-    art = _norm_art_label(art_label)  # '제N조(의M)' 표준화
-    return _article_url_or_main(law, art, verify=True)
-
-
-
 def link_inline_articles_in_bullets(markdown: str) -> str:
     """불릿 라인 중 '법령명 제N조(의M)'를 [텍스트](조문URL)로 교체"""
     def repl(m: re.Match) -> str:
@@ -2434,14 +2420,6 @@ import re as _re_fallback
 from html import unescape as _unescape_fallback
 from urllib.parse import quote as _quote_fallback
 
-def _deep_article_url(law: str, art_label: str) -> str:
-    """
-    조문 직링크 우선. 유효성 검사 실패 시 법령 메인으로 폴백.
-    """
-    art = _norm_art_label(art_label)  # '제N조(의M)' 표준화
-    return _article_url_or_main(law, art, verify=True)
-
-
 def _strip_html_keep_lines(s: str) -> str:
     if not s:
         return ""
@@ -2513,17 +2491,19 @@ _LAW_PAIR_RE = re.compile(
 )
 
 
+# app.py : _LAW_PAIR_RE 바로 아래 함수 전체 교체
 def _extract_law_article_pairs(text: str):
     pairs, seen = [], set()
     for m in _LAW_PAIR_RE.finditer(text or ""):
-        law = (m.group(1) + (f" {m.group(2)}" if m.group(2) else "")).strip()
-        art = (m.group(3) or "").strip()
+        law = (m.group(1) or "").strip()    # ← 조문을 더하지 말 것
+        art = (m.group(2) or "").strip()    # ← 기존 group(3) → group(2)
         key = (law, re.sub(r'\s+', '', art))
-        if key in seen: 
+        if key in seen:
             continue
         seen.add(key)
         pairs.append((law, art))
     return pairs
+
 
 # ⬇︎ 추가: 조문라벨/법령명 표준화(중복 제거용)
 _ART_NORM = re.compile(r'제?\s*(\d{1,4})\s*조(?:\s*의\s*(\d{1,3}))?', re.I)
@@ -2552,17 +2532,19 @@ _LAW_PAIR_RE = re.compile(
 )
 
 
+# app.py : _LAW_PAIR_RE 바로 아래 함수 전체 교체
 def _extract_law_article_pairs(text: str):
     pairs, seen = [], set()
     for m in _LAW_PAIR_RE.finditer(text or ""):
-        law = (m.group(1) + (f" {m.group(2)}" if m.group(2) else "")).strip()
-        art = (m.group(3) or "").strip()
+        law = (m.group(1) or "").strip()    # ← 조문을 더하지 말 것
+        art = (m.group(2) or "").strip()    # ← 기존 group(3) → group(2)
         key = (law, re.sub(r'\s+', '', art))
         if key in seen:
             continue
         seen.add(key)
         pairs.append((law, art))
     return pairs
+
 
 # 조문 라벨 표준화(중복 제거용)
 _ART_NORM = re.compile(r'제?\s*(\d{1,4})\s*조(?:\s*의\s*(\d{1,3}))?', re.I)
@@ -2580,7 +2562,6 @@ def _norm_law_name(name: str) -> str:
 _LAW_NAME_STRICT_RE = re.compile(
     r'(?<!관련\s)([가-힣A-Za-z0-9·\-\(\)]{2,30}(?:에 관한 법률|법))(?!령)'
 )
-
 
 _BANNED_EXACT = {
     '법', '관련법', '관계법', '관련법령', '관계법령',
