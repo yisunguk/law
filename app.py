@@ -22,16 +22,13 @@ except Exception:
 from modules.linking import resolve_article_url  # ← 추가
 from modules.linking import make_pretty_article_url  # ← 이 임포트가 함수 정의보다 위에 위치해야 함
 
-# ✅ [REPLACE] app.py : _deep_article_url
 def _deep_article_url(law: str, art_label: str) -> str:
     """
-    조문 직링크(한글 주소)만 반환. 어떤 경우에도 메인 링크로 폴백하지 않음.
+    조문 직링크 우선. 유효성 검사 실패 시 법령 메인으로 폴백.
     """
-    try:
-        from modules.linking import make_pretty_article_url  # 권장 경로
-    except Exception:
-        from linking import make_pretty_article_url  # 로컬/상대 경로 폴백
-    return make_pretty_article_url(law, art_label)
+    art = _norm_art_label(art_label)  # '제N조(의M)' 표준화
+    return _article_url_or_main(law, art, verify=True)
+
 
 
 # 세션 초기화 시 1회만 실행
@@ -1709,16 +1706,13 @@ def _article_url_or_main(law: str, art_label: str, verify: bool = True, timeout:
     except Exception:
         return f"{base}/{law}"
 
-# === [REPLACE] app.py : _deep_article_url (두 군데 모두) ===
 def _deep_article_url(law: str, art_label: str) -> str:
     """
-    조문 직링크(한글 주소) 우선. 실패 시 내부 로직이 메인으로 폴백.
+    조문 직링크 우선. 유효성 검사 실패 시 법령 메인으로 폴백.
     """
-    try:
-        from modules.linking import resolve_article_url
-    except Exception:
-        from linking import resolve_article_url  # fallback
-    return resolve_article_url(law, art_label)
+    art = _norm_art_label(art_label)  # '제N조(의M)' 표준화
+    return _article_url_or_main(law, art, verify=True)
+
 
 
 def link_inline_articles_in_bullets(markdown: str) -> str:
@@ -2432,16 +2426,12 @@ import re as _re_fallback
 from html import unescape as _unescape_fallback
 from urllib.parse import quote as _quote_fallback
 
-# === [REPLACE] app.py : _deep_article_url (두 군데 모두) ===
 def _deep_article_url(law: str, art_label: str) -> str:
     """
-    조문 직링크(한글 주소) 우선. 실패 시 내부 로직이 메인으로 폴백.
+    조문 직링크 우선. 유효성 검사 실패 시 법령 메인으로 폴백.
     """
-    try:
-        from modules.linking import resolve_article_url
-    except Exception:
-        from linking import resolve_article_url  # fallback
-    return resolve_article_url(law, art_label)
+    art = _norm_art_label(art_label)  # '제N조(의M)' 표준화
+    return _article_url_or_main(law, art, verify=True)
 
 
 def _strip_html_keep_lines(s: str) -> str:
@@ -2508,11 +2498,12 @@ try:
 except Exception:
     from linking import make_pretty_article_url
 
-# (법 이름) (선택: 시행령/시행규칙) (조문) 패턴 — 그대로 사용
+# app.py
 _LAW_PAIR_RE = re.compile(
-    r'([가-힣A-Za-z0-9·\-\(\)]+?(?:에 관한 법률|법))\s*(시행령|시행규칙)?\s*'
+    r'([가-힣A-Za-z0-9·\-\(\)]+?(?:에\s*관한\s*법률|법|령|규칙|조례))(?![가-힣A-Za-z])\s*'
     r'(제?\s*\d{1,4}\s*조(?:\s*의\s*\d{1,3})?)'
 )
+
 
 def _extract_law_article_pairs(text: str):
     pairs, seen = [], set()
@@ -2546,10 +2537,12 @@ try:
 except Exception:
     from linking import make_pretty_article_url
 
+# app.py
 _LAW_PAIR_RE = re.compile(
-    r'([가-힣A-Za-z0-9·\-\(\)]+?(?:에 관한 법률|법))\s*(시행령|시행규칙)?\s*'
+    r'([가-힣A-Za-z0-9·\-\(\)]+?(?:에\s*관한\s*법률|법|령|규칙|조례))(?![가-힣A-Za-z])\s*'
     r'(제?\s*\d{1,4}\s*조(?:\s*의\s*\d{1,3})?)'
 )
+
 
 def _extract_law_article_pairs(text: str):
     pairs, seen = [], set()
