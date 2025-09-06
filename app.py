@@ -1002,19 +1002,6 @@ def render_pre_chat_center():
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
     st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
 
-    # 중앙 업로더
-    st.file_uploader(
-        "Drag and drop files here",
-        type=["pdf", "docx", "txt"],
-        accept_multiple_files=True,
-        key="first_files",
-    )
-
-    # 입력 폼
-    with st.form("first_ask", clear_on_submit=True):
-        q = st.text_input("질문을 입력해 주세요...", key="first_input")
-        sent = st.form_submit_button("전송", use_container_width=True)
-
     # ✅ 대화 스타터 버튼 (2줄 2줄)
     col1, col2 = st.columns(2)
     with col1:
@@ -1207,10 +1194,6 @@ render_related_laws_block(
     fallback_law_names=_fallback_names,               # 자문형 대비 폴백
     limit=8,
 )
-
-# ↓ 기존 입력창/업로더
-render_post_chat_simple_ui()
-
 def render_bottom_uploader():
     # 업로더 바로 앞에 '앵커'만 출력
     st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
