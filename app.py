@@ -1002,6 +1002,11 @@ def render_pre_chat_center():
     st.markdown('<section class="center-hero">', unsafe_allow_html=True)
     st.markdown('<h1 style="font-size:38px;font-weight:800;letter-spacing:-.5px;margin-bottom:24px;">무엇을 도와드릴까요?</h1>', unsafe_allow_html=True)
 
+      # 입력 폼
+    with st.form("first_ask", clear_on_submit=True):
+        q = st.text_input("질문을 입력해 주세요...", key="first_input")
+        sent = st.form_submit_button("전송", use_container_width=True)
+
     # ✅ 대화 스타터 버튼 (2줄 2줄)
     col1, col2 = st.columns(2)
     with col1:
