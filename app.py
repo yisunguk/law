@@ -20,6 +20,7 @@ except Exception:
 
 # ✅ [PATCH] app.py — 최상단 import에 공용 링크 생성기 추가
 from modules.linking import resolve_article_url  # ← 추가
+from modules.linking import make_pretty_article_url  # ← 이 임포트가 함수 정의보다 위에 위치해야 함
 
 # ✅ [REPLACE] app.py : _deep_article_url
 def _deep_article_url(law: str, art_label: str) -> str:
@@ -1046,35 +1047,64 @@ def render_pre_chat_center():
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
 
+# -----------------------------------------------------------------------
 
+def render_related_laws_block(*, user_q: str, answer_text: str,
+                              primary_pair=None, fallback_law_names=None, limit: int = 8):
+    items = []
+    if primary_pair and all(primary_pair):
+        items.append((primary_pair[0].strip(), _norm_art_label(primary_pair[1])))
+
+    items += [(law, _norm_art_label(art)) for (law, art) in _extract_law_article_pairs(answer_text)]
+    items += [(law, _norm_art_label(art)) for (law, art) in _extract_law_article_pairs(user_q)]
+
+    # 1) 조문 딥링크 먼저
+    seen, out = set(), []
+    for law, art in items:
+        key = (_norm_law_name(law), art)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((law.strip(), art))
+        if len(out) >= limit:
+            break
+
+    import streamlit as st
+    if out:
+        st.markdown("### 관련 법령")
+        for law, art in out:
+            url = make_pretty_article_url(law, art)  # 항상 조문 딥링크
+            st.markdown(f"- [{law} {art}]({url})")
+        st.caption("추가로 특정 조문 원문이 필요하시면 요청해 주세요!")
+        return
+
+    # 2) 조문이 하나도 없으면: '법령명'만 안전하게 노출
+    names = []
+    if fallback_law_names:
+        names += [n for n in fallback_law_names if _is_valid_law_name(n)]
+    if not names:  # 구조화된 리스트가 없을 때만 본문 스캔
+        names += _extract_law_names_robust(answer_text)
+        names += _extract_law_names_robust(user_q)
+
+    # 순서 보존·중복 제거
+    seen2, out2 = set(), []
+    for nm in names:
+        if nm and nm not in seen2:
+            seen2.add(nm)
+            out2.append(nm)
+        if len(out2) >= limit:
+            break
+    if not out2:
+        return
+
+    st.markdown("### 관련 법령")
+    for nm in out2:
+        st.markdown(f"- [{nm}](https://www.law.go.kr/법령/{_q(nm, safe='')})")
+    st.caption("추가로 특정 조문 원문이 필요하시면 요청해 주세요!")
+# =====================================================================
 # (위쪽 어딘가에서 최종 답변을 만들 때 저장)
 # st.session_state["__last_answer_text__"] = final_text
 # st.session_state["__last_collected_laws__"] = collected_laws or []
-
-# ... (말풍선 렌더 루프 끝)
-# ▼▼▼ 여기( #6 앵커: render_post_chat_simple_ui() 바로 위 ) ▼▼▼
-msgs = st.session_state.get("messages", [])
-last_q = next((m for m in reversed(msgs) if m.get("role")=="user" and (m.get("content") or "").strip()), None)
-last_a = next((m for m in reversed(msgs) if m.get("role")=="assistant" and (m.get("content") or "").strip()), None)
-
-assistant_md = st.session_state.get("__last_answer_text__", (last_a or {}).get("content",""))
-_fallback_names = [
-    it.get("법령명") for it in (st.session_state.get("__last_collected_laws__") or [])
-    if isinstance(it, dict) and it.get("법령명")
-]
-
-render_related_laws_block(
-    user_q=(last_q or {}).get("content",""),
-    answer_text=assistant_md,                         # 자문형도 여기서 잡힘
-    primary_pair=st.session_state.get("article_pair"),
-    fallback_law_names=_fallback_names,               # 자문형 대비 폴백
-    limit=8,
-)
-
-# ↓ 기존 입력창/업로더
-render_post_chat_simple_ui()
-
-
 # [ADD] 답변 완료 후에도 프리챗과 동일한 UI 사용
 def render_post_chat_simple_ui():
     import time, io
@@ -1116,6 +1146,29 @@ def render_post_chat_simple_ui():
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.session_state["_pending_user_files"] = safe_payload
         st.rerun()
+# ... (말풍선 렌더 루프 끝)
+# ▼▼▼ 여기( #6 앵커: render_post_chat_simple_ui() 바로 위 ) ▼▼▼
+msgs = st.session_state.get("messages", [])
+last_q = next((m for m in reversed(msgs) if m.get("role")=="user" and (m.get("content") or "").strip()), None)
+last_a = next((m for m in reversed(msgs) if m.get("role")=="assistant" and (m.get("content") or "").strip()), None)
+
+assistant_md = st.session_state.get("__last_answer_text__", (last_a or {}).get("content",""))
+_fallback_names = [
+    it.get("법령명") for it in (st.session_state.get("__last_collected_laws__") or [])
+    if isinstance(it, dict) and it.get("법령명")
+]
+
+render_related_laws_block(
+    user_q=(last_q or {}).get("content",""),
+    answer_text=assistant_md,                         # 자문형도 여기서 잡힘
+    primary_pair=st.session_state.get("article_pair"),
+    fallback_law_names=_fallback_names,               # 자문형 대비 폴백
+    limit=8,
+)
+
+# ↓ 기존 입력창/업로더
+render_post_chat_simple_ui()
+
 def render_bottom_uploader():
     # 업로더 바로 앞에 '앵커'만 출력
     st.markdown('<div id="bu-anchor"></div>', unsafe_allow_html=True)
@@ -2533,61 +2586,7 @@ def _extract_law_names_robust(text: str):
                 names.append(cand)
     return names
 
-# -----------------------------------------------------------------------
 
-def render_related_laws_block(*, user_q: str, answer_text: str,
-                              primary_pair=None, fallback_law_names=None, limit: int = 8):
-    items = []
-    if primary_pair and all(primary_pair):
-        items.append((primary_pair[0].strip(), _norm_art_label(primary_pair[1])))
-
-    items += [(law, _norm_art_label(art)) for (law, art) in _extract_law_article_pairs(answer_text)]
-    items += [(law, _norm_art_label(art)) for (law, art) in _extract_law_article_pairs(user_q)]
-
-    # 1) 조문 딥링크 먼저
-    seen, out = set(), []
-    for law, art in items:
-        key = (_norm_law_name(law), art)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append((law.strip(), art))
-        if len(out) >= limit:
-            break
-
-    import streamlit as st
-    if out:
-        st.markdown("### 관련 법령")
-        for law, art in out:
-            url = make_pretty_article_url(law, art)  # 항상 조문 딥링크
-            st.markdown(f"- [{law} {art}]({url})")
-        st.caption("추가로 특정 조문 원문이 필요하시면 요청해 주세요!")
-        return
-
-    # 2) 조문이 하나도 없으면: '법령명'만 안전하게 노출
-    names = []
-    if fallback_law_names:
-        names += [n for n in fallback_law_names if _is_valid_law_name(n)]
-    if not names:  # 구조화된 리스트가 없을 때만 본문 스캔
-        names += _extract_law_names_robust(answer_text)
-        names += _extract_law_names_robust(user_q)
-
-    # 순서 보존·중복 제거
-    seen2, out2 = set(), []
-    for nm in names:
-        if nm and nm not in seen2:
-            seen2.add(nm)
-            out2.append(nm)
-        if len(out2) >= limit:
-            break
-    if not out2:
-        return
-
-    st.markdown("### 관련 법령")
-    for nm in out2:
-        st.markdown(f"- [{nm}](https://www.law.go.kr/법령/{_q(nm, safe='')})")
-    st.caption("추가로 특정 조문 원문이 필요하시면 요청해 주세요!")
-# =====================================================================
 
 
 
