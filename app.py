@@ -1103,7 +1103,8 @@ def render_related_laws_block(*, user_q: str, answer_text: str,
     if out:
         st.markdown("### 관련 법령")
         for law, art in out:
-            st.markdown(f"- [{law} {art}]({make_pretty_article_url(law, art)})")
+            url = _deep_article_url(law, art)  # 내부에서 검증+폴백
+            st.markdown(f"- [{law} {art}]({url})")
         st.caption("추가로 특정 조문 원문이 필요하시면 요청해 주세요!")
         return
 
@@ -1343,17 +1344,13 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
 
     return ft
 
-
-
-
-# --- 답변(마크다운)에서 '법령명'들을 추출(복수) ---
-
-# [민법 제839조의2](...), [가사소송법 제2조](...) 등
-_LAW_IN_LINK = re.compile(r'\[([^\]\n]+?)\s+제\d+조(의\d+)?\]')
-# '방법' 같은 일반 단어 끝의 '법'은 제외(오탐 방지)
-_LAW_INLINE  = re.compile(
-    r'(?<!방법)([가-힣A-Za-z0-9·\s]{2,40}?(?:법|령|규칙|조례))(?:\s*제\d{1,4}조(의\d{1,3})?)?'
+_LAW_INLINE = re.compile(
+    r'(?<!관련\s)(?<!관계\s)(?<!해당\s)(?<!항상\s)(?<!일반\s)'
+    r'([가-힣A-Za-z0-9·()\-\s]{2,40}?(?:에\s*관한\s*법률|법|령|규칙|조례))'
+    r'(?![가-힣A-Za-z])'          # '법적/법에' 등 뒤에 글자 이어지는 것 배제
+    r'(?:\s*제\d{1,4}조(?:의\d{1,3})?)?'   # 선택적 조문
 )
+
 
 
 def extract_law_names_from_answer(md: str) -> list[str]:
@@ -1364,14 +1361,13 @@ def extract_law_names_from_answer(md: str) -> list[str]:
     # 1) 링크 텍스트 안의 법령명
     for m in _LAW_IN_LINK.finditer(md):
         nm = (m.group(1) or "").strip()
-        if nm:
+        if _is_valid_law_name(nm):
             names.add(nm)
 
     # 2) 일반 텍스트/불릿에서 법령명 패턴
     for m in _LAW_INLINE.finditer(md):
         nm = (m.group(1) or "").strip()
-        # 과적합 방지: 너무 짧은/긴 것 제외
-        if 2 <= len(nm) <= 40:
+        if _is_valid_law_name(nm):
             names.add(nm)
 
     # 정리(중복 제거 + 길이 컷 + 상위 6개)
@@ -1383,12 +1379,16 @@ def extract_law_names_from_answer(md: str) -> list[str]:
             out.append(n2)
     return out[:6]
 
+
 # ===== 조문 추출: 답변에서 (법령명, 제n조[의m]) 페어 추출 =====
 import re as _re_art
 
-_ART_INLINE = _re_art.compile(
-    r'(?P<law>[가-힣A-Za-z0-9·\s]{2,40}?(?:법|령|규칙|조례))\s*제(?P<num>\d{1,4})조(?P<ui>의\d{1,3})?'
+# '법령명 제N조(의M)' 패턴 (법률 포함 + 접두 오탐 차단)
+_ART_INLINE = re.compile(
+    r'(?P<law>(?<!관련\s)(?<!관계\s)(?<!해당\s)[가-힣A-Za-z0-9·()\-\s]{2,40}?(?:에\s*관한\s*법률|법률|법|령|규칙|조례))'
+    r'\s*제(?P<num>\d{1,4})\s*조(?P<ui>(?:\s*의\s*\d{1,3}){0,2})?'
 )
+
 
 # --- [NEW] Footer: '관련 법령' 자동 생성 ---
 import re as _re_footer
@@ -1576,7 +1576,7 @@ st.markdown("""
 # 하위 법령 소제목(예: "1) 산업안전보건법")
 # 번호/헤딩/불릿이 있어도 없어도 잡히게 완화
 _LAW_HEADING_LINE = re.compile(
-    r'(?m)^\s*(?:\d+\s*[\.\)]\s*)?(?:#{1,6}\s*)?(?:[*-]\s*)?(?P<law>[가-힣A-Za-z0-9·()\s]{2,40}?법)\s*$'
+    r'(?m)^\s*(?:\d+\s*[\.\)]\s*)?(?:#{1,6}\s*)?(?:[*-]\s*)?(?P<law>[가-힣A-Za-z0-9·()\s]{2,40}?(?:법률|법))\s*$'
 )
 
 
@@ -2578,26 +2578,44 @@ _BANNED_EXACT = {
     '법', '관련법', '관계법', '관련법령', '관계법령',
     '해당법', '동법', '위법', '그법', '이법', '관련규정', '관계규정'
 }
-_BANNED_STARTS = ('관련', '관계', '해당', '동', '위', '그', '이')
-_BANNED_SUBSTR  = ('에따른', '에따라', '방법', '관련 법', '관계 법', '해당 법')
+
+# 지시사 단어로 시작하는 '관련/관계/해당'만 접두 차단
+_BANNED_STARTS = ('관련', '관계', '해당')
+
+# 공백 제거(normalize) 전후 모두에 대비해 붙여쓴/띄어쓴 형태 병행
+_BANNED_SUBSTR = ('에따른', '에따라', '에 따른', '에 따라', '관련 법', '관계 법', '해당 법', '방법')
 
 def _is_valid_law_name(nm: str) -> bool:
     raw = (nm or '').strip()
-    s = _norm_law_name(raw)
-    if len(s) < 4: 
+    s = _norm_law_name(raw)  # 예: 공백/기호 정규화 (프로젝트 내 기존 함수 가정)
+
+    # 최소 길이(너무 짧은 토큰 배제)
+    if len(s) < 4:
         return False
-    if not s.endswith(('법','령','규칙','조례','헌법','특별법')):
+
+    # 법령 접미사 허용 목록 (법률 추가)
+    if not s.endswith(('법', '법률', '령', '규칙', '조례', '헌법', '특별법')):
         return False
+
+    # 정확히 금지어
     if s in _BANNED_EXACT:
         return False
+
+    # 지시사류 접두 차단 (관련/관계/해당으로 시작하면 배제)
     if any(s.startswith(p) for p in _BANNED_STARTS):
         return False
-    if any(b in s for b in _BANNED_SUBSTR):
+
+    # 문장성 패턴 배제
+    if any(b in raw or b in s for b in _BANNED_SUBSTR):
         return False
-    # '관련 법'처럼 띄어쓰기 포함 금지(정규 필터 보강)
-    if re.fullmatch(r'(관련|관계|해당|동|위|그|이)\s*(법|령|규칙|조례)', raw):
+
+    # '동/위/그/이 + (법|령|규칙|조례)' 같은 지시사+법령 단독 패턴 배제
+    #   예) "동 법", "위 법", "그 법", "이 법"
+    if re.fullmatch(r'(동|위|그|이)\s*(법|령|규칙|조례)', raw):
         return False
+
     return True
+
 
 def _extract_law_names_robust(text: str):
     names, seen = [], set()
