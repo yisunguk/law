@@ -3925,6 +3925,45 @@ except Exception as e:
 if chat_started and not st.session_state.get("__answering__", False):
     render_post_chat_simple_ui()
 
+# [ADD] 답변 문자열에 JSON 레코드가 있으면 전분야 원문 자동 수집·표시
+import json, re
+_JSON_BLOCK = re.compile(r'\{\s*"분야"\s*:\s*".+?"[\s\S]*?\}', re.M)
+
+def _try_auto_resource_from_json(answer_text: str):
+    m = _JSON_BLOCK.search(answer_text or "")
+    if not m:
+        return None
+    try:
+        rec = json.loads(m.group(0))
+    except Exception:
+        return None
+
+    # 키 매핑 정리
+    kind  = rec.get("분야") or rec.get("kind")
+    title = rec.get("제목") or rec.get("title")
+    res = fetch_resource_text(
+        kind, title,
+        article_label=(rec.get("조문") or rec.get("article_label")),
+        pub_no=(rec.get("공포번호") or rec.get("발령번호") or rec.get("사건번호") or
+                rec.get("의결번호") or rec.get("재결번호") or rec.get("조약번호") or
+                rec.get("청구번호") or rec.get("안건번호")),
+        pub_date=(rec.get("공포일자") or rec.get("발령일자") or rec.get("판결일자") or
+                  rec.get("의결일자") or rec.get("결정일자") or rec.get("발효일자")),
+        eff_date=rec.get("시행일자"),
+        annex_label=(rec.get("별표") or rec.get("서식")),
+    )
+
+    # UI: 원문 링크 + 미리보기(원하면 요약 생성 로직에 res["text"] 투입)
+    import streamlit as st
+    if isinstance(res, dict) and res.get("url"):
+        with st.expander(f"원문 보기 · {res.get('kind')} · {res.get('title')}", expanded=False):
+            st.markdown(f"[law.go.kr 바로가기]({res['url']})")
+            preview = "\n".join((res.get("text") or "").splitlines()[:40])
+            st.code(preview or "(본문을 불러오지 못했습니다.)", language="text")
+        st.session_state["__last_resource__"] = res
+    return res
+
+
 # ✅ 메시지 루프 바로 아래(이미 _inject_right_rail_css() 다음 추천) — 항상 호출
 def _current_q_and_answer():
     msgs = st.session_state.get("messages", [])
@@ -3994,6 +4033,7 @@ if user_q:
     # --- Postprocess & de-dup ---
     final_text = apply_final_postprocess(base_text, collected_laws)
     final_text = _dedupe_repeats(final_text)
+    _try_auto_resource_from_json(final_text)
 
     # --- seatbelt: skip if same answer already stored this turn ---
     _ans_hash = _hash_text(final_text)
