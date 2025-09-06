@@ -2128,14 +2128,14 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
             last_err = e; continue
 
     if resp is None:
-        return [], last_endpoint, f"법제처 API 연결 실패: {last_err}"
+        return [], last_endpoint, f"국가법령정보 API 연결 실패: {last_err}"
 
     try:
         root = ET.fromstring(resp.text)
         result_code = (root.findtext(".//resultCode") or "").strip()
         result_msg  = (root.findtext(".//resultMsg")  or "").strip()
         if result_code and result_code != "00":
-            return [], last_endpoint, f"법제처 API 오류 [{result_code}]: {result_msg or 'fail'}"
+            return [], last_endpoint, f"국가법령정보 API 오류 [{result_code}]: {result_msg or 'fail'}"
 
         item_tags = {
             "law": ["law"], "admrul": ["admrul"], "ordin": ["ordin"],
@@ -3941,7 +3941,7 @@ if user_q:
 
     try:
         if stream_box is not None:
-            stream_box.markdown("_AI가 질의를 해석하고, 법제처 DB를 검색 중입니다._")
+            stream_box.markdown("_AI가 질의를 해석하고, 국가법령정보 DB를 검색 중입니다._")
 
         for kind, payload, law_list in ask_llm_with_tools(user_q, num_rows=5, stream=True):
             if kind == "delta":
