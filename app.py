@@ -1344,6 +1344,14 @@ def apply_final_postprocess(full_text: str, collected_laws: list) -> str:
 
     return ft
 
+# [링크 텍스트] 안의 "법령명 제n조" 잡기
+_LAW_IN_LINK = re.compile(
+    r'\[('
+    r'[가-힣A-Za-z0-9·()\-\s]{2,40}?'
+    r'(?:에\s*관한\s*법률|법률|법|령|규칙|조례)'
+    r')\s*제\d{1,4}\s*조(?:\s*의\s*\d{1,3})?\]\([^)]+\)'
+)
+
 _LAW_INLINE = re.compile(
     r'(?<!관련\s)(?<!관계\s)(?<!해당\s)(?<!항상\s)(?<!일반\s)'
     r'([가-힣A-Za-z0-9·()\-\s]{2,40}?(?:에\s*관한\s*법률|법|령|규칙|조례))'
