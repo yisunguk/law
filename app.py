@@ -1091,30 +1091,16 @@ def render_related_laws_block(*, user_q: str, answer_text: str,
     def _norm_name(name: str) -> str:
         return re.sub(r'[「」『』\s]+', '', (name or ''))
 
-    # 가능한 한 전역 추출기를 쓰되, 없으면 여기서 폴백 추출
+    # 상단 import 쪽(함수 안)에서
+    from modules.linking import extract_article_citations, make_deep_article_url
+
     def _extract_pairs(text: str):
-        # 1) 전역(있으면) 사용
         try:
-            return extract_article_pairs_from_answer(text)  # 있을 때
+        # (법령명, '제n조[의m]') 쌍을 안정적으로 추출
+            return extract_article_citations(text or "")
         except Exception:
-            pass
-        try:
-            return _extract_law_article_pairs(text)         # 예전 이름이 있을 때
-        except Exception:
-            pass
-        # 2) 초간단 폴백 정규식
-        _INLINE = re.compile(
-            r'(?P<law>[가-힣A-Za-z0-9·()\s]{2,40}?(?:법|령|규칙|조례))\s*제(?P<num>\d{1,4})조(?P<ui>의\d{1,3})?'
-        )
-        pairs = []
-        seen = set()
-        for m in _INLINE.finditer(text or ""):
-            law = (m.group('law') or '').strip()
-            art = f"제{m.group('num')}조{m.group('ui') or ''}"
-            key = (law, art)
-            if law and key not in seen:
-                seen.add(key); pairs.append(key)
-        return pairs[:limit]
+            return []
+
 
     # 수집
     items = []
@@ -1139,7 +1125,7 @@ def render_related_laws_block(*, user_q: str, answer_text: str,
     if out:
         st.markdown("### 관련 법령")
         for law, art in out:
-            url = _deep_article_url(law, art)  # 내부에서 검증+폴백
+            url = make_deep_article_url(law, art) # 내부에서 검증+폴백
             st.markdown(f"- [{law} {art}]({url})")
         st.caption("추가로 특정 조문 원문이 필요하시면 요청해 주세요!")
         return
@@ -4070,6 +4056,8 @@ if user_q:
     final_text = apply_final_postprocess(base_text, collected_laws)
     final_text = _dedupe_repeats(final_text)
     _try_auto_resource_from_json(final_text)
+    st.session_state["__last_answer_text__"]    = final_text
+    st.session_state["__last_collected_laws__"] = collected_laws or []
 
     # --- seatbelt: skip if same answer already stored this turn ---
     _ans_hash = _hash_text(final_text)
