@@ -4235,12 +4235,12 @@ if user_q:
     final_text = _dedupe_repeats(final_text)
     _try_auto_resource_from_json(final_text)
     # ✅ 마지막 답변을 기반으로 전 범주 리소스 힌트 자동 생성
-try:
-    st.session_state["__auto_resources__"] = llm_build_resource_hints(
-        (last_q or {}).get("content", ""), final_text, max_items=30
+    try:
+        st.session_state["__auto_resources__"] = llm_build_resource_hints(
+            (last_q or {}).get("content", ""), final_text, max_items=30
     )
-except Exception:
-    pass  # 실패해도 법령/판례 자동추출로 최소 표시됨
+    except Exception:
+        pass  # 실패해도 법령/판례 자동추출로 최소 표시됨
 
     st.session_state["__last_answer_text__"]    = final_text
     st.session_state["__last_collected_laws__"] = collected_laws or []
