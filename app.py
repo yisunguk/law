@@ -1231,6 +1231,88 @@ if SHOW_DEBUG:
 
     st.caption(f"debug: intent={_intent_str}, pair={pair}, fetched={fetched_flag}")
 # ▲▲▲ 디버그 끝 ▲▲▲
+# ──────────────────────────────────────────────────────────────────────────────
+# NEW: 35개 전 범주 "관련 자료" 통합 블록
+# ──────────────────────────────────────────────────────────────────────────────
+def render_related_resources_block(*, user_q: str, answer_text: str, limit_per_kind: int = 8):
+    import json, re
+    import streamlit as st
+    from modules.linking import (
+        extract_article_citations,  # 법령 조문
+        extract_case_citations,     # 판례
+        make_pretty_resource_url,   # 1~35 전 범주 한글주소 생성기
+    )
+
+    def _extract_resource_jsons(text: str):
+        """답변 안의 ```json``` 코드블록/세션 힌트에서 resources 추출."""
+        items = []
+        sess = st.session_state.get("__auto_resources__") or st.session_state.get("__resource_hints__")
+        if isinstance(sess, list):
+            items.extend([x for x in sess if isinstance(x, dict)])
+        for m in re.finditer(r"```json\s*(\{.*?\})\s*```", text or "", flags=re.S):
+            try:
+                obj = json.loads(m.group(1))
+                arr = obj.get("resources") or obj.get("links") or []
+                if isinstance(arr, list):
+                    items.extend([x for x in arr if isinstance(x, dict)])
+            except Exception:
+                pass
+        return items
+
+    groups: dict[str, list[tuple[str, str]]] = {}
+    def _add(kind: str, label: str, url: str):
+        if not (kind and label and url): return
+        groups.setdefault(kind, []).append((label, url))
+
+    # 1) JSON 힌트 → URL
+    hints = _extract_resource_jsons(answer_text)
+    for r in hints:
+        kind  = (r.get("kind") or r.get("type") or "").strip()
+        title = (r.get("title") or r.get("name") or "").strip()
+        kwargs = {k: v for k, v in r.items() if k not in ("kind","type","title","name")}
+        url = make_pretty_resource_url(kind, title, **kwargs)
+        label = title or kwargs.get("case_no") or kwargs.get("claim_no") or url.rsplit("/", 1)[-1]
+        _add(kind, label, url)
+
+    # 2) 본문 자동 추출(법령/판례)
+    merged_text = f"{user_q or ''}\n{answer_text or ''}"
+    for law, art in extract_article_citations(merged_text):
+        _add("법령", f"{law} {art}", make_pretty_resource_url("법령", law, article_label=art))
+    for no, dd in extract_case_citations(merged_text):
+        _add("판례", f"{no} ({dd})" if dd else no,
+             make_pretty_resource_url("판례", "", case_no=no, decision_date=dd or ""))
+
+    if not groups:
+        return
+
+    order = [
+        "판례",
+        "법령","영문법령","행정규칙","자치법규","학칙공단","조약",
+        "헌재결정","헌재결정례","법령해석","법령해석례","행정심판","행정심판례",
+        "법령별표서식","행정규칙별표서식","자치법규별표서식",
+        "법령체계도","용어",
+        "개인정보보호위원회","고용보험심사위원회","공정거래위원회","국민권익위원회",
+        "금융위원회","방송통신위원회","산업재해보상보험재심사위원회",
+        "노동위원회","중앙토지수용위원회","중앙환경분쟁조정위원회","국가인권위원회",
+        "중앙부처1차해석","고용노동부법령해석","국토교통부법령해석","해양수산부법령해석",
+        "행정안전부법령해석","환경부법령해석","관세청법령해석",
+        "조세심판재결례","특허심판재결례","해양안전심판재결례",
+    ]
+
+    st.markdown("### 관련 자료")
+    for kind in order:
+        items = groups.get(kind, [])
+        if not items: 
+            continue
+        seen = set(); shown = 0
+        st.markdown(f"#### {kind}")
+        for label, url in items:
+            if url in seen: 
+                continue
+            st.markdown(f"- [{label}]({url})")
+            seen.add(url); shown += 1
+            if shown >= limit_per_kind:
+                break
 
 
 def render_bottom_uploader():
@@ -3930,11 +4012,12 @@ try:
 
         render_related_laws_block(
             user_q=(last_q or {}).get("content", ""),
-            answer_text=assistant_md,   # ← (last_a or {}).get("content","") 대신 이걸 넘김
+            answer_text=assistant_md,
             primary_pair=st.session_state.get("article_pair"),
             fallback_law_names=_fallback_names,
             limit=8,
 )
+
 
 
 except Exception as e:
@@ -3984,6 +4067,101 @@ def _try_auto_resource_from_json(answer_text: str):
             st.code(preview or "(본문을 불러오지 못했습니다.)", language="text")
         st.session_state["__last_resource__"] = res
     return res
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# NEW: "관련 자료" JSON 힌트 자동생성 (Azure OpenAI)
+# ──────────────────────────────────────────────────────────────────────────────
+RESOURCES_JSON_PROMPT = """\
+너는 law.go.kr 한글주소 규칙에 맞춘 '관련 자료' 링크 힌트 생성기다.
+사용자의 질문과 너의 답변을 보고, 아래 35개 범주 중 필요한 것의 메타를
+JSON 하나로 만들어라.
+
+출력은 반드시 아래 하나의 JSON 오브젝트만:
+{
+  "resources":[
+    { "kind": "...", "title": "...", <옵션 파라미터들> }, ...
+  ]
+}
+
+kind와 필드 매핑(필요한 것만 채워라):
+- 법령:             {"kind":"법령","title":"법령명","article_label":"제3조" }
+- 제개정문:        {"kind":"제개정문","title":"법령명","a":"시행일자","b":"공포번호","c":"공포일자"}
+- 신구법비교:      {"kind":"신구법비교","title":"법령명","a":"시행일자","b":"공포번호","c":"공포일자"}
+- 영문법령:        {"kind":"영문법령","title":"법령명","pub_no":"공포번호","pub_date":"공포일자"}
+- 행정규칙:        {"kind":"행정규칙","title":"규칙명","doc_no":"발령번호","doc_date":"발령일자"}
+- 자치법규:        {"kind":"자치법규","title":"자치법규명","pub_no":"공포번호","pub_date":"공포일자"}
+- 학칙공단:        {"kind":"학칙공단","title":"학칙공단명","order_no":"발령번호","order_date":"발령일자"}
+- 조약:            {"kind":"조약","title":"조약명(옵션)","treaty_no":"조약번호","effective_date":"발효일자"}
+- 판례:            {"kind":"판례","case_no":"사건번호","decision_date":"판결일자"}
+- 헌재결정/례:     {"kind":"헌재결정례","case_no":"사건번호","decision_date":"선고일자"}
+- 법령해석/례:     {"kind":"법령해석례","case_no":"문서번호","opinion_date":"해석일자"}
+- 행정심판/례:     {"kind":"행정심판례","claim_no":"청구번호","decision_date":"의결일자"}
+- 법령별표서식:    {"kind":"법령별표서식","title":"법령명","a":"별표/서식식별"}
+- 행정규칙별표서식:{"kind":"행정규칙별표서식","title":"규칙명","a":"발행번호","b":"별표식별"}
+- 자치법규별표서식:{"kind":"자치법규별표서식","title":"자치법규명","a":"공포번호","b":"별표식별"}
+- 법령체계도:      {"kind":"법령체계도","title":"제목","domain":"법령|행정규칙|판례|법령해석례|행정심판례|헌재결정례","key":"사건/번호","date":"YYYYMMDD"}
+- 용어:            {"kind":"용어","title":"용어명"}
+- 개인정보보호위원회: {"kind":"개인정보보호위원회","title":"사건명","case_no":"사건번호"}
+- 고용보험심사위원회: {"kind":"고용보험심사위원회","title":"사건명","case_no":"사건번호"}
+- 공정거래위원회: {"kind":"공정거래위원회","title":"사건명","case_no":"사건번호"}
+- 국민권익위원회: {"kind":"국민권익위원회","title":"사건명","case_no":"사건번호","date":"YYYYMMDD"}
+- 금융위원회:     {"kind":"금융위원회","title":"안건명","decision_no":"의결번호"}
+- 방송통신위원회: {"kind":"방송통신위원회","title":"안건명","agenda_no":"안건번호"}
+- 산재보상보험재심사위원회: {"kind":"산업재해보상보험재심사위원회","title":"사건명","case_no":"사건번호"}
+- 노동위원회:     {"kind":"노동위원회","title":"사건/제목","case_no":"사건번호"}
+- 중앙토지수용위원회: {"kind":"중앙토지수용위원회","title":"제목"}
+- 중앙환경분쟁조정위원회: {"kind":"중앙환경분쟁조정위원회","title":"사건명","decision_no":"의결번호"}
+- 국가인권위원회: {"kind":"국가인권위원회","title":"사건명","case_no":"사건번호","date":"YYYYMMDD"}
+- 중앙부처1차해석: {"kind":"중앙부처1차해석","title":"안건명","case_no":"안건번호","date":"YYYYMMDD"}
+- 조세심판재결례: {"kind":"조세심판재결례","title":"사건명","claim_no":"청구번호","date":"YYYYMMDD"}
+- 특허심판재결례: {"kind":"특허심판재결례","title":"사건명","request_no":"청구번호"}
+- 해양안전심판재결례: {"kind":"해양안전심판재결례","title":"사건명","decision_no":"재결번호","date":"YYYYMMDD"}
+
+규칙:
+- 날짜는 가능하면 YYYYMMDD 8자리.
+- 각 kind별로 최대 8개, 중복 제거.
+- 정보가 모호하면 title만 두고 부속 파라미터는 비워둔다.
+- 오직 JSON만 출력하라. 추가 텍스트 금지.
+"""
+
+def llm_build_resource_hints(user_q: str, answer_text: str, max_items: int = 30):
+    """Azure OpenAI로 35개 전 범주 'resources' JSON을 생성."""
+    import os, json
+    import streamlit as st
+    try:
+        from openai import AzureOpenAI
+    except Exception:
+        AzureOpenAI = None
+
+    prompt = RESOURCES_JSON_PROMPT + "\n\n[질문]\n" + (user_q or "") + "\n\n[답변]\n" + (answer_text or "")
+    # Azure 설정(프로젝트에서 이미 사용 중인 값 재사용)
+    AZ = (getattr(st, "secrets", {}) or {}).get("AZURE", {})
+    api_key = AZ.get("api_key") or os.getenv("AZURE_OPENAI_API_KEY")
+    endpoint = AZ.get("endpoint") or os.getenv("AZURE_OPENAI_ENDPOINT")
+    api_ver  = AZ.get("api_version") or os.getenv("AZURE_OPENAI_API_VERSION") or "2024-06-01"
+    deployment = AZ.get("deployment") or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+
+    if not AzureOpenAI or not all([api_key, endpoint, deployment]):
+        return []  # 환경 안 맞으면 조용히 패스 (법령/판례 자동추출로만 렌더)
+
+    client = AzureOpenAI(api_key=api_key, api_version=api_ver, azure_endpoint=endpoint)
+    resp = client.chat.completions.create(
+        model=deployment,
+        temperature=0,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role":"system","content":"You are a JSON generator for law.go.kr Hangul deep links. Output JSON only."},
+            {"role":"user","content": prompt}
+        ],
+    )
+    try:
+        obj = json.loads(resp.choices[0].message.content or "{}")
+        arr = obj.get("resources") or []
+        # soft cap
+        return arr[:max_items] if isinstance(arr, list) else []
+    except Exception:
+        return []
 
 
 # ✅ 메시지 루프 바로 아래(이미 _inject_right_rail_css() 다음 추천) — 항상 호출
@@ -4056,6 +4234,14 @@ if user_q:
     final_text = apply_final_postprocess(base_text, collected_laws)
     final_text = _dedupe_repeats(final_text)
     _try_auto_resource_from_json(final_text)
+    # ✅ 마지막 답변을 기반으로 전 범주 리소스 힌트 자동 생성
+try:
+    st.session_state["__auto_resources__"] = llm_build_resource_hints(
+        (last_q or {}).get("content", ""), final_text, max_items=30
+    )
+except Exception:
+    pass  # 실패해도 법령/판례 자동추출로 최소 표시됨
+
     st.session_state["__last_answer_text__"]    = final_text
     st.session_state["__last_collected_laws__"] = collected_laws or []
 
