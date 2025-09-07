@@ -124,7 +124,7 @@ def _ensure_running_summary(client, transcript: str, max_len: int = 900):
                 {"role": "system", "content": "다음을 8줄 이내의 불릿 요약으로 만들어라. 핵심 결론과 사용자의 요구만 남겨라."},
                 {"role": "user", "content": transcript[:4000]},
             ],
-            temperature=0.1,
+            temperature=0.0,
             max_tokens=max(200, max_len // 2),
         )
         summ = (resp.choices[0].message.content or "").strip()
@@ -282,7 +282,7 @@ def _init_engine_lazy():
         client=c,
         model=az["deployment"],
         tools=tools,
-        temperature=0.2,
+        temperature=0.0,
     )
     return st.session_state.engine
 
@@ -387,7 +387,7 @@ def ask_llm_with_tools(
         mode = Intent(forced_mode) if forced_mode in valid else pick_mode(det_intent, conf)
     except Exception:
         mode = pick_mode(det_intent, conf)
-    st.session_state["__intent__"] = mode
+    st.session_state["__intent__"] = str(mode.value)
 
     # 2) 시스템 프롬프트 생성 (툴 사용 여부는 내부 정책 유지)
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
@@ -406,7 +406,20 @@ def ask_llm_with_tools(
         history = _hist[-HISTORY_LIMIT:]
     except Exception:
         history = []
-
+    # 2.7) '원문/본문 그대로' 요청이면 라우터+스크레이퍼로 강제 처리
+    from modules.router_llm import make_plan_with_llm
+    from modules.plan_executor import execute_plan
+    if wants_verbatim(user_q):
+        plan = make_plan_with_llm(client, user_q, model=AZURE["deployment"])  # 라우터는 T=0
+        if plan.get("action") == "GET_ARTICLE" and plan.get("law_name") and plan.get("article_label"):
+            res = execute_plan(plan)  # 딥링크 스크랩으로 원문 확보
+            if res.get("type") == "article" and res.get("body_text"):
+                law, art = res["law"], res["article_label"]
+                body, url = res["body_text"], res.get("source_url","")
+                text = f"「{law}」 {art} 본문은 아래와 같습니다.\n\n{body}\n\n[원문 보기]({url})"
+                yield ("final", text, [{"법령명": law, "법령상세링크": url}])
+                return
+ 
     # 3) AdviceEngine.generate(messages, stream=...)에 맞춰 메시지 준비
     messages: List[Dict[str, str]] = []
     if sys_prompt:
@@ -3280,7 +3293,7 @@ try:
             tool_search_multi=tool_search_multi,
             prefetch_law_context=prefetch_law_context,            # 있으면 그대로
             summarize_laws_for_primer=_summarize_laws_for_primer, # 있으면 그대로
-            temperature=0.2,
+            temperature=0.0,
         )
 except NameError:
     # 만약 위 객체들이 아직 정의되기 전 위치라면,
