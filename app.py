@@ -440,7 +440,31 @@ def ask_llm_with_tools(
     except Exception as e:
         text = f"죄송합니다. 답변 생성 중 오류가 발생했습니다: {e}"
 
+# --- [ADD] 후처리: 조문/판례 링크 자동 부착 ---
+    from modules.linking import (
+        merge_article_links_block,
+        extract_case_citations,
+        make_case_url,   # 판례 URL 빌더
+)
+
+# 1) 조문 링크 자동 부착 ("### 참고 링크(조문)" 블록을 본문 끝에 삽입)
+    text = merge_article_links_block(text)
+
+# 2) 판례 링크 자동 부착
+    cases = extract_case_citations(user_q + "\n" + text)  # 질문+답변에서 사건번호/선고일 추출
+    if cases:
+        lines = ["", "### 참고 링크(판례)"]
+        for case_no, decision_date in cases[:8]:
+            url = make_case_url(case_no=case_no, decision_date=decision_date)
+        # 정답지 요구대로 URL 자체를 그대로 노출하려면 아래처럼:
+            lines.append(f"- {url}")
+        # 마크다운 링크로 보이게 하려면 이렇게 바꿔도 됨:
+        # lines.append(f"- [{case_no}, {decision_date}]({url})")
+        text = text.rstrip() + "\n" + "\n".join(lines) + "\n"
+# --- [ADD END] ---
+
     yield ("final", text, [])
+
 
 
 
