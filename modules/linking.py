@@ -555,12 +555,75 @@ def make_pretty_resource_url(kind: str, title: str, **kw) -> str:
     # Fallback
     return "https://law.go.kr"
 
+# ───────────────────────── 판례 링크: 사건번호/판결일자 추출 + URL 생성기
+
+# ex) (2012다89399,20131218), (2012다13507)
+_CASE_NO = r'(?P<no>\d{4}[가-힣]{1,3}\d{1,7})'
+_DATE8   = r'(?P<date>(?:19|20)\d{2}(?:[.\-]?\d{2}){2})'
+
+PAIR_IN_PAREN_PAT = re.compile(rf'\(\s*{_CASE_NO}\s*,\s*(?P<date>\d{{8}})\s*\)')
+DATE_BEFORE_NO_PAT = re.compile(rf'(?P<date>(?:19|20)\d{{2}}[.\-]?\d{{2}}[.\-]?\d{{2}})\s*(?:선고|자)?\s*{_CASE_NO}')
+LONE_NO_PAT = re.compile(_CASE_NO)
+
+def _norm_date8(s: str | None) -> str | None:
+    if not s: 
+        return None
+    s = re.sub(r'\D', '', s)
+    return s if len(s) == 8 else None
+
+def make_case_url(case_no: str, decision_date: str | None = None) -> str:
+    """
+    law.go.kr 판례 한글주소 규칙:
+      - 날짜가 있으면: https://www.law.go.kr/판례/(사건번호,YYYYMMDD)
+      - 없으면:       https://www.law.go.kr/판례/(사건번호)
+    """
+    dd = _norm_date8(decision_date) if decision_date else None
+    return f"https://www.law.go.kr/판례/({case_no},{dd})" if dd else f"https://www.law.go.kr/판례/({case_no})"
+
+def extract_case_citations(text: str) -> list[tuple[str, str | None, str]]:
+    """
+    입력 텍스트에서 판례 사건번호/판결일자를 찾아
+    [(사건번호, YYYYMMDD | None, 링크표시제목)] 형태로 반환
+    """
+    if not text:
+        return []
+    out: list[tuple[str, str | None, str]] = []
+    seen: set[tuple[str, str | None]] = set()
+
+    # 1) (2012다89399,20131218)
+    for m in PAIR_IN_PAREN_PAT.finditer(text):
+        no = m.group('no')
+        dd = _norm_date8(m.group('date'))
+        key = (no, dd)
+        if key not in seen:
+            seen.add(key)
+            out.append((no, dd, f"판례 {no}"))
+
+    # 2) 2013.12.18. 선고 2012다89399
+    for m in DATE_BEFORE_NO_PAT.finditer(text):
+        no = m.group('no')
+        dd = _norm_date8(m.group('date'))
+        key = (no, dd)
+        if key not in seen:
+            seen.add(key)
+            out.append((no, dd, f"판례 {no}"))
+
+    # 3) 사건번호만 단독으로 등장: 2012다13507
+    for m in LONE_NO_PAT.finditer(text):
+        no = m.group('no')
+        key = (no, None)
+        if key not in seen:
+            seen.add(key)
+            out.append((no, None, f"판례 {no}"))
+
+    return out
 
 __all__ = [
-    # primaries
-    "make_pretty_resource_url",
-    # law/article helpers
-    "make_deep_article_url", "resolve_article_url", "extract_article_citations",
-    # case helpers
-    "resolve_case_url", "extract_case_citations",
+    "deep_article_url", "_deep_article_url",
+    "make_deep_article_url", "make_pretty_article_url",
+    "make_pretty_resource_url", "build_korean_resource_url", "build_korean_article_url",
+    "extract_article_citations", "render_article_links", "merge_article_links_block",
+    # ↓↓↓ 여기 추가
+    "extract_case_citations", "make_case_url",
 ]
+
