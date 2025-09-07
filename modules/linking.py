@@ -580,43 +580,72 @@ def make_case_url(case_no: str, decision_date: str | None = None) -> str:
     dd = _norm_date8(decision_date) if decision_date else None
     return f"https://www.law.go.kr/판례/({case_no},{dd})" if dd else f"https://www.law.go.kr/판례/({case_no})"
 
-def extract_case_citations(text: str) -> list[tuple[str, str | None, str]]:
-    """
-    입력 텍스트에서 판례 사건번호/판결일자를 찾아
-    [(사건번호, YYYYMMDD | None, 링크표시제목)] 형태로 반환
-    """
+# --- compatibility shims & helpers (KEEP AT BOTTOM) -----------------
+
+# ① plan_executor가 기대하는 심볼 이름 맞춰주기
+def make_pretty_article_url(law_name: str, article_label: str = "") -> str:
+    # https://www.law.go.kr/법령/건설산업기본법/제83조 같이 구성
+    return make_deep_article_url(law_name, article_label)
+
+build_korean_article_url  = make_pretty_article_url
+build_korean_resource_url = make_pretty_resource_url
+deep_article_url          = make_deep_article_url  # 구버전 호환
+_deep_article_url         = make_deep_article_url  # 구버전 호환
+
+# ② 조문 링크 블록 만들기(본문 하단에 "### 참고 링크(조문)" 삽입)
+def render_article_links(pairs: list[tuple[str, str]]) -> str:
+    lines = []
+    for law, art in pairs[:8]:
+        url = make_deep_article_url(law, art)
+        lines.append(f"- [{law} {art}]({url})")
+    return "\n".join(lines)
+
+def merge_article_links_block(text: str) -> str:
+    pairs = extract_article_citations(text)
+    if not pairs:
+        return text
+    block = "\n".join(["", "### 참고 링크(조문)", render_article_links(pairs), ""])
+    return (text or "").rstrip() + "\n" + block
+
+# ③ 판례: 사용처가 기대하는 2-튜플(사건번호, YYYYMMDD|None) 형태로 맞춤
+import re
+_CASE_NO = r'(?P<no>\d{4}[가-힣]{1,3}\d{1,7})'
+DATE_PAIR   = re.compile(rf'\(\s*{_CASE_NO}\s*,\s*(?P<date>\d{{8}})\s*\)')
+DATE_BEFORE = re.compile(rf'(?P<date>(?:19|20)\d{{2}}[.\-]?\d{{2}}[.\-]?\d{{2}})\s*(?:선고|자)?\s*{_CASE_NO}')
+LONE_NO     = re.compile(_CASE_NO)
+
+def _dd8(s: str | None) -> str | None:
+    if not s: return None
+    t = re.sub(r'\D', '', s)
+    return t if len(t) == 8 else None
+
+def extract_case_citations(text: str) -> list[tuple[str, str | None]]:
     if not text:
         return []
-    out: list[tuple[str, str | None, str]] = []
+    out: list[tuple[str, str | None]] = []
     seen: set[tuple[str, str | None]] = set()
 
-    # 1) (2012다89399,20131218)
-    for m in PAIR_IN_PAREN_PAT.finditer(text):
-        no = m.group('no')
-        dd = _norm_date8(m.group('date'))
-        key = (no, dd)
+    for m in DATE_PAIR.finditer(text):
+        key = (m.group('no'), _dd8(m.group('date')))
         if key not in seen:
-            seen.add(key)
-            out.append((no, dd, f"판례 {no}"))
+            seen.add(key); out.append(key)
 
-    # 2) 2013.12.18. 선고 2012다89399
-    for m in DATE_BEFORE_NO_PAT.finditer(text):
-        no = m.group('no')
-        dd = _norm_date8(m.group('date'))
-        key = (no, dd)
+    for m in DATE_BEFORE.finditer(text):
+        key = (m.group('no'), _dd8(m.group('date')))
         if key not in seen:
-            seen.add(key)
-            out.append((no, dd, f"판례 {no}"))
+            seen.add(key); out.append(key)
 
-    # 3) 사건번호만 단독으로 등장: 2012다13507
-    for m in LONE_NO_PAT.finditer(text):
-        no = m.group('no')
-        key = (no, None)
+    for m in LONE_NO.finditer(text):
+        key = (m.group('no'), None)
         if key not in seen:
-            seen.add(key)
-            out.append((no, None, f"판례 {no}"))
-
+            seen.add(key); out.append(key)
     return out
+
+def make_case_url(case_no: str, decision_date: str | None = None) -> str:
+    dd = _dd8(decision_date)
+    base = "https://www.law.go.kr/판례"
+    return f"{base}/({case_no},{dd})" if dd else f"{base}/({case_no})"
+
 
 __all__ = [
     "deep_article_url", "_deep_article_url",
