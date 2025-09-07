@@ -262,29 +262,37 @@ KEY_PREFIX = "main"
 
 # [PATCH] app.py — _init_engine_lazy 교정
 def _init_engine_lazy():
-    import streamlit as st
+    import streamlit as st, os
     if "engine" in st.session_state and st.session_state.engine is not None:
         return st.session_state.engine
 
-    g = globals()
-    c      = g.get("client")
-    az     = g.get("AZURE")
-    tools  = g.get("TOOLS")
+    # 1) LLM 클라이언트 확보 (Azure → OpenAI 순 폴백)
+    try:
+        c = globals().get("client")
+        if not c:
+            from app import get_llm_client  # 이 파일에 이미 정의됨
+            c = get_llm_client()
+    except Exception:
+        c = None
 
-    # 필수 요소 확인
-    if not (c and az):
+    # 2) 모델명 결정: Azure 배포명이 있으면 그걸, 없으면 OPENAI_MODEL/기본값
+    az = globals().get("AZURE") or {}
+    model = (az.get("deployment") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini")
+
+    if not c:
         st.session_state.engine = None
         return None
 
-    # AdviceEngine은 (client, model, temperature=..., tools=...)만 받음
+    # 3) AdviceEngine은 client/model/temperature/tools만 받습니다.
     from modules import AdviceEngine
     st.session_state.engine = AdviceEngine(
         client=c,
-        model=az["deployment"],
-        tools=tools,
+        model=model,
         temperature=0.0,
+        tools=None,
     )
     return st.session_state.engine
+
 
 
 DEBUG = st.sidebar.checkbox("DRF 디버그", value=False, key="__debug__")
@@ -410,7 +418,10 @@ def ask_llm_with_tools(
     from modules.router_llm import make_plan_with_llm
     from modules.plan_executor import execute_plan
     if wants_verbatim(user_q):
-        plan = make_plan_with_llm(client, user_q, model=AZURE["deployment"])  # 라우터는 T=0
+        mdl = (AZURE.get("deployment") if AZURE else os.getenv("OPENAI_MODEL") or "gpt-4o-mini")
+        cli = globals().get("client") or get_llm_client()
+        plan = make_plan_with_llm(cli, user_q, model=mdl)
+
         if plan.get("action") == "GET_ARTICLE" and plan.get("law_name") and plan.get("article_label"):
             res = execute_plan(plan)  # 딥링크 스크랩으로 원문 확보
             if res.get("type") == "article" and res.get("body_text"):
@@ -1072,7 +1083,7 @@ def render_pre_chat_center():
         st.session_state["_pending_user_nonce"] = time.time_ns()
         st.rerun()
 
-# ── DROP-IN REPLACE: render_related_laws_block (self-contained, no NameError)
+
 def render_related_laws_block(*, user_q: str, answer_text: str,
                               primary_pair=None, fallback_law_names=None, limit: int = 8):
     import re
@@ -1242,6 +1253,12 @@ def render_related_resources_block(*, user_q: str, answer_text: str, limit_per_k
         extract_case_citations,     # 판례
         make_pretty_resource_url,   # 1~35 전 범주 한글주소 생성기
     )
+    render_related_resources_block(
+        user_q=(last_q or {}).get("content",""),
+        answer_text=st.session_state.get("__last_answer_text__", ""),
+        groups=st.session_state.get("__auto_resources__", []),
+        limit=30
+)
 
     def _extract_resource_jsons(text: str):
         """답변 안의 ```json``` 코드블록/세션 힌트에서 resources 추출."""
@@ -4238,9 +4255,9 @@ if user_q:
     try:
         st.session_state["__auto_resources__"] = llm_build_resource_hints(
             (last_q or {}).get("content", ""), final_text, max_items=30
-    )
+        )
     except Exception:
-        pass  # 실패해도 법령/판례 자동추출로 최소 표시됨
+        st.session_state["__auto_resources__"] = []
 
     st.session_state["__last_answer_text__"]    = final_text
     st.session_state["__last_collected_laws__"] = collected_laws or []
