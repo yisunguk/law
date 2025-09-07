@@ -41,6 +41,9 @@ _VERBATIM_PAT = re.compile(
     re.I
 )
 
+def make_case_url(case_no: str, decision_date: str | None = None) -> str:
+    return build_scourt_link(case_no)
+
 def wants_verbatim(user_text: str) -> bool:
     return bool(_VERBATIM_PAT.search((user_text or "").strip()))
 
@@ -1253,12 +1256,13 @@ def render_related_resources_block(*, user_q: str, answer_text: str, limit_per_k
         extract_case_citations,     # 판례
         make_pretty_resource_url,   # 1~35 전 범주 한글주소 생성기
     )
+    # (함수 정의는 그대로 두고 … 답변/요약을 만든 뒤 아래처럼 호출)
     render_related_resources_block(
-        user_q=(last_q or {}).get("content",""),
+        user_q=(last_q or {}).get("content", ""),
         answer_text=st.session_state.get("__last_answer_text__", ""),
-        groups=st.session_state.get("__auto_resources__", []),
-        limit=30
-)
+        limit_per_kind=30
+    )
+
 
     def _extract_resource_jsons(text: str):
         """답변 안의 ```json``` 코드블록/세션 힌트에서 resources 추출."""
