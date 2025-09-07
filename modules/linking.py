@@ -57,19 +57,43 @@ deep_article_url    = make_deep_article_url
 _deep_article_url   = make_deep_article_url
 
 # =============== Article citation (조문) ===============
-_LAW_PICK = re.compile(r"[\w\(\)\-·가-힣]+법(?:시행령|시행규칙)?")
+_LAW_PICK = re.compile(
+    r'(?:^|[\s\'"“”‘’\(\[\{「『])'      # 시작 or 분리자
+    r'(?:은|는|이|가|을|를|과|와|및|또는)?\s*'  # 선택적 조사
+    r'([A-Za-z0-9\(\)\-·가-힣]+법(?:시행령|시행규칙)?)'  # ← 여기만 캡처
+)
 _ART_PICK = re.compile(r"제\s*\d+\s*조(?:의\s*\d+)?(?:\s*제\s*\d+\s*항)?")
 
 def extract_article_citations(text: str) -> List[Tuple[str, str]]:
+    """
+    텍스트에서 (법령명, 조문라벨) 목록을 뽑습니다.
+    - 앞에 붙은 조사/따옴표/괄호 등은 무시
+    - 같은 (법령, 조문) 쌍은 중복 제거
+    """
     if not text:
         return []
     out: List[Tuple[str, str]] = []
+    seen: set[Tuple[str, str]] = set()
+
     for lm in _LAW_PICK.finditer(text):
-        law = lm.group(0)
-        tail = text[lm.end(): lm.end() + 60]
+        law = lm.group(1)                  # 캡처된 법령명만 사용
+        # 법령명 정상화(약칭→정식명 등 필요시 _normalize_law_name 사용)
+        law = _normalize_law_name(law)
+
+        # 법령명 직후 60자 근방에서 조문 패턴 탐색
+        tail = text[lm.end(): lm.end() + 80]
         am = _ART_PICK.search(tail)
-        if am:
-            out.append((law, am.group(0)))
+        if not am:
+            continue
+        art = am.group(0)
+        art = _norm_art(art)
+
+        key = (law, art)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+
     return out
 
 def render_article_links(pairs: List[Tuple[str, str]]) -> str:
