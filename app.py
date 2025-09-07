@@ -940,6 +940,8 @@ def _push_user_from_pending() -> str | None:
         except Exception:
             pass
 
+
+
     def _try_extract(name, src, mime):
         txt = ""
         try:
@@ -2176,30 +2178,28 @@ import os, streamlit as st
 os.environ.setdefault("LAW_API_OC", st.secrets.get("LAW_API_OC", ""))
 
 
+# === get_llm_client() 전체 교체 ===
 def get_llm_client():
-    # 기존 load_secrets() 쓰시던 구조면 그대로 사용
+    from openai import OpenAI as _OpenAI, AzureOpenAI as _AzureOpenAI
     try:
-        from modules.advice_engine import load_secrets  # 프로젝트에 이미 있을 가능성 높음
+        from modules.advice_engine import load_secrets
     except Exception:
         load_secrets = lambda: (os.environ.get("OPENAI_API_KEY"), {
             "api_key": os.environ.get("AZURE_OPENAI_API_KEY"),
             "api_version": os.environ.get("AZURE_OPENAI_API_VERSION"),
             "endpoint": os.environ.get("AZURE_OPENAI_ENDPOINT"),
         })
-
     OPENAI_KEY, AZURE = load_secrets()
-    if AZURE and AzureOpenAI and AZURE.get("api_key"):
-        return AzureOpenAI(
+    if AZURE and _AzureOpenAI and AZURE.get("api_key"):
+        return _AzureOpenAI(
             api_key=AZURE["api_key"],
             api_version=AZURE["api_version"],
             azure_endpoint=AZURE["endpoint"]
         )
-    if OpenAI and (OPENAI_KEY or os.environ.get("OPENAI_API_KEY")):
-        return OpenAI()
+    if _OpenAI and (OPENAI_KEY or os.environ.get("OPENAI_API_KEY")):
+        return _OpenAI()
     raise RuntimeError("LLM client 초기화 실패: 환경변수/시크릿을 확인하세요.")
 
-if client is None:
-    client = get_llm_client()
 
 
 import os
@@ -2318,11 +2318,10 @@ def _call_moleg_list(target: str, query: str, num_rows: int = 10, page_no: int =
 # 통합 미리보기 전용: 과한 문장부호/따옴표 제거 + '법령명 (제n조)'만 추출
 def _clean_query_for_api(q: str) -> str:
     q = (q or "").strip()
-    q = re.sub(r'[“”"\'‘’.,!?()<>\\[\\]{}:;~…]', ' ', q)
-    q = re.sub(r'\\s+', ' ', q).strip()
-    # 법령명(OO법/령/규칙/조례) + (제n조) 패턴
-    name = re.search(r'([가-힣A-Za-z0-9·\\s]{1,40}?(법|령|규칙|조례))', q)
-    article = re.search(r'제\\d+조(의\\d+)?', q)
+    q = re.sub(r'[“”"\'‘’.,!?()<>\[\]{}:;~…]', ' ', q)
+    q = re.sub(r'\s+', ' ', q).strip()
+    name = re.search(r'([가-힣A-Za-z0-9·\s]{1,40}?(법|령|규칙|조례))', q)
+    article = re.search(r'제\d+조(의\d+)?', q)
     if name and article: return f"{name.group(0).strip()} {article.group(0)}"
     if name: return name.group(0).strip()
     return q
