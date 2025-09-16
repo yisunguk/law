@@ -375,7 +375,7 @@ def build_drf_link(
 import json, streamlit as st
 from typing import List, Dict
 
-# [PATCH] app.py — ask_llm_with_tools 교정 (의도 분류 추가)
+# === [PATCH] app.py — ask_llm_with_tools (견고 버전) ===
 def ask_llm_with_tools(
     user_q: str,
     num_rows: int = 5,
@@ -383,103 +383,116 @@ def ask_llm_with_tools(
     forced_mode: str | None = None,
     brief: bool = False,
 ):
-    engine = _init_engine_lazy() if "_init_engine_lazy" in globals() else globals().get("engine")
-    if engine is None:
-        yield ("final", "엔진이 아직 초기화되지 않았습니다. (client/AZURE/TOOLS 확인)", [])
+    import traceback
+    import json as _json
+    from typing import List, Dict
+    import streamlit as st
+
+    # 0) 가드: 입력 확인
+    if not (user_q or "").strip():
+        yield ("final", "질문이 비어 있습니다. 내용을 입력해 주세요.", [])
         return
 
-    # 1) 모드 결정
-    from modules import Intent, classify_intent, pick_mode, build_sys_for_mode
-
-    valid = {Intent.QUICK, Intent.LAWFINDER, Intent.MEMO, Intent.DRAFT}
-
-    # ✅ 추가: 사용자 질문으로 의도/신뢰도 산출
-    det_intent, conf = classify_intent(user_q)  # <-- 이 줄이 없어서 NameError가 났습니다.
-
-    # ✅ 강제 모드가 없으면 의도 기반으로 선택
-    mode = forced_mode if (forced_mode in valid) else pick_mode(det_intent, conf)
-    st.session_state["__intent__"] = mode
-
-    # 2) 시스템 프롬프트 생성 (툴 사용 여부는 내부 정책 유지)
-    use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
-    sys_prompt = build_sys_for_mode(mode, brief=brief)
-
-  
-    # 2.5) 최근 히스토리 구성 (user/assistant만)
+    # 1) 엔진 확보 (실패 시 메시지 리턴)
     try:
-        msgs = st.session_state.get("messages", [])
-        _hist: List[Dict[str, str]] = []
-        for _m in msgs:
-            if isinstance(_m, dict):
-                _r = _m.get("role"); _c = (_m.get("content") or "").strip()
-                if _r in ("user", "assistant") and _c:
-                    _hist.append({"role": _r, "content": _c})
-        HISTORY_LIMIT = int(st.session_state.get("__history_limit__", 6))
-        history = _hist[-HISTORY_LIMIT:]
+        engine = _init_engine_lazy()
+    except Exception as e:
+        tb = traceback.format_exc(limit=2)
+        yield ("final", f"엔진 초기화 실패: {e}\n\n```\n{tb}\n```", [])
+        return
+    if engine is None:
+        yield ("final", "엔진이 아직 초기화되지 않았습니다. (Azure/OpenAI/Secrets 설정 확인)", [])
+        return
+
+    # 2) 의도 분류 → 모드 결정 (det_intent 미정의 방지)
+    try:
+        from modules import Intent, classify_intent, pick_mode, build_sys_for_mode
+        valid = {Intent.QUICK, Intent.LAWFINDER, Intent.MEMO, Intent.DRAFT}
+        det_intent, conf = classify_intent(user_q)       # ← 반드시 먼저!
+        mode = forced_mode if (forced_mode in valid) else pick_mode(det_intent, conf)
+        st.session_state["__intent__"] = mode
+        use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
+        sys_prompt = build_sys_for_mode(mode, brief=brief)
+    except Exception as e:
+        tb = traceback.format_exc(limit=2)
+        yield ("final", f"의도 분류/모드 결정 중 오류: {e}\n\n```\n{tb}\n```", [])
+        return
+
+    # 3) 최근 히스토리(간단) 준비
+    try:
+        msgs = st.session_state.get("messages", []) or []
+        history: List[Dict[str, str]] = []
+        for m in msgs[-8:]:
+            if isinstance(m, dict) and (m.get("role") in ("user","assistant")):
+                c = (m.get("content") or "").strip()
+                if c:
+                    history.append({"role": m["role"], "content": c})
     except Exception:
         history = []
-    # 2.7) '원문/본문 그대로' 요청이면 라우터+스크레이퍼로 강제 처리
-    from modules.router_llm import make_plan_with_llm
-    from modules.plan_executor import execute_plan
-    if wants_verbatim(user_q):
-        mdl = (AZURE.get("deployment") if AZURE else os.getenv("OPENAI_MODEL") or "gpt-4o-mini")
-        cli = globals().get("client") or get_llm_client()
-        plan = make_plan_with_llm(cli, user_q, model=mdl)
 
-        if plan.get("action") == "GET_ARTICLE" and plan.get("law_name") and plan.get("article_label"):
-            res = execute_plan(plan)  # 딥링크 스크랩으로 원문 확보
-            if res.get("type") == "article" and res.get("body_text"):
-                law, art = res["law"], res["article_label"]
-                body, url = res["body_text"], res.get("source_url","")
-                text = f"「{law}」 {art} 본문은 아래와 같습니다.\n\n{body}\n\n[원문 보기]({url})"
-                yield ("final", text, [{"법령명": law, "법령상세링크": url}])
-                return
- 
-    # 3) AdviceEngine.generate(messages, stream=...)에 맞춰 메시지 준비
+    # 4) “원문 그대로” 요청시 라우터 실행(실패해도 소프트 에러로 통과)
+    try:
+        if wants_verbatim(user_q):
+            az = globals().get("AZURE") or {}
+            mdl = (az.get("deployment") if az else os.getenv("OPENAI_MODEL") or "gpt-4o-mini")
+            cli = globals().get("client") or get_llm_client()
+            plan = make_plan_with_llm(cli, user_q, model=mdl)
+            if plan.get("action") == "GET_ARTICLE" and plan.get("law_name") and plan.get("article_label"):
+                res = execute_plan(plan)
+                if res.get("type") == "article" and res.get("body_text"):
+                    law, art = res["law"], res["article_label"]
+                    body, url = res["body_text"], res.get("source_url", "")
+                    text = f"「{law}」 {art} 본문은 아래와 같습니다.\n\n{body}\n\n[원문 보기]({url})"
+                    st.session_state["__last_answer_text__"] = text
+                    yield ("final", text, [{"법령명": law, "법령상세링크": url}])
+                    return
+    except Exception:
+        # 라우터 실패는 무시하고 일반 답변으로 진행
+        pass
+
+    # 5) LLM 메시지 조립
     messages: List[Dict[str, str]] = []
     if sys_prompt:
         messages.append({"role": "system", "content": sys_prompt})
-    # 필요 시, 과거 대화의 압축/전사 텍스트를 system으로 주입 (폴백)
     if history:
         transcript = "\n".join(
             f"{'사용자' if h['role']=='user' else '어시스턴트'}: {h['content']}"
-            for h in history
+            for h in history[-6:]
         )
         messages.append({"role": "system", "content": f"[최근 대화 일부]\n{transcript}"})
-    # 이번 사용자 입력
     messages.append({"role": "user", "content": user_q})
 
-    # 4) 실제 호출
+    # 6) 답변 생성 (모든 예외를 잡아 사용자에게 보여줌)
     try:
         text = engine.generate(messages, stream=stream)
     except Exception as e:
-        text = f"죄송합니다. 답변 생성 중 오류가 발생했습니다: {e}"
+        tb = traceback.format_exc(limit=6)
+        text = f"죄송합니다. 답변 생성 중 오류가 발생했습니다.\n\n**원인**: {e}\n\n```\n{tb}\n```"
 
-# --- [ADD] 후처리: 조문/판례 링크 자동 부착 ---
-    from modules.linking import (
-        merge_article_links_block,
-        extract_case_citations,
-        make_case_url,   # 판례 URL 빌더
-)
+    # 7) 후처리: 조문/판례 링크 부착(임포트/변수 가드 포함)
+    try:
+        from modules.linking import merge_article_links_block, extract_case_citations, make_case_url
+        try:
+            text = merge_article_links_block(text)
+        except Exception:
+            pass
+        try:
+            cases = extract_case_citations(user_q + "\n" + (text or ""))
+            if cases:
+                lines = ["", "### 참고 링크(판례)"]
+                for case_no, decision_date in cases[:8]:
+                    url = make_case_url(case_no=case_no, decision_date=decision_date)
+                    lines.append(f"- {url}")
+                text = (text or "").rstrip() + "\n" + "\n".join(lines) + "\n"
+        except Exception:
+            pass
+    except Exception:
+        # linking 모듈이 바뀐 경우에도 본문만 반환
+        pass
 
-# 1) 조문 링크 자동 부착 ("### 참고 링크(조문)" 블록을 본문 끝에 삽입)
-    text = merge_article_links_block(text)
-
-# 2) 판례 링크 자동 부착
-    cases = extract_case_citations(user_q + "\n" + text)  # 질문+답변에서 사건번호/선고일 추출
-    if cases:
-        lines = ["", "### 참고 링크(판례)"]
-        for case_no, decision_date in cases[:8]:
-            url = make_case_url(case_no=case_no, decision_date=decision_date)
-        # 정답지 요구대로 URL 자체를 그대로 노출하려면 아래처럼:
-            lines.append(f"- {url}")
-        # 마크다운 링크로 보이게 하려면 이렇게 바꿔도 됨:
-        # lines.append(f"- [{case_no}, {decision_date}]({url})")
-        text = text.rstrip() + "\n" + "\n".join(lines) + "\n"
-# --- [ADD END] ---
-
+    # 8) 세션 저장 + 최종 산출
+    st.session_state["__last_answer_text__"] = text
     yield ("final", text, [])
-
 
 
 
