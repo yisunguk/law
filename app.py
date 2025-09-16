@@ -375,6 +375,7 @@ def build_drf_link(
 import json, streamlit as st
 from typing import List, Dict
 
+# [PATCH] app.py — ask_llm_with_tools 교정 (의도 분류 추가)
 def ask_llm_with_tools(
     user_q: str,
     num_rows: int = 5,
@@ -391,14 +392,19 @@ def ask_llm_with_tools(
     from modules import Intent, classify_intent, pick_mode, build_sys_for_mode
 
     valid = {Intent.QUICK, Intent.LAWFINDER, Intent.MEMO, Intent.DRAFT}
+
+    # ✅ 추가: 사용자 질문으로 의도/신뢰도 산출
+    det_intent, conf = classify_intent(user_q)  # <-- 이 줄이 없어서 NameError가 났습니다.
+
+    # ✅ 강제 모드가 없으면 의도 기반으로 선택
     mode = forced_mode if (forced_mode in valid) else pick_mode(det_intent, conf)
     st.session_state["__intent__"] = mode
-
 
     # 2) 시스템 프롬프트 생성 (툴 사용 여부는 내부 정책 유지)
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
     sys_prompt = build_sys_for_mode(mode, brief=brief)
 
+  
     # 2.5) 최근 히스토리 구성 (user/assistant만)
     try:
         msgs = st.session_state.get("messages", [])
