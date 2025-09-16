@@ -9,28 +9,32 @@ class AdviceEngine:
         self.temperature = temperature
         self._tools_ignored = tools
 
+    # advice_engine.py
     def scc(
         self,
         client,
         *,
-        messages: List[Dict[str, str]],
-        model: str,
-        stream: bool,
-        allow_retry: bool,
-        temperature: float,
-        max_tokens: int,
+        messages,
+        model,
+        stream,
+        allow_retry,
+        temperature,
+        max_tokens,
         tools=None,
     ):
-        # 단순 래퍼: 안전가드(safe_chat_completion)를 쓰지 않고
-        # 클린하게 OpenAI API만 호출 (상위에서 이미 필터링/가드 적용한 상태 가정)
+        kwargs = {}
+        if tools:  # <-- None이면 보내지 않음
+            kwargs["tools"] = tools
+
         return client.chat.completions.create(
             model=model,
             messages=messages,
             stream=stream,
             temperature=temperature,
             max_tokens=max_tokens,
-            tools=tools,
+            **kwargs,
         )
+
 
     def generate(self, messages: List[Dict[str, str]], *, stream: bool = True) -> str:
         # 도구는 이미 실행/반영되었다는 전제를 모델에 명시

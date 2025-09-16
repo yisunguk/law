@@ -3409,31 +3409,6 @@ TOOLS = [
 #               사이드바/레이아웃 렌더링이 시작되기 "위"
 # ============================
 
-# 2) 엔진 생성 (한 번만)
-engine = None
-try:
-    # 아래 객체들은 app.py 상단에서 이미 정의되어 있어야 합니다.
-    # - client, AZURE, TOOLS
-    # - safe_chat_completion
-    # - tool_search_one, tool_search_multi
-    # - prefetch_law_context, _summarize_laws_for_primer
-    if client and AZURE and TOOLS:
-        engine = AdviceEngine(
-            client=client,
-            model=AZURE["deployment"],
-            tools=TOOLS,
-            safe_chat_completion=safe_chat_completion,
-            tool_search_one=tool_search_one,
-            tool_search_multi=tool_search_multi,
-            prefetch_law_context=prefetch_law_context,            # 있으면 그대로
-            summarize_laws_for_primer=_summarize_laws_for_primer, # 있으면 그대로
-            temperature=0.0,
-        )
-except NameError:
-    # 만약 위 객체들이 아직 정의되기 전 위치라면,
-    # 이 패치를 해당 정의 '아래'로 옮겨 붙이세요.
-    pass
-
 # =============================
 # 키워드 기본값/위젯 헬퍼 (with st.sidebar: 위에 배치)
 # =============================
