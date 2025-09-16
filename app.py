@@ -41,9 +41,6 @@ _VERBATIM_PAT = re.compile(
     re.I
 )
 
-def make_case_url(case_no: str, decision_date: str | None = None) -> str:
-    return build_scourt_link(case_no)
-
 def wants_verbatim(user_text: str) -> bool:
     return bool(_VERBATIM_PAT.search((user_text or "").strip()))
 
@@ -391,14 +388,12 @@ def ask_llm_with_tools(
         return
 
     # 1) 모드 결정
-    from modules import Intent, classify_intent, build_sys_for_mode  # 지연 임포트
-    det_intent, conf = classify_intent(user_q)
-    try:
-        valid = {m.value for m in Intent}
-        mode = Intent(forced_mode) if forced_mode in valid else pick_mode(det_intent, conf)
-    except Exception:
-        mode = pick_mode(det_intent, conf)
+    from modules import Intent, classify_intent, pick_mode, build_sys_for_mode
+
+    valid = {Intent.QUICK, Intent.LAWFINDER, Intent.MEMO, Intent.DRAFT}
+    mode = forced_mode if (forced_mode in valid) else pick_mode(det_intent, conf)
     st.session_state["__intent__"] = mode
+
 
     # 2) 시스템 프롬프트 생성 (툴 사용 여부는 내부 정책 유지)
     use_tools = mode in (Intent.LAWFINDER, Intent.MEMO)
@@ -1249,21 +1244,23 @@ if SHOW_DEBUG:
 # NEW: 35개 전 범주 "관련 자료" 통합 블록
 # ──────────────────────────────────────────────────────────────────────────────
 def render_related_resources_block(*, user_q: str, answer_text: str, limit_per_kind: int = 8):
+    """
+    질문/답변에서 (1) JSON 힌트와 (2) 본문 패턴을 기반으로
+    법령/판례 포함 law.go.kr 전 범주(1~35)의 관련 자료 링크를 묶어서 렌더링.
+    """
     import json, re
     import streamlit as st
     from modules.linking import (
-        extract_article_citations,  # 법령 조문
-        extract_case_citations,     # 판례
-        make_pretty_resource_url,   # 1~35 전 범주 한글주소 생성기
-    )
-    # (함수 정의는 그대로 두고 … 답변/요약을 만든 뒤 아래처럼 호출)
-    render_related_resources_block(
-        user_q=(last_q or {}).get("content", ""),
-        answer_text=st.session_state.get("__last_answer_text__", ""),
-        limit_per_kind=30
+        extract_article_citations,   # (법령명, 조문라벨) 리스트
+        extract_case_citations,      # (사건번호, 선고일?) 리스트
+        make_pretty_resource_url,    # 1~35 전 범주 한글주소 생성기
     )
 
+    # --- 안전 가드: 값이 비면 아무 것도 안 함
+    if not ((user_q or "").strip() or (answer_text or "").strip()):
+        return
 
+    # --- 답변 본문/세션 힌트에서 resources json 추출
     def _extract_resource_jsons(text: str):
         """답변 안의 ```json``` 코드블록/세션 힌트에서 resources 추출."""
         items = []
@@ -1280,12 +1277,14 @@ def render_related_resources_block(*, user_q: str, answer_text: str, limit_per_k
                 pass
         return items
 
+    # --- 수집 컨테이너
     groups: dict[str, list[tuple[str, str]]] = {}
     def _add(kind: str, label: str, url: str):
-        if not (kind and label and url): return
+        if not (kind and label and url):
+            return
         groups.setdefault(kind, []).append((label, url))
 
-    # 1) JSON 힌트 → URL
+    # 1) JSON 힌트 → URL 변환
     hints = _extract_resource_jsons(answer_text)
     for r in hints:
         kind  = (r.get("kind") or r.get("type") or "").strip()
@@ -1306,6 +1305,7 @@ def render_related_resources_block(*, user_q: str, answer_text: str, limit_per_k
     if not groups:
         return
 
+    # 표시 순서 (판례 우선 → 법령/기타 1~35 카테고리)
     order = [
         "판례",
         "법령","영문법령","행정규칙","자치법규","학칙공단","조약",
@@ -1320,18 +1320,21 @@ def render_related_resources_block(*, user_q: str, answer_text: str, limit_per_k
         "조세심판재결례","특허심판재결례","해양안전심판재결례",
     ]
 
+    # --- 렌더링
     st.markdown("### 관련 자료")
     for kind in order:
         items = groups.get(kind, [])
-        if not items: 
+        if not items:
             continue
-        seen = set(); shown = 0
+        seen = set()
+        shown = 0
         st.markdown(f"#### {kind}")
         for label, url in items:
-            if url in seen: 
+            if url in seen:
                 continue
             st.markdown(f"- [{label}]({url})")
-            seen.add(url); shown += 1
+            seen.add(url)
+            shown += 1
             if shown >= limit_per_kind:
                 break
 
