@@ -1,14 +1,32 @@
 # modules/advice_engine.py — COMPLETE
 from __future__ import annotations
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import time
 
 class AdviceEngine:
-    def __init__(self, client, *, model: str, temperature: float = 0.3, tools=None):
+    def __init__(self, client, model: str, temperature: float = 0.0, tools: Optional[dict] = None):
         self.client = client
         self.model = model
         self.temperature = temperature
-        self._tools_ignored = tools
+        self.tools = tools or None
+
+    def scc(self, text: str) -> str:
+        text = (text or "").strip()
+        # 필요 시 후처리 규칙(중복 개행/공백 정리 등)만 남기고 간단히 유지
+        while "\n\n\n" in text:
+            text = text.replace("\n\n\n", "\n\n")
+        return text
+
+    def generate(self, messages: List[Dict[str, str]], stream: bool = False) -> str:
+        # client는 AzureOpenAI 또는 OpenAI 호환 객체 (chat.completions.create 제공)
+        resp = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=self.temperature,
+        )
+        txt = (resp.choices[0].message.content or "").strip()
+        return self.scc(txt)
+
 
    # advice_engine.py — AdviceEngine 클래스 안
 def scc(
