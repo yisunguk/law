@@ -2276,74 +2276,40 @@ def fix_links_with_lawdata(markdown: str, law_data: list[dict]) -> str:
         return m.group(0)
     return pat.sub(repl, markdown)
 
-# =============================
-# Secrets / Clients / Session
-# =============================
-LAW_API_KEY, AZURE = load_secrets()
-
-# 👉 OC 브릿지: law_fetch.py가 환경변수에서만 OC를 읽으므로 여기서 연결
-import os, streamlit as st
-try:
-    _oc = st.secrets.get("LAW_API_OC", "")
-except Exception:
-    _oc = ""
-if _oc and not os.environ.get("LAW_API_OC"):
-    os.environ["LAW_API_OC"] = _oc  # DRF 호출용
-
-# Azure 클라이언트 초기화 (그대로 두되, 예외 시 폴백 로깅 유지)
-client = None
-if AZURE:
-    try:
-        from openai import AzureOpenAI
-        client = AzureOpenAI(
-            api_key=AZURE["api_key"],
-            api_version=AZURE["api_version"],
-            azure_endpoint=AZURE["endpoint"],
-        )
-    except Exception as e:
-        st.warning(f"Azure 초기화 실패, OpenAI로 폴백합니다: {e}")
-
-
-
-    # app.py — Secrets 로딩 바로 다음
-import os, streamlit as st
-os.environ.setdefault("LAW_API_OC", st.secrets.get("LAW_API_OC", ""))
-
-
 # === get_llm_client() 전체 교체 ===
 def get_llm_client():
-    from openai import OpenAI as _OpenAI, AzureOpenAI as _AzureOpenAI
+    """Azure OpenAI 클라이언트 생성(시크릿 기본값 포함, 필요 시 환경변수로 오버라이드)"""
+    global client, LLM_DEFAULT_MODEL, LLM_ROUTER_MODEL
+
     try:
-        from modules.advice_engine import load_secrets
-    except Exception:
-        load_secrets = lambda: (os.environ.get("OPENAI_API_KEY"), {
-            "api_key": os.environ.get("AZURE_OPENAI_API_KEY"),
-            "api_version": os.environ.get("AZURE_OPENAI_API_VERSION"),
-            "endpoint": os.environ.get("AZURE_OPENAI_ENDPOINT"),
-        })
-    OPENAI_KEY, AZURE = load_secrets()
-    if AZURE and _AzureOpenAI and AZURE.get("api_key"):
-        return _AzureOpenAI(
-            api_key=AZURE["api_key"],
-            api_version=AZURE["api_version"],
-            azure_endpoint=AZURE["endpoint"]
-        )
-    if _OpenAI and (OPENAI_KEY or os.environ.get("OPENAI_API_KEY")):
-        return _OpenAI()
-    raise RuntimeError("LLM client 초기화 실패: 환경변수/시크릿을 확인하세요.")
+        if "client" in globals() and client is not None:
+            return client
+    except NameError:
+        pass
 
-
-
-import os
-try:
-    from openai import OpenAI
+    import os
     from openai import AzureOpenAI
-except Exception:
-    OpenAI = None
-    AzureOpenAI = None
-# =============================
-# MOLEG API (Law Search) — unified
-# =============================
+
+    # ▼ 기본값: 사용자가 준 시크릿 (환경변수 있으면 그 값이 우선)
+    endpoint      = os.getenv("AZURE_OPENAI_ENDPOINT", "https://enc-dev-meu-aitest.openai.azure.com/")
+    api_key       = os.getenv("AZURE_OPENAI_API_KEY",  "REMOVED")
+    api_version   = os.getenv("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")
+    deploy        = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-leesunguk")
+    router_deploy = os.getenv("AZURE_OPENAI_ROUTER_DEPLOYMENT", "gpt-4o-leesunguk")
+
+    # Azure OpenAI 클라이언트
+    client = AzureOpenAI(
+        azure_endpoint=endpoint,
+        api_key=api_key,
+        api_version=api_version,
+    )
+
+    # 전역 모델명(= Azure 배포명)
+    LLM_DEFAULT_MODEL = deploy
+    LLM_ROUTER_MODEL  = router_deploy or deploy
+
+    return client
+
 import ssl
 from urllib3.poolmanager import PoolManager
 
@@ -4165,39 +4131,54 @@ kind와 필드 매핑(필요한 것만 채워라):
 """
 
 def llm_build_resource_hints(user_q: str, answer_text: str, max_items: int = 30):
-    """Azure OpenAI로 35개 전 범주 'resources' JSON을 생성."""
+    """
+    35개 전 범주 'resources' JSON을 생성.
+    - AzureOpenAI 클라이언트를 이 함수 안에서 새로 만들지 않고,
+      app.get_llm_client()의 중앙 클라이언트를 사용합니다.
+    - 라우터용 배포명(LLM_ROUTER_MODEL)이 있으면 그걸 우선 사용합니다.
+    """
     import os, json
-    import streamlit as st
+
+    # ✅ 중앙화된 클라이언트/모델명 사용(중복 초기화 방지)
     try:
-        from openai import AzureOpenAI
+        # 내부 import로 순환 의존 방지
+        from app import get_llm_client, LLM_ROUTER_MODEL, LLM_DEFAULT_MODEL
     except Exception:
-        AzureOpenAI = None
+        return []
 
-    prompt = RESOURCES_JSON_PROMPT + "\n\n[질문]\n" + (user_q or "") + "\n\n[답변]\n" + (answer_text or "")
-    # Azure 설정(프로젝트에서 이미 사용 중인 값 재사용)
-    AZ = (getattr(st, "secrets", {}) or {}).get("AZURE", {})
-    api_key = AZ.get("api_key") or os.getenv("AZURE_OPENAI_API_KEY")
-    endpoint = AZ.get("endpoint") or os.getenv("AZURE_OPENAI_ENDPOINT")
-    api_ver  = AZ.get("api_version") or os.getenv("AZURE_OPENAI_API_VERSION") or "2024-06-01"
-    deployment = AZ.get("deployment") or os.getenv("AZURE_OPENAI_DEPLOYMENT")
-
-    if not AzureOpenAI or not all([api_key, endpoint, deployment]):
-        return []  # 환경 안 맞으면 조용히 패스 (법령/판례 자동추출로만 렌더)
-
-    client = AzureOpenAI(api_key=api_key, api_version=api_ver, azure_endpoint=endpoint)
-    resp = client.chat.completions.create(
-        model=deployment,
-        temperature=0,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role":"system","content":"You are a JSON generator for law.go.kr Hangul deep links. Output JSON only."},
-            {"role":"user","content": prompt}
-        ],
+    client = get_llm_client()
+    deployment = (
+        (globals().get("LLM_ROUTER_MODEL") or LLM_ROUTER_MODEL)   # 함수 내부/외부 어느쪽이든 우선
+        or (globals().get("LLM_DEFAULT_MODEL") or LLM_DEFAULT_MODEL)
+        or os.getenv("AZURE_OPENAI_ROUTER_DEPLOYMENT")
+        or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+        or "gpt-4o-leesunguk"  # 최후의 안전값(배포명)
     )
+
+    # 프롬프트 조립
+    prompt = (
+        RESOURCES_JSON_PROMPT
+        + "\n\n[질문]\n"  + (user_q or "")
+        + "\n\n[답변]\n" + (answer_text or "")
+    )
+
     try:
-        obj = json.loads(resp.choices[0].message.content or "{}")
+        resp = client.chat.completions.create(
+            model=deployment,
+            temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a JSON generator for law.go.kr Hangul deep links. Output JSON only."
+                },
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=900,
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+        obj = json.loads(raw) if raw else {}
         arr = obj.get("resources") or []
-        # soft cap
         return arr[:max_items] if isinstance(arr, list) else []
     except Exception:
         return []

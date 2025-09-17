@@ -39,8 +39,7 @@ ROUTER_SYSTEM = """
 6) 사용자가 일상어로 두서없이 묻더라도, 숨은 의도를 추론해 필요한 조문/판례 후보를 candidates에 넣어라.
 7) 판례·재결·위원회 결정 등 법령 외 자료가 핵심이면 "GET_RESOURCE"를 사용하고
    { "kind": "판례|법령해석례|행정심판례|조세심판재결례|..." , "title": "검색어/사건명" } 필드를 채워라.
-+8) "ADVICE"를 택해도 candidates에는 최소 1~3개의 「법령명 + 제n조(의m)」를 넣어라(LLM가이드에 쓰인다).
-
+8) "ADVICE"를 택해도 candidates에는 최소 1~3개의 「법령명 + 제n조(의m)」를 넣어라(LLM가이드에 쓰인다).
 """
 
 # ─────────────────────────────────────────────────────────────────
@@ -108,13 +107,41 @@ def _ensure_defaults(plan: Dict[str, Any]) -> Dict[str, Any]:
 # Public API
 # ─────────────────────────────────────────────────────────────────
 def make_plan_with_llm(client, user_q: str, *, model: str | None = None) -> Dict[str, Any]:
+    """
+    중앙 클라이언트(get_llm_client)와 라우터 전용 배포명(LLM_ROUTER_MODEL)을 사용.
+    - client가 None이면 app.get_llm_client()로 생성
+    - model이 None이면 LLM_ROUTER_MODEL > LLM_DEFAULT_MODEL > 안전값 순으로 선택
+    """
+    # 1) 클라이언트 확보(중앙화된 싱글톤 사용)
+    if client is None:
+        try:
+            from app import get_llm_client
+            client = get_llm_client()
+        except Exception as _:
+            raise RuntimeError("LLM client가 초기화되지 않았습니다.")
+
+    # 2) 모델 선택(배포명)
+    mdl = model
+    if not mdl:
+        try:
+            from app import LLM_ROUTER_MODEL, LLM_DEFAULT_MODEL
+            mdl = (LLM_ROUTER_MODEL or LLM_DEFAULT_MODEL)
+        except Exception:
+            mdl = None
+    if not mdl:
+        mdl = getattr(client, "router_model", None) or getattr(client, "default_model", None)
+    if not mdl:
+        mdl = "gpt-4o-leesunguk"  # 최후의 안전값(사용자 제공 배포명)
+
+    # 3) 호출
     resp = client.chat.completions.create(
-        model=model or getattr(client, "router_model", None) or "gpt-4o-mini",
+        model=mdl,
         messages=[
             {"role": "system", "content": ROUTER_SYSTEM},
             {"role": "user", "content": user_q},
         ],
         temperature=0,
+        max_tokens=900,
     )
     raw = (resp.choices[0].message.content or "").strip()
     plan = _safe_json_loads(raw)

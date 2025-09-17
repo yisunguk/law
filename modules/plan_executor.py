@@ -1,20 +1,35 @@
 # modules/plan_executor.py
 from __future__ import annotations
 from typing import Dict, Any, Tuple
-import re, logging, requests
+import os, re, logging, requests
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+# ─────────────────────────────────────────────────────────────────
+# law.go.kr HTML 스크랩: 재시도 + (선택) 프록시 적용
+# ─────────────────────────────────────────────────────────────────
+PROXY_BASE  = os.getenv("PROXY_BASE", "").strip()          # 예: "http://168.107.17.94"
+PROXY_TOKEN = os.getenv("PROXY_TOKEN", "").strip()         # 예: "Bearer 토큰값"
+
 _SESSION = requests.Session()
 _SESSION.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml",
+    "Accept-Language": "ko,en;q=0.8",
 })
+if PROXY_BASE:
+    _SESSION.proxies.update({"http": PROXY_BASE, "https": PROXY_BASE})
+    if PROXY_TOKEN:
+        _SESSION.headers["Proxy-Authorization"] = f"Bearer {PROXY_TOKEN}"
+
 _RETRY = Retry(
-    total=3, backoff_factor=0.6,
+    total=3,
+    backoff_factor=0.6,
     status_forcelist=(429, 500, 502, 503, 504),
-    allowed_methods=("GET",)
+    allowed_methods=frozenset(["GET"]),
+    raise_on_status=False,
 )
 _SESSION.mount("https://", HTTPAdapter(max_retries=_RETRY))
 _SESSION.mount("http://",  HTTPAdapter(max_retries=_RETRY))
@@ -40,37 +55,27 @@ except Exception:
                 build_korean_article_url as make_pretty_article_url,
             )
 
-
-_HTTP_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-}
-
-# plan_executor.py — [REPLACE] 기존 _fetch_html_soup() 함수 전체 교체
-
-from bs4 import BeautifulSoup
-
+# ─────────────────────────────────────────────────────────────────
+# HTML fetch helpers
+# ─────────────────────────────────────────────────────────────────
 def _fetch_html_soup(url: str) -> BeautifulSoup:
+    """공용 세션으로 가져와 인코딩 보정 + 짧은 응답 1회 재시도."""
     resp = _SESSION.get(url, timeout=25)
     if not resp.encoding or resp.encoding.lower() in ("iso-8859-1", "latin-1"):
         resp.encoding = "utf-8"
     html = resp.text
 
     # 간헐적 빈 응답/차단 페이지 대비: 최소 길이 체크 후 1회 재시도
-    if len(html) < 500:
+    if len(html or "") < 500:
         resp = _SESSION.get(url, timeout=25)
         if not resp.encoding or resp.encoding.lower() in ("iso-8859-1", "latin-1"):
             resp.encoding = "utf-8"
         html = resp.text
 
-    return BeautifulSoup(html, "html.parser")
-
-
-# plan_executor.py — [REPLACE] 본문 컨테이너 선택자 강화
-
-from bs4 import BeautifulSoup  # (파일 상단에 이미 있다면 중복 import는 제거하세요)
+    return BeautifulSoup(html or "", "html.parser")
 
 def _pick_main_node(soup: BeautifulSoup):
+    """페이지 본문 컨테이너 후보들 중 최적 선택."""
     return (
         soup.select_one("#contentBody")
         or soup.select_one("#contentArea")
@@ -87,7 +92,6 @@ def _pick_main_node(soup: BeautifulSoup):
 
 def _clean_lines(text: str) -> str:
     lines = [ln.strip() for ln in (text or "").splitlines()]
-    # 빈 줄 과다 제거
     out, prev_blank = [], False
     for ln in lines:
         is_blank = (ln == "")
@@ -102,7 +106,8 @@ _ART_RE = re.compile(r"제?\s*(\d{1,4})\s*조(?:\s*의\s*(\d{1,3}))?", re.I)
 
 def _norm_article_label(lbl: str) -> str:
     m = _ART_RE.search(lbl or "")
-    if not m: return (lbl or "").strip()
+    if not m:
+        return (lbl or "").strip()
     n, ui = m.group(1), m.group(2)
     return f"제{n}조" + (f"의{ui}" if ui else "")
 
@@ -168,7 +173,6 @@ def fetch_resource_text(
 logger = logging.getLogger("lawbot.plan_executor")
 
 # ── helpers ─────────────────────────────────────────────────────────
-
 def _make_pretty_article_url(law: str, art: str) -> str:
     """가능하면 linking 모듈을 쓰고, 없으면 한글 경로로 직접 구성."""
     try:
@@ -181,7 +185,7 @@ def _make_pretty_article_url(law: str, art: str) -> str:
         except Exception:
             return f"https://www.law.go.kr/법령/{law}/{art}"
 
-# ✅ [REPLACE] modules/plan_executor.py : _slice_article
+# ✅ 조문 블록 슬라이서(정밀)
 def _slice_article(full_text: str, article_label: str) -> str:
     """
     페이지 전체 텍스트에서 해당 조문 블록만 정밀 추출.
@@ -211,26 +215,20 @@ def _slice_article(full_text: str, article_label: str) -> str:
     m3 = re.search(rf"(?m)^({re.escape(label)}[^\n]*\n(?:.+\n)*?)(?=^\s*제\d+조|\n부칙|\Z)", full_text)
     return (m3.group(1).strip() if m3 else "")
 
-
 def _scrape_deeplink(law: str, art: str, timeout: float = 6.0) -> Tuple[str, str]:
     """법제처 한글 주소(딥링크) 페이지를 스크랩해서 해당 조문만 추출."""
     url = _make_pretty_article_url(law, art)
     try:
-        import requests
-        from bs4 import BeautifulSoup
-        r = requests.get(
-            url, timeout=timeout, allow_redirects=True,
-            headers={
-                "User-Agent":"Mozilla/5.0",
-                "Accept":"text/html,application/xhtml+xml",
-                "Accept-Language":"ko-KR,ko;q=0.9",
-            },
+        resp = _SESSION.get(url, timeout=timeout, allow_redirects=True)
+        if not resp.encoding or resp.encoding.lower() in ("iso-8859-1", "latin-1"):
+            resp.encoding = "utf-8"
+        html = resp.text or ""
+        soup = BeautifulSoup(html, "html.parser")
+        main = (
+            soup.select_one("#contentBody") or soup.select_one("#conBody")
+            or soup.select_one("#conScroll") or soup.select_one(".conScroll")
+            or soup.select_one("#content") or soup
         )
-        html = r.text or ""
-        soup = BeautifulSoup(html, "lxml")
-        main = (soup.select_one("#contentBody") or soup.select_one("#conBody")
-                or soup.select_one("#conScroll") or soup.select_one(".conScroll")
-                or soup.select_one("#content") or soup)
         full_text = (main.get_text("\n", strip=True) or "").strip()
         piece = _slice_article(full_text, art)
         return (piece[:4000] if piece else ""), url
@@ -238,6 +236,9 @@ def _scrape_deeplink(law: str, art: str, timeout: float = 6.0) -> Tuple[str, str
         # 네트워크/파서 문제 시에도 링크만이라도 반환
         return "", url
 
+# ─────────────────────────────────────────────────────────────────
+# Public
+# ─────────────────────────────────────────────────────────────────
 def execute_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     """
     GET_ARTICLE + GET_RESOURCE 처리
@@ -288,4 +289,3 @@ def execute_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
             "action": action or "QUICK",
             "message": "unsupported action",
         }
-
