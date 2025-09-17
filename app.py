@@ -2445,11 +2445,15 @@ def _clean_query_for_api(q: str) -> str:
     if name: return name.group(0).strip()
     return q
 
-# === add: LLM 리랭커(맥락 필터) ===
 def rerank_laws_with_llm(user_q: str, law_items: list[dict], top_k: int = 8) -> list[dict]:
-    if not law_items or client is None:
+    _cli = globals().get("client")
+    _azure = globals().get("AZURE")
+    _deployment = (_azure.get("deployment") if isinstance(_azure, dict) else None)
+
+    if not law_items or (_cli is None):
         return law_items
-    names = [d.get("법령명","").strip() for d in law_items if d.get("법령명")]
+
+    names = [d.get("법령명", "").strip() for d in law_items if d.get("법령명")]
     names_txt = "\n".join(f"- {n}" for n in names[:25])
 
     SYS = (
@@ -2463,32 +2467,35 @@ def rerank_laws_with_llm(user_q: str, law_items: list[dict], top_k: int = 8) -> 
     )
 
     try:
-        resp = client.chat.completions.create(
-            model=AZURE["deployment"],
-            messages=[{"role":"system","content": SYS},
-                      {"role":"user","content": prompt}],
+        resp = _cli.chat.completions.create(
+            model=_deployment or "gpt-4o",
+            messages=[{"role": "system", "content": SYS},
+                      {"role": "user", "content": prompt}],
             temperature=0.0, max_tokens=96,
         )
         txt = (resp.choices[0].message.content or "").strip()
         import re, json as _json
         if "```" in txt:
-            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", txt); 
+            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", txt)
             if m: txt = m.group(1).strip()
         if not txt.startswith("{"):
-            m = re.search(r"\{[\s\S]*\}", txt); 
+            m = re.search(r"\{[\s\S]*\}", txt)
             if m: txt = m.group(0)
-        data = _json.loads(txt)
+
+        data = _json.loads(txt) if txt else {}
         picks = [s.strip() for s in data.get("pick", []) if s.strip()]
         if not picks:
             return law_items
+
         name_to_item = {}
         for d in law_items:
-            nm = d.get("법령명","").strip()
+            nm = d.get("법령명", "").strip()
             if nm and nm not in name_to_item:
                 name_to_item[nm] = d
         return [name_to_item[n] for n in picks if n in name_to_item][:top_k]
     except Exception:
         return law_items
+
 
 def _filter_plans(user_q: str, plans: list[dict]) -> list[dict]:
     U = set(_canonize(_tok(user_q)))
@@ -3015,54 +3022,56 @@ def _filter_items_by_plan(user_q: str, items: list[dict], plan: dict) -> list[di
 
 @st.cache_data(show_spinner=False, ttl=180)
 def propose_api_queries_llm(user_q: str) -> list[dict]:
-    if not user_q or client is None:
+    import re, json
+    _cli = globals().get("client")
+    _azure = globals().get("AZURE")
+    _deployment = (_azure.get("deployment") if isinstance(_azure, dict) else None)
+
+    if not user_q or (_cli is None):
         return []
 
     SYS = (
         "너는 한국 법제처(Open API) 검색 쿼리를 설계한다. JSON ONLY.\n"
         '형식: {"queries":[{"target":"law|admrul|ordin|trty","q":"검색어",'
         '"must":["반드시 포함"], "must_not":["제외할 단어"]}, ...]}\n'
-        # ★ 핵심 지시
         "- **반드시 `법령명`(예: 형법, 민법, 도로교통법, 교통사고처리 특례법) 또는 "
         "'법령명 + 핵심어(예: 형법 과실치상)` 형태로 질의를 만들 것.**\n"
         "- **사건 서술(예: 지하 주차장에서 과속…) 자체를 질의로 사용하지 말 것.**\n"
         "- must는 1~3개로 간결하게, must_not은 분명히 다른 축일 때만."
-          # === 규칙(중요) ===
         "- target=law 인 경우, q에는 **항상 법령명만** 적는다. 예: 민법, 형법, 도로교통법.\n"
-        "- 키워드(예: 손해배상, 과실치상, 과속 등)는 q에 붙이지 말고 **must**에만 넣는다.\n"
-        "- 사건 서술(예: 주차장에서 사고…)을 q로 쓰지 말고 반드시 법령명/행정규칙명/조례명 등만 사용한다.\n"
         "- 예시1: '민법 손해배상' → {\"target\":\"law\",\"q\":\"민법\",\"must\":[\"손해배상\"]}\n"
         "- 예시2: '형법 과실치상' → {\"target\":\"law\",\"q\":\"형법\",\"must\":[\"과실치상\"]}\n"
         "- 예시3: '주차장에서 사고' → {\"target\":\"law\",\"q\":\"도로교통법\",\"must\":[\"주차장\",\"사고\"]}\n"
     )
-   
+
     try:
-        resp = client.chat.completions.create(
-            model=AZURE["deployment"],
-            messages=[{"role":"system","content": SYS},
-                      {"role":"user","content": user_q.strip()}],
+        resp = _cli.chat.completions.create(
+            model=_deployment or "gpt-4o",
+            messages=[{"role": "system", "content": SYS},
+                      {"role": "user", "content": user_q.strip()}],
             temperature=0.0, max_tokens=220,
         )
         txt = (resp.choices[0].message.content or "").strip()
         if "```" in txt:
-            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", txt); 
+            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", txt)
             if m: txt = m.group(1).strip()
         if not txt.startswith("{"):
-            m = re.search(r"\{[\s\S]*\}", txt); 
+            m = re.search(r"\{[\s\S]*\}", txt)
             if m: txt = m.group(0)
 
         data = json.loads(txt) if txt else {}
-        out=[]
+        out = []
         for it in (data.get("queries") or []):
             t = (it.get("target") or "").strip()
             q = (it.get("q") or "").strip()
             must = [x.strip() for x in (it.get("must") or []) if x.strip()]
             must_not = [x.strip() for x in (it.get("must_not") or []) if x.strip()]
-            if t in {"law","admrul","ordin","trty"} and q:
-                out.append({"target":t,"q":q[:60],"must":must[:4],"must_not":must_not[:6]})
+            if t and q:
+                out.append({"target": t, "q": q[:60], "must": must[:4], "must_not": must_not[:6]})
         return out[:10]
     except Exception:
         return []
+
 
 # --- 관련도 스코어(작을수록 관련)
 def _rel_score(user_q: str, item_name: str, plan_q: str) -> int:
@@ -3198,31 +3207,27 @@ def extract_keywords_llm(q: str) -> list[str]:
         return []
 
     def _parse_json_keywords(txt: str) -> list[str]:
-        # 코드펜스/잡텍스트 제거 + JSON 블럭만 추출
         import re, json as _json
         t = (txt or "").strip()
         if "```" in t:
             m = re.search(r"```(?:json)?\s*([\s\S]*?)```", t)
-            if m:
-                t = m.group(1).strip()
+            if m: t = m.group(1).strip()
         if not t.startswith("{"):
             m = re.search(r"\{[\s\S]*\}", t)
-            if m:
-                t = m.group(0)
+            if m: t = m.group(0)
         try:
             data = _json.loads(t)
         except Exception:
             return []
         kws = [s.strip() for s in (data.get("keywords", []) or []) if s and s.strip()]
-        # 간단 정규화/중복제거
         seen, out = set(), []
         for k in kws:
-            k2 = k[:20]  # 과도한 길이 컷
+            k2 = k[:20]
             if len(k2) >= 2 and k2 not in seen:
                 seen.add(k2); out.append(k2)
         return out
 
-    # 1) LLM 1차
+    # 1) 1차
     try:
         SYSTEM_KW = (
             "너는 한국 법률 질의의 핵심 키워드만 추출하는 도우미야. "
@@ -3240,10 +3245,9 @@ def extract_keywords_llm(q: str) -> list[str]:
         if kws:
             return kws[:6]
     except Exception as e:
-        import streamlit as st
         st.session_state["_kw_extract_err1"] = str(e)
 
-    # 2) LLM 2차(엄격 재시도)
+    # 2) 2차(엄격)
     try:
         SYSTEM_KW_STRICT = (
             "JSON ONLY. No code fences, no commentary. "
@@ -3261,26 +3265,21 @@ def extract_keywords_llm(q: str) -> list[str]:
         if kws2:
             return kws2[:6]
     except Exception as e:
-        import streamlit as st
         st.session_state["_kw_extract_err2"] = str(e)
 
-    # 3) 규칙 기반 폴백(LLM 실패/차단/네트워크 예외 대비)
+    # 3) 규칙 기반 폴백
     def _rule_based_kw(text: str) -> list[str]:
         t = (text or "")
-        # 도메인 화이트리스트 매칭(등장하는 것만 채택)
         WL = [
             "폭행", "상해", "협박", "위협", "제지", "정당방위", "과잉방위",
             "살인", "사망", "부상", "응급", "병원", "이송", "경찰", "신고",
             "건설현장", "현장소장", "근로자", "산업안전", "중대재해",
         ]
         hits = [w for w in WL if w in t]
-        # 추가: 간단 한글 토큰(2~6자) 추출로 빈칸 막기
         import re
         tokens = re.findall(r"[가-힣]{2,6}", t)
-        # 기능어/불용어(간단) 제거
         STOP = {"그리고","하지만","그러나","때문","경우","관련","문제","어떤","어떻게","있는지"}
         tokens = [x for x in tokens if x not in STOP]
-        # 합치고 중복 제거
         combined = hits + tokens
         seen, out = set(), []
         for k in combined:
@@ -3292,9 +3291,9 @@ def extract_keywords_llm(q: str) -> list[str]:
     if kws3:
         return kws3
 
-    import streamlit as st
     st.session_state["_kw_extract_debug"] = "all_stages_failed"
     return []
+
 
 
 
