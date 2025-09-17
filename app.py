@@ -112,12 +112,14 @@ def _ensure_running_summary(client, transcript: str, max_len: int = 900):
 
     try:
         AZURE = globals().get("AZURE") or {}
+        # app.py — _ensure_running_summary()의 model_name 선택부
         model_name = (
             getattr(client, "router_model", None)
             or AZURE.get("router_deployment")
             or AZURE.get("deployment")
-            or "gpt-4o-mini"
-        )
+            or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+            or "gpt-4o-leesunguk"
+)        
         resp = client.chat.completions.create(
             model=model_name,
             messages=[
@@ -276,8 +278,16 @@ def _init_engine_lazy():
         c = None
 
     # 2) 모델명 결정: Azure 배포명이 있으면 그걸, 없으면 OPENAI_MODEL/기본값
+    # app.py — _init_engine_lazy()의 모델 선택 한 줄 교체
     az = globals().get("AZURE") or {}
-    model = (az.get("deployment") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini")
+    # 기존: model = (az.get("deployment") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini")
+    model = (
+        az.get("deployment")
+        or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+        or os.getenv("OPENAI_MODEL")
+        or "gpt-4o-leesunguk"  # 최후 안전값(네 배포명)
+    )
+
 
     if not c:
         st.session_state.engine = None

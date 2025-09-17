@@ -1,6 +1,7 @@
 # modules/advice_engine.py — COMPLETE
 from __future__ import annotations
 from typing import List, Dict, Any
+import time
 
 class AdviceEngine:
     def __init__(self, client, *, model: str, temperature: float = 0.3, tools=None):
@@ -9,32 +10,44 @@ class AdviceEngine:
         self.temperature = temperature
         self._tools_ignored = tools
 
-    # advice_engine.py
-    def scc(
-        self,
-        client,
-        *,
-        messages,
-        model,
-        stream,
-        allow_retry,
-        temperature,
-        max_tokens,
-        tools=None,
-    ):
-        kwargs = {}
-        if tools:  # <-- None이면 보내지 않음
-            kwargs["tools"] = tools
+   # advice_engine.py — AdviceEngine 클래스 안
+def scc(
+    self,
+    client,
+    *,
+    messages,
+    model,
+    stream: bool,
+    allow_retry: bool,
+    temperature: float,
+    max_tokens: int,
+    tools=None,
+):
+    """Chat Completions 호출 + 간단 재시도(지수 백오프)."""
+    kwargs = {}
+    if tools is not None:
+        kwargs["tools"] = tools
 
-        return client.chat.completions.create(
-            model=model,
-            messages=messages,
-            stream=stream,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **kwargs,
-        )
+    attempts = 3 if allow_retry else 1
+    delay = 0.6
+    last_err = None
 
+    for i in range(attempts):
+        try:
+            return client.chat.completions.create(
+                model=model,
+                messages=messages,
+                stream=stream,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs,
+            )
+        except Exception as e:
+            last_err = e
+            if i == attempts - 1:
+                raise
+            time.sleep(delay)
+            delay *= 1.7
 
     def generate(self, messages: List[Dict[str, str]], *, stream: bool = True) -> str:
         # 도구는 이미 실행/반영되었다는 전제를 모델에 명시
@@ -94,13 +107,14 @@ class AdviceEngine:
         # advice_engine.py — [REPLACE] 예외 처리: 미니 모델 1회 재시도 → 최소 가이드
 
 # (기존 try: ... except Exception: ~ return final_text 사이를 아래 블록으로 교체하세요)
+        # modules/advice_engine.py  — except 블록 교체
         except Exception:
-            # 1차: 더 가벼운 모델로 1회 재시도
+            # 1차: 같은 배포로 비-스트리밍 1회 재시도
             try:
                 resp = self.scc(
                     self.client,
                     messages=messages,
-                    model="gpt-4o-mini",   # ← 경량 모델로 폴백
+                    model=self.model,   # ← 여기! mini 금지
                     tools=None,
                     stream=False,
                     allow_retry=False,
@@ -109,7 +123,7 @@ class AdviceEngine:
                 )
                 final_text = (resp.choices[0].message.content or "").strip()
             except Exception:
-                # 2차: 최소 안내문(에러 문구 대신 실무 가이드 제시)
+                # 2차: 최소 안내문
                 final_text = (
                     "지금은 서버 연결이 원활하지 않아 간단 요약만 안내드립니다.\n\n"
                     "1) 사안의 핵심 쟁점을 먼저 정리하시고,\n"
@@ -117,6 +131,3 @@ class AdviceEngine:
                     "3) 증빙자료(계약서·통지내역·사진 등)를 확보한 뒤 절차(내용증명→조정/소송)를 진행하십시오.\n"
                     "\n※ 아래 ‘적용 법령/근거’ 링크를 참고해 정확한 조문을 확인해 주세요."
                 )
-
-        return final_text or "죄송합니다. 답변을 생성하지 못했습니다."
-
