@@ -25,3 +25,6 @@ secrets.toml
 # OS files
 Thumbs.db
 .DS_Store
+secrets.txt
+replacements.txt
+old_app_at_bad_commit.py
