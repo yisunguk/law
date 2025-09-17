@@ -370,7 +370,7 @@ def build_drf_link(
 
     return "https://www.law.go.kr/DRF/lawService.do?" + urlencode(q, doseq=False, encoding="utf-8")
 
-# [PATCH] app.py — ask_llm_with_tools 교정 (호출부만 교체)
+# [PATCH] app.py — ask_llm_with_tools 교정 (호출부만 교체).
 import json, streamlit as st
 from typing import List, Dict
 
