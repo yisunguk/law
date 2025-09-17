@@ -874,7 +874,7 @@ def render_search_flyout(user_q: str, num_rows: int = 8,
         mst = _pick(it.get("MST"), it.get("mst"), it.get("LawMST"))
         if mst:
             ef = (eff or "").replace("-", "")
-            return f"https://www.law.go.kr/DRF/lawService.do?OC=sapphire_5&target=law&MST={mst}&type=HTML&efYd={ef}"
+            return build_drf_link(mst=mst, efYd=ef, typ="HTML", lang="KO")
         return ""
 
     # ── 여기부터는 기존 HTML 조립부 ─────────────────────────────
