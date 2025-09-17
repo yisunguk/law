@@ -2276,39 +2276,50 @@ def fix_links_with_lawdata(markdown: str, law_data: list[dict]) -> str:
         return m.group(0)
     return pat.sub(repl, markdown)
 
-# === get_llm_client() 전체 교체 ===
+# app.py — get_llm_client() 안전 버전 (하드코딩 없음)
+
+import os
+from openai import AzureOpenAI
+
+LLM_DEFAULT_MODEL = None
+LLM_ROUTER_MODEL = None
+_llm_client = None
+
 def get_llm_client():
-    """Azure OpenAI 클라이언트 생성(시크릿 기본값 포함, 필요 시 환경변수로 오버라이드)"""
-    global client, LLM_DEFAULT_MODEL, LLM_ROUTER_MODEL
+    """Azure OpenAI 클라이언트(시크릿/환경변수만 사용)."""
+    global _llm_client, LLM_DEFAULT_MODEL, LLM_ROUTER_MODEL
+    if _llm_client:
+        return _llm_client
 
+    # 1) Streamlit secrets → 2) 환경변수
     try:
-        if "client" in globals() and client is not None:
-            return client
-    except NameError:
-        pass
+        import streamlit as st
+        AZ = (getattr(st, "secrets", {}) or {}).get("azure_openai", {}) or {}
+    except Exception:
+        AZ = {}
 
-    import os
-    from openai import AzureOpenAI
+    endpoint    = AZ.get("endpoint")          or os.getenv("AZURE_OPENAI_ENDPOINT")
+    api_key     = AZ.get("api_key")           or os.getenv("AZURE_OPENAI_API_KEY")
+    api_version = AZ.get("api_version")       or os.getenv("AZURE_OPENAI_API_VERSION")
+    deploy      = AZ.get("deployment")        or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+    router      = AZ.get("router_deployment") or os.getenv("AZURE_OPENAI_ROUTER_DEPLOYMENT") or deploy
 
-    # ▼ 기본값: 사용자가 준 시크릿 (환경변수 있으면 그 값이 우선)
-    endpoint      = os.getenv("AZURE_OPENAI_ENDPOINT", "https://enc-dev-meu-aitest.openai.azure.com/")
-    api_key       = os.getenv("AZURE_OPENAI_API_KEY",  "REMOVED")
-    api_version   = os.getenv("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")
-    deploy        = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-leesunguk")
-    router_deploy = os.getenv("AZURE_OPENAI_ROUTER_DEPLOYMENT", "gpt-4o-leesunguk")
+    # 필수값 검증(누락 시 명확히 실패)
+    missing = [k for k,v in {
+        "endpoint": endpoint, "api_key": api_key, "api_version": api_version, "deployment": deploy
+    }.items() if not v]
+    if missing:
+        raise RuntimeError(f"Azure OpenAI 설정 누락: {', '.join(missing)}")
 
-    # Azure OpenAI 클라이언트
-    client = AzureOpenAI(
+    _llm_client = AzureOpenAI(
         azure_endpoint=endpoint,
         api_key=api_key,
         api_version=api_version,
     )
-
-    # 전역 모델명(= Azure 배포명)
     LLM_DEFAULT_MODEL = deploy
-    LLM_ROUTER_MODEL  = router_deploy or deploy
+    LLM_ROUTER_MODEL  = router
+    return _llm_client
 
-    return client
 
 import ssl
 from urllib3.poolmanager import PoolManager
