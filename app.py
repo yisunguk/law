@@ -3190,7 +3190,11 @@ def extract_keywords_llm(q: str) -> list[str]:
     사용자 질문에서 핵심 키워드 2~6개를 안정적으로 추출한다.
     파이프라인: LLM(표준) -> LLM(엄격 재시도) -> 규칙 기반 폴백.
     """
-    if not q or (client is None):
+    _cli = globals().get("client")
+    _azure = globals().get("AZURE")
+    _deployment = (_azure.get("deployment") if isinstance(_azure, dict) else None)
+
+    if not q or (_cli is None):
         return []
 
     def _parse_json_keywords(txt: str) -> list[str]:
@@ -3205,7 +3209,10 @@ def extract_keywords_llm(q: str) -> list[str]:
             m = re.search(r"\{[\s\S]*\}", t)
             if m:
                 t = m.group(0)
-        data = _json.loads(t)
+        try:
+            data = _json.loads(t)
+        except Exception:
+            return []
         kws = [s.strip() for s in (data.get("keywords", []) or []) if s and s.strip()]
         # 간단 정규화/중복제거
         seen, out = set(), []
@@ -3222,16 +3229,18 @@ def extract_keywords_llm(q: str) -> list[str]:
             "반드시 JSON만 반환하고, 설명/코드블록/주석은 금지.\n"
             '형식: {"keywords":["폭행","위협","정당방위","과잉방위","병원 이송"]}'
         )
-        resp = client.chat.completions.create(
-            model=AZURE["deployment"],
-            messages=[{"role":"system","content": SYSTEM_KW},
-                      {"role":"user","content": q.strip()}],
+        resp = _cli.chat.completions.create(
+            model=_deployment or "gpt-4o",
+            messages=[{"role": "system", "content": SYSTEM_KW},
+                      {"role": "user", "content": q.strip()}],
             temperature=0.0, max_tokens=96,
         )
-        kws = _parse_json_keywords(resp.choices[0].message.content)
+        content = resp.choices[0].message.content if getattr(resp, "choices", None) else ""
+        kws = _parse_json_keywords(content)
         if kws:
             return kws[:6]
     except Exception as e:
+        import streamlit as st
         st.session_state["_kw_extract_err1"] = str(e)
 
     # 2) LLM 2차(엄격 재시도)
@@ -3241,16 +3250,18 @@ def extract_keywords_llm(q: str) -> list[str]:
             'Format: {"keywords":["키워드1","키워드2","키워드3"]} '
             "키워드는 2~6개, 명사/짧은 구 중심."
         )
-        resp2 = client.chat.completions.create(
-            model=AZURE["deployment"],
-            messages=[{"role":"system","content": SYSTEM_KW_STRICT},
-                      {"role":"user","content": q.strip()}],
+        resp2 = _cli.chat.completions.create(
+            model=_deployment or "gpt-4o",
+            messages=[{"role": "system", "content": SYSTEM_KW_STRICT},
+                      {"role": "user", "content": q.strip()}],
             temperature=0.0, max_tokens=96,
         )
-        kws2 = _parse_json_keywords(resp2.choices[0].message.content)
+        content2 = resp2.choices[0].message.content if getattr(resp2, "choices", None) else ""
+        kws2 = _parse_json_keywords(content2)
         if kws2:
             return kws2[:6]
     except Exception as e:
+        import streamlit as st
         st.session_state["_kw_extract_err2"] = str(e)
 
     # 3) 규칙 기반 폴백(LLM 실패/차단/네트워크 예외 대비)
@@ -3279,12 +3290,12 @@ def extract_keywords_llm(q: str) -> list[str]:
 
     kws3 = _rule_based_kw(q)
     if kws3:
-        # 빈 결과를 캐시에 남기지 않도록: 빈 리스트면 바로 반환 말고 예외로 흘리기
         return kws3
 
-    # 최종적으로도 비면 캐시 방지용 디버그 힌트만 남기고 빈 리스트
+    import streamlit as st
     st.session_state["_kw_extract_debug"] = "all_stages_failed"
     return []
+
 
 
 # 간단 폴백(예비 — 도구 모드 기본이므로 최소화)
@@ -4242,8 +4253,11 @@ if user_q:
     final_payload = ""
     collected_laws = []
 
-    if client and AZURE:
-        stream_box = st.empty()
+    # 수정(안전)
+_cli = globals().get("client")
+if _cli and globals().get("AZURE") is not None:
+    stream_box = st.empty()
+
 
     try:
         if stream_box is not None:
