@@ -419,6 +419,27 @@ def ask_llm_with_tools(
         return
 
     # 3) 최근 히스토리(간단) 준비
+    # ▼ 여기에 붙여넣기 (히스토리 준비 직후, 'LLM 메시지 조립' 주석 바로 위)
+    try:
+        if wants_verbatim(user_q):
+            az = globals().get("AZURE") or {}
+            mdl = (az.get("deployment") if az else os.getenv("OPENAI_MODEL") or "gpt-4o-mini")
+            cli = globals().get("client") or get_llm_client()
+            plan = make_plan_with_llm(cli, user_q, model=mdl)
+            if plan.get("action") == "GET_ARTICLE" and plan.get("law_name") and plan.get("article_label"):
+                res = execute_plan(plan)
+                if res.get("type") == "article" and res.get("body_text"):
+                    law, art = res["law"], res["article_label"]
+                    body, url = res["body_text"], res.get("source_url", "")
+                    text = f"「{law}」 {art} 본문은 아래와 같습니다.\n\n{body}\n\n[원문 보기]({url})"
+                    st.session_state["__last_answer_text__"] = text
+                    yield ("final", text, [{"법령명": law, "법령상세링크": url}])
+                    return
+    except Exception:
+    # 라우터 실패는 무시하고 일반 답변으로 진행
+        pass
+# ▲ 여기까지
+
     try:
         msgs = st.session_state.get("messages", []) or []
         history: List[Dict[str, str]] = []

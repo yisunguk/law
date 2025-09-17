@@ -13,7 +13,7 @@ ROUTER_SYSTEM = """
 반드시 아래 JSON 한 개만 출력하라(코드블록, 설명, 접두/접미 문장 금지).
 
 {
-  "action": "GET_ARTICLE" | "SEARCH_LAW" | "ADVICE" | "QUICK",
+  "action": "GET_ARTICLE" | "GET_RESOURCE" | "SEARCH_LAW" | "ADVICE" | "QUICK",
   "law_name": "정확한 법령명(모르면 \"\")",
   "mst": "알면 기입, 모르면 \"\"",
   "article_label": "예: 제83조, 제83조의2 (모르면 \"\")",
@@ -36,6 +36,11 @@ ROUTER_SYSTEM = """
 3) 상담형 질문(예: 국제결혼 이혼·재산분할)은 "ADVICE"를 사용하고, candidates에 관련 근거 조문들을 작성하라.
 4) 확신이 없으면 "SEARCH_LAW"를 사용하라(그 외 필드는 빈 문자열 허용).
 5) 불필요한 문장 출력 금지. 위 JSON 구조 그대로, 한 개만 출력.
+6) 사용자가 일상어로 두서없이 묻더라도, 숨은 의도를 추론해 필요한 조문/판례 후보를 candidates에 넣어라.
+7) 판례·재결·위원회 결정 등 법령 외 자료가 핵심이면 "GET_RESOURCE"를 사용하고
+   { "kind": "판례|법령해석례|행정심판례|조세심판재결례|..." , "title": "검색어/사건명" } 필드를 채워라.
++8) "ADVICE"를 택해도 candidates에는 최소 1~3개의 「법령명 + 제n조(의m)」를 넣어라(LLM가이드에 쓰인다).
+
 """
 
 # ─────────────────────────────────────────────────────────────────
@@ -91,6 +96,8 @@ def _ensure_defaults(plan: Dict[str, Any]) -> Dict[str, Any]:
     plan["action"] = (plan.get("action") or "QUICK").upper()
     for k in ("law_name", "mst", "article_label", "jo", "efYd", "notes"):
         plan[k] = (plan.get(k) or "").strip()
+    plan["kind"]  = (plan.get("kind")  or "").strip()
+    plan["title"] = (plan.get("title") or "").strip()
     plan["jo"] = _clean_jo(plan["jo"])
     if plan.get("efYd") and not re.fullmatch(r"\d{8}", plan["efYd"]):
         plan["efYd"] = ""

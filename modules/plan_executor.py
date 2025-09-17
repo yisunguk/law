@@ -1,9 +1,23 @@
 # modules/plan_executor.py
 from __future__ import annotations
 from typing import Dict, Any, Tuple
-import re, logging
-import re, requests
+import re, logging, requests
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+_SESSION = requests.Session()
+_SESSION.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+})
+_RETRY = Retry(
+    total=3, backoff_factor=0.6,
+    status_forcelist=(429, 500, 502, 503, 504),
+    allowed_methods=("GET",)
+)
+_SESSION.mount("https://", HTTPAdapter(max_retries=_RETRY))
+_SESSION.mount("http://",  HTTPAdapter(max_retries=_RETRY))
 
 # ✅ linking 임포트: 항상 패키지 경로를 1순위로
 try:
@@ -32,20 +46,41 @@ _HTTP_HEADERS = {
                   "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 }
 
+# plan_executor.py — [REPLACE] 기존 _fetch_html_soup() 함수 전체 교체
+
+from bs4 import BeautifulSoup
+
 def _fetch_html_soup(url: str) -> BeautifulSoup:
-    r = requests.get(url, headers=_HTTP_HEADERS, timeout=20)
-    # 인코딩 안전장치
-    if not r.encoding or r.encoding.lower() in ("iso-8859-1", "latin-1"):
-        r.encoding = "utf-8"
-    return BeautifulSoup(r.text, "html.parser")
+    resp = _SESSION.get(url, timeout=25)
+    if not resp.encoding or resp.encoding.lower() in ("iso-8859-1", "latin-1"):
+        resp.encoding = "utf-8"
+    html = resp.text
+
+    # 간헐적 빈 응답/차단 페이지 대비: 최소 길이 체크 후 1회 재시도
+    if len(html) < 500:
+        resp = _SESSION.get(url, timeout=25)
+        if not resp.encoding or resp.encoding.lower() in ("iso-8859-1", "latin-1"):
+            resp.encoding = "utf-8"
+        html = resp.text
+
+    return BeautifulSoup(html, "html.parser")
+
+
+# plan_executor.py — [REPLACE] 본문 컨테이너 선택자 강화
+
+from bs4 import BeautifulSoup  # (파일 상단에 이미 있다면 중복 import는 제거하세요)
 
 def _pick_main_node(soup: BeautifulSoup):
-    # law.go.kr 공통 본문 컨테이너 후보들 (없으면 body)
     return (
-        soup.select_one("#contentArea")
+        soup.select_one("#contentBody")
+        or soup.select_one("#contentArea")
         or soup.select_one("#conTop")
         or soup.select_one("#conTable")
+        or soup.select_one("#content")
+        or soup.select_one(".content")
         or soup.select_one("#container")
+        or soup.select_one("#wrap")     # 모바일/간이 페이지 대응
+        or soup.select_one(".conAll")
         or soup.body
         or soup
     )
