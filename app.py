@@ -2265,6 +2265,12 @@ LLM_ROUTER_MODEL = None
 _llm_client = None
 
 def get_llm_client():
+    # === GLOBAL LLM CLIENT (backward-compat) ===
+    try:
+        client = get_llm_client()   # 시크릿/환경변수만 사용
+    except Exception:
+        client = None               # 미설정이어도 앱이 죽지 않도록
+
     """Azure OpenAI 클라이언트(시크릿/환경변수만 사용)."""
     global _llm_client, LLM_DEFAULT_MODEL, LLM_ROUTER_MODEL
     if _llm_client:
