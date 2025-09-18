@@ -2,7 +2,8 @@ from __future__ import annotations
 import streamlit as st
 import html
 from html import unescape
-
+import os
+LAW_API_KEY = os.getenv("LAW_API_KEY", "")  # ⬅️ 추가 (중요)
 from modules import Intent, classify_intent, pick_mode, build_sys_for_mode
 from modules.router_llm import make_plan_with_llm
 from modules.plan_executor import execute_plan
