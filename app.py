@@ -2265,18 +2265,11 @@ LLM_ROUTER_MODEL = None
 _llm_client = None
 
 def get_llm_client():
-    # === GLOBAL LLM CLIENT (backward-compat) ===
-    try:
-        client = get_llm_client()   # 시크릿/환경변수만 사용
-    except Exception:
-        client = None               # 미설정이어도 앱이 죽지 않도록
-
-    """Azure OpenAI 클라이언트(시크릿/환경변수만 사용)."""
+    """Azure OpenAI 클라이언트(시크릿/환경변수만 사용). 재귀 금지, 싱글톤."""
     global _llm_client, LLM_DEFAULT_MODEL, LLM_ROUTER_MODEL
     if _llm_client:
         return _llm_client
 
-    # 1) Streamlit secrets → 2) 환경변수
     try:
         import streamlit as st
         AZ = (getattr(st, "secrets", {}) or {}).get("azure_openai", {}) or {}
@@ -2289,21 +2282,23 @@ def get_llm_client():
     deploy      = AZ.get("deployment")        or os.getenv("AZURE_OPENAI_DEPLOYMENT")
     router      = AZ.get("router_deployment") or os.getenv("AZURE_OPENAI_ROUTER_DEPLOYMENT") or deploy
 
-    # 필수값 검증(누락 시 명확히 실패)
-    missing = [k for k,v in {
+    missing = [k for k, v in {
         "endpoint": endpoint, "api_key": api_key, "api_version": api_version, "deployment": deploy
     }.items() if not v]
     if missing:
         raise RuntimeError(f"Azure OpenAI 설정 누락: {', '.join(missing)}")
 
-    _llm_client = AzureOpenAI(
-        azure_endpoint=endpoint,
-        api_key=api_key,
-        api_version=api_version,
-    )
+    _llm_client = AzureOpenAI(azure_endpoint=endpoint, api_key=api_key, api_version=api_version)
     LLM_DEFAULT_MODEL = deploy
     LLM_ROUTER_MODEL  = router
     return _llm_client
+
+# ✅ 모듈 로드시점에 항상 존재하도록 전역 client를 확보(없으면 None로 고정)
+try:
+    client = get_llm_client()
+except Exception:
+    client = None
+
 
 
 import ssl
