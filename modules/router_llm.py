@@ -1,6 +1,6 @@
 # modules/router_llm.py
 from __future__ import annotations
-from typing import Dict, Any, List
+from typing import Optional, Dict, Any, List
 import json, re
 
 __all__ = ["ROUTER_SYSTEM", "make_plan_with_llm"]
@@ -41,6 +41,68 @@ ROUTER_SYSTEM = """
    { "kind": "판례|법령해석례|행정심판례|조세심판재결례|..." , "title": "검색어/사건명" } 필드를 채워라.
 8) "ADVICE"를 택해도 candidates에는 최소 1~3개의 「법령명 + 제n조(의m)」를 넣어라(LLM가이드에 쓰인다).
 """
+# modules/router_llm.py
+import os
+from typing import Optional, Dict, Any
+
+SAFE_SYS = (
+    "You are a safety rewriter. Rewrite the user's request so it avoids any violent, "
+    "illegal, or harmful instructions. Keep the factual context. The output must: "
+    "1) focus on lawful procedures and dispute resolution, "
+    "2) avoid advising on violence or property damage, "
+    "3) be a single concise Korean sentence suitable as a legal consultation question."
+)
+
+def rewrite_safe_prompt(client, user_text: str, *, model: Optional[str] = None,
+                        temperature: float = 0.0) -> str:
+    """
+    사용자의 질문을 '폭력/불법 유도 없는 합법적 절차 문의'로 재서술.
+    """
+    if not user_text:
+        return user_text or ""
+
+    mdl = (
+        model
+        or os.getenv("AZURE_OPENAI_ROUTER_DEPLOYMENT")
+        or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+        or os.getenv("AZURE_OPENAI_MODEL")  # 혹시 사용 중이라면
+    )
+    if not mdl:
+        # 모델 정보가 전혀 없으면, 최소한의 치환만 수행
+        return _regex_sanitize(user_text)
+
+    msgs = [
+        {"role": "system", "content": SAFE_SYS},
+        {"role": "user", "content": user_text},
+    ]
+    try:
+        resp = client.chat.completions.create(
+            model=mdl,
+            messages=msgs,
+            temperature=temperature,
+        )
+        out = (resp.choices[0].message.content or "").strip()
+        return out or _regex_sanitize(user_text)
+    except Exception:
+        return _regex_sanitize(user_text)
+
+
+# --- 경량 정규식 폴백 (라우터 실패 시) -----------------------------------------
+import re
+_VIOLENT = re.compile(
+    r"(베(?:어|다)|부수(?:어|다)|때리(?:어|다)|죽이(?:어|다)|파괴|훼손|불지르|태우|폭행|칼로|망치로)",
+    re.IGNORECASE,
+)
+
+def _regex_sanitize(s: str) -> str:
+    if not s:
+        return s
+    t = _VIOLENT.sub("불법적/폭력적 행위", s)
+    return (
+        "다음 상황에 대해 폭력이나 불법행위를 권하지 않고, "
+        "오직 법적으로 가능한 절차(민형사·행정)와 분쟁 해결 방법만 설명해 주세요: "
+        + t
+    )
 
 # ─────────────────────────────────────────────────────────────────
 # JSON block extractor (LLM이 텍스트를 섞어도 { ... }만 취함)
