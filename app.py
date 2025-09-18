@@ -260,6 +260,27 @@ if "_last_user_nonce" not in st.session_state:
 
 
 KEY_PREFIX = "main"
+from modules.advice_engine import AdviceEngine
+import os
+import streamlit as st
+
+def get_engine(c, model):
+    need_new = (
+        "engine" not in st.session_state
+        or getattr(st.session_state.engine, "model", None) != model
+    )
+    if need_new:
+        st.session_state.engine = AdviceEngine(
+            client=c,
+            model=model,
+            temperature=0.3,                       # 0.0도 가능
+            tools=None,
+            router_model=os.getenv("AZURE_OPENAI_ROUTER_DEPLOYMENT"),
+        )
+        # ✅ 여기서 버전 확인 (return보다 위)
+        st.write("AdviceEngine:", getattr(AdviceEngine, "VERSION", "unknown"))
+
+    return st.session_state.engine
 
 # [PATCH] app.py — _init_engine_lazy 교정
 def _init_engine_lazy():
@@ -285,7 +306,7 @@ def _init_engine_lazy():
         return None
 
     # 3) AdviceEngine은 client/model/temperature/tools만 받습니다.
-    from modules import AdviceEngine
+    from modules.advice_engine import AdviceEngine
     st.session_state.engine = AdviceEngine(
         client=c,
         model=model,
@@ -293,8 +314,6 @@ def _init_engine_lazy():
         tools=None,
     )
     return st.session_state.engine
-
-
 
 DEBUG = st.sidebar.checkbox("DRF 디버그", value=False, key="__debug__")
 
